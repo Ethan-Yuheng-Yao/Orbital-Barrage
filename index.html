@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orbital Barrage</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="overlay">
+      <div class="hud">
+        <div class="hud__row">
+          <span>HP: <strong id="hpValue">0</strong></span>
+          <span>Shield: <strong id="shieldValue">0</strong></span>
+          <span>Energy: <strong id="energyValue">0</strong></span>
+        </div>
+        <div class="hud__row">
+          <span>Score: <strong id="scoreValue">0</strong></span>
+          <span>Wave: <strong id="waveValue">0</strong></span>
+          <span>High Score: <strong id="highScoreValue">0</strong></span>
+        </div>
+        <div class="hud__row">
+          <span>Quantum Cores: <strong id="quantumCoresValue">0</strong></span>
+        </div>
+      </div>
+      <div class="instructions" id="instructions">
+        <h1>Orbital Barrage</h1>
+        <p>
+          WASD/Arrow keys to move. Aim with the mouse, hold left click to fire.
+          Each ship has 3 abilities: <kbd>Q</kbd>, <kbd>W</kbd>, and <kbd>E</kbd>—each costs different energy amounts.
+          Press <kbd>P</kbd> to pause. Clear waves to choose upgrades, collect power cores (H heal, S shield, R rapid, B
+          double-shot), and beat the boss every 5 waves. Earn Quantum Cores to unlock new ships!
+        </p>
+        <div class="select-group">
+          <h3>Difficulty</h3>
+          <div class="option-cards">
+            <label class="option-card option-card--easy">
+              <input
+                type="radio"
+                name="difficulty"
+                value="recruit"
+                checked
+              />
+              <strong>Recruit</strong>
+              <span>75% enemy HP · 85% speed · 70% count · 25% more drops</span>
+              <span style="color: #5cff7d; font-size: 0.8rem;">Easier for learning</span>
+            </label>
+            <label class="option-card option-card--medium">
+              <input type="radio" name="difficulty" value="veteran" />
+              <strong>Veteran</strong>
+              <span>100% enemy HP · 100% speed · 100% count · Standard drops</span>
+              <span style="color: #ffc857; font-size: 0.8rem;">Balanced challenge</span>
+            </label>
+            <label class="option-card option-card--hard">
+              <input type="radio" name="difficulty" value="nightmare" />
+              <strong>Nightmare</strong>
+              <span>150% enemy HP · 125% speed · 140% count · 25% fewer drops</span>
+              <span style="color: #ff6b6b; font-size: 0.8rem;">Extreme difficulty</span>
+            </label>
+          </div>
+        </div>
+        <div class="select-group">
+          <h3>Ship Loadout</h3>
+          <div class="option-cards">
+            <label class="option-card">
+              <input
+                type="radio"
+                name="ship"
+                value="striker"
+                checked
+              />
+              <strong>Striker</strong>
+              <span>Balanced stats · Omni Burst radial barrage.</span>
+            </label>
+            <label class="option-card">
+              <input type="radio" name="ship" value="aegis" />
+              <strong>Aegis</strong>
+              <span>Tanked hull/shield · Shockwave fortifies & burns foes.</span>
+            </label>
+            <label class="option-card">
+              <input type="radio" name="ship" value="phantom" />
+              <strong>Phantom</strong>
+              <span>High thrust · Blink dash with ghostfire trail.</span>
+            </label>
+          </div>
+        </div>
+        <div style="display: flex; gap: 12px; justify-content: center; margin-top: 12px;">
+          <button id="shopButton">Ship Shop</button>
+          <button id="startButton">Start Mission</button>
+        </div>
+      </div>
+      <div class="game-over hidden" id="gameOver">
+        <h2 id="gameOverTitle">Mission Failed</h2>
+        <p id="gameOverDetails"></p>
+        <button id="restartButton">Retry</button>
+      </div>
+      <div class="minimap hidden" id="minimap">
+        <canvas id="miniCanvas" width="160" height="120"></canvas>
+      </div>
+      <div class="boss-bar hidden" id="bossBar">
+        <span class="boss-bar__label">BOSS</span>
+        <div class="boss-bar__track">
+          <div class="boss-bar__fill" id="bossBarFill"></div>
+        </div>
+      </div>
+      <div class="upgrade-panel hidden" id="upgradePanel">
+        <h3>Choose an Upgrade</h3>
+        <p>Each wave cleared grants one permanent enhancement.</p>
+        <div class="upgrade-options" id="upgradeOptions"></div>
+      </div>
+      <div class="ship-shop hidden" id="shipShopPanel">
+        <div class="ship-shop__header">
+          <h3>Ship Hangar</h3>
+          <button class="ship-shop__close" id="shopCloseButton">×</button>
+        </div>
+        <p class="ship-shop__currency">Quantum Cores: <strong id="shopQuantumCores">0</strong></p>
+        <div class="ship-shop__list" id="shipShopList"></div>
+      </div>
+    </div>
+    <canvas id="gameCanvas" width="960" height="600"></canvas>
+    <script src="./game.js"></script>
+  </body>
+</html>
+
