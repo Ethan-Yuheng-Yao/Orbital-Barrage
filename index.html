@@ -15,7 +15,7 @@
   </head>
   <body>
     <div class="overlay">
-      <div class="hud">
+      <div class="hud hidden" id="hud">
         <div class="hud__row">
           <span>HP: <strong id="hpValue">0</strong></span>
           <span>Shield: <strong id="shieldValue">0</strong></span>
@@ -30,11 +30,17 @@
           <span>Quantum Cores: <strong id="quantumCoresValue">0</strong></span>
         </div>
       </div>
+      <div id="quantumCoresDisplay" class="hidden" style="position: absolute; top: 90px; right: 60px; padding: 6px 12px; font-size: 1rem; background: rgba(92, 95, 247, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); color: white; z-index: 1000; pointer-events: none; border-radius: 6px;">Quantum Cores: <strong id="quantumCoresDisplayValue">0</strong></div>
+      <button id="hudSettingsButton" class="hidden" style="position: absolute; top: 90px; right: 8px; padding: 6px 10px; font-size: 1rem; background: rgba(92, 95, 247, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); color: white; cursor: pointer; z-index: 1000; pointer-events: auto;" title="Settings">⚙️</button>
+      <div id="abilityIcons" class="ability-icons hidden"></div>
       <div class="instructions" id="instructions">
-        <h1>Orbital Barrage</h1>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h1 style="margin: 0;">Orbital Barrage</h1>
+          <button id="settingsButton" style="margin: 0; padding: 8px 12px; font-size: 1.2rem; background: rgba(92, 95, 247, 0.3); border: 1px solid rgba(255, 255, 255, 0.2);" title="Settings">⚙️</button>
+        </div>
         <p>
           WASD/Arrow keys to move. Aim with the mouse, hold left click to fire.
-          Each ship has 3 abilities: <kbd>Q</kbd>, <kbd>W</kbd>, and <kbd>E</kbd>—each costs different energy amounts.
+          Each ship has 3 abilities—each costs different energy amounts. Configure ability keys in settings.
           Press <kbd>P</kbd> to pause. Clear waves to choose upgrades, collect power cores (H heal, S shield, R rapid, B
           double-shot), and beat the boss every 5 waves. Earn Quantum Cores to unlock new ships!
         </p>
@@ -49,13 +55,13 @@
                 checked
               />
               <strong>Recruit</strong>
-              <span>75% enemy HP · 85% speed · 70% count · 25% more drops</span>
+              <span>55% enemy HP · 72% speed · 52% count · 25% more drops</span>
               <span style="color: #5cff7d; font-size: 0.8rem;">Easier for learning</span>
             </label>
             <label class="option-card option-card--medium">
               <input type="radio" name="difficulty" value="veteran" />
               <strong>Veteran</strong>
-              <span>100% enemy HP · 100% speed · 100% count · Standard drops</span>
+              <span>80% enemy HP · 88% speed · 80% count · Standard drops</span>
               <span style="color: #ffc857; font-size: 0.8rem;">Balanced challenge</span>
             </label>
             <label class="option-card option-card--hard">
@@ -80,18 +86,19 @@
               <span>Balanced stats · Omni Burst radial barrage.</span>
             </label>
             <label class="option-card">
-              <input type="radio" name="ship" value="aegis" />
-              <strong>Aegis</strong>
-              <span>Tanked hull/shield · Shockwave fortifies & burns foes.</span>
-            </label>
-            <label class="option-card">
               <input type="radio" name="ship" value="phantom" />
               <strong>Phantom</strong>
               <span>High thrust · Blink dash with ghostfire trail.</span>
             </label>
+            <label class="option-card">
+              <input type="radio" name="ship" value="aegis" />
+              <strong>Aegis</strong>
+              <span>Tanked hull/shield · Shockwave fortifies & burns foes.</span>
+            </label>
           </div>
         </div>
         <div style="display: flex; gap: 12px; justify-content: center; margin-top: 12px;">
+          <button id="tutorialButton">Tutorial</button>
           <button id="shopButton">Ship Shop</button>
           <button id="startButton">Start Mission</button>
         </div>
@@ -100,9 +107,6 @@
         <h2 id="gameOverTitle">Mission Failed</h2>
         <p id="gameOverDetails"></p>
         <button id="restartButton">Retry</button>
-      </div>
-      <div class="minimap hidden" id="minimap">
-        <canvas id="miniCanvas" width="160" height="120"></canvas>
       </div>
       <div class="boss-bar hidden" id="bossBar">
         <span class="boss-bar__label">BOSS</span>
@@ -122,6 +126,49 @@
         </div>
         <p class="ship-shop__currency">Quantum Cores: <strong id="shopQuantumCores">0</strong></p>
         <div class="ship-shop__list" id="shipShopList"></div>
+      </div>
+    </div>
+    <div class="tutorial-overlay hidden" id="tutorialOverlay">
+      <div class="tutorial-text-top" id="tutorialTextTop">
+        <span id="tutorialTextTopContent"></span>
+      </div>
+      <button id="tutorialSkipButton" class="tutorial-button tutorial-button--secondary" style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 2001;">Skip Tutorial</button>
+    </div>
+    <div class="settings-panel hidden" id="settingsPanel">
+      <div class="settings-panel__header">
+        <h3>Settings</h3>
+        <button class="settings-panel__close" id="settingsCloseButton">×</button>
+      </div>
+      <div class="settings-content">
+        <div class="ship-loadout-section">
+          <h4>Ship Loadout</h4>
+          <div class="ship-loadout-card" id="shipLoadoutCard">
+            <div class="ship-loadout__name" id="shipLoadoutName">-</div>
+            <div class="ship-loadout__abilities" id="shipLoadoutAbilities">
+              <div class="ship-loadout__ability">No ship selected</div>
+            </div>
+          </div>
+        </div>
+        <h4>Ability Key Bindings</h4>
+        <div class="key-binding-presets">
+          <button class="preset-button" id="presetNumbers">Preset: 1, 2, 3</button>
+          <button class="preset-button" id="presetMouse">Preset: LM, MM, RM</button>
+        </div>
+        <div class="key-binding-custom">
+          <h5>Custom Bindings</h5>
+          <div class="key-binding-item">
+            <label>Ability 1:</label>
+            <button class="key-binding-button" id="keyBinding1" data-ability="0">Click to set</button>
+          </div>
+          <div class="key-binding-item">
+            <label>Ability 2:</label>
+            <button class="key-binding-button" id="keyBinding2" data-ability="1">Click to set</button>
+          </div>
+          <div class="key-binding-item">
+            <label>Ability 3:</label>
+            <button class="key-binding-button" id="keyBinding3" data-ability="2">Click to set</button>
+          </div>
+        </div>
       </div>
     </div>
     <canvas id="gameCanvas" width="960" height="600"></canvas>

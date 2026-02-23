@@ -1,7 +1,5 @@
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
-const mini = document.getElementById("miniCanvas");
-const miniCtx = mini.getContext("2d");
 
 const hud = {
   hp: document.getElementById("hpValue"),
@@ -19,7 +17,6 @@ const gameOverEl = document.getElementById("gameOver");
 const restartButton = document.getElementById("restartButton");
 const gameOverTitle = document.getElementById("gameOverTitle");
 const gameOverDetails = document.getElementById("gameOverDetails");
-const minimapEl = document.getElementById("minimap");
 const bossBar = document.getElementById("bossBar");
 const bossBarFill = document.getElementById("bossBarFill");
 const upgradePanel = document.getElementById("upgradePanel");
@@ -29,6 +26,23 @@ const shipShopList = document.getElementById("shipShopList");
 const shopButton = document.getElementById("shopButton");
 const shopCloseButton = document.getElementById("shopCloseButton");
 const shopQuantumCores = document.getElementById("shopQuantumCores");
+const tutorialButton = document.getElementById("tutorialButton");
+const tutorialOverlay = document.getElementById("tutorialOverlay");
+const tutorialTextTop = document.getElementById("tutorialTextTop");
+const tutorialTextTopContent = document.getElementById("tutorialTextTopContent");
+const tutorialSkipButton = document.getElementById("tutorialSkipButton");
+const quantumCoresDisplay = document.getElementById("quantumCoresDisplay");
+const quantumCoresDisplayValue = document.getElementById("quantumCoresDisplayValue");
+const settingsButton = document.getElementById("settingsButton");
+const hudSettingsButton = document.getElementById("hudSettingsButton");
+const settingsPanel = document.getElementById("settingsPanel");
+const settingsCloseButton = document.getElementById("settingsCloseButton");
+const presetNumbers = document.getElementById("presetNumbers");
+const presetMouse = document.getElementById("presetMouse");
+const keyBinding1 = document.getElementById("keyBinding1");
+const keyBinding2 = document.getElementById("keyBinding2");
+const keyBinding3 = document.getElementById("keyBinding3");
+const abilityIcons = document.getElementById("abilityIcons");
 
 const input = {
   keys: new Set(),
@@ -38,31 +52,29 @@ const input = {
 const config = {
   width: canvas.width,
   height: canvas.height,
-  miniScaleX: canvas.width / mini.width,
-  miniScaleY: canvas.height / mini.height,
 };
 
 const difficultyModes = {
   recruit: {
-    enemyHp: 0.75,
-    enemySpeed: 0.85,
-    enemyCount: 0.7,
+    enemyHp: 0.55,
+    enemySpeed: 0.72,
+    enemyCount: 0.52,
     powerDrop: 1.25,
     bossHpMultiplier: 0.8,
   },
   veteran: {
-    enemyHp: 1,
-    enemySpeed: 1,
-    enemyCount: 1,
+    enemyHp: 0.8,
+    enemySpeed: 0.88,
+    enemyCount: 0.8,
     powerDrop: 1,
     bossHpMultiplier: 1,
   },
   nightmare: {
-    enemyHp: 1.5,
-    enemySpeed: 1.25,
-    enemyCount: 1.4,
+    enemyHp: 1.35,
+    enemySpeed: 1.15,
+    enemyCount: 1.3,
     powerDrop: 0.75,
-    bossHpMultiplier: 1.6,
+    bossHpMultiplier: 1.5,
   },
 };
 
@@ -77,8 +89,8 @@ const shipLoadouts = {
     baseCooldown: 0.15,
     damageMultiplier: 1,
     shotSpeedMultiplier: 1,
-    energyRegenMultiplier: 1,
-    shieldRegenMultiplier: 1,
+    energyRegenMultiplier: 0.4,
+    shieldRegenMultiplier: 2.0,
     abilities: [
       { key: "1", name: "Omni Burst", cost: 100, type: "burst" },
       { key: "2", name: "Rapid Volley", cost: 40, type: "rapidVolley" },
@@ -86,26 +98,6 @@ const shipLoadouts = {
     ],
     price: 0,
     unlocked: true,
-  },
-  aegis: {
-    id: "aegis",
-    name: "Aegis",
-    speed: 270,
-    maxHp: 200,
-    maxShield: 100,
-    maxEnergy: 110,
-    baseCooldown: 0.18,
-    damageMultiplier: 0.95,
-    shotSpeedMultiplier: 0.95,
-    energyRegenMultiplier: 0.9,
-    shieldRegenMultiplier: 1.3,
-    abilities: [
-      { key: "1", name: "Shockwave", cost: 100, type: "shockwave" },
-      { key: "2", name: "Shield Overcharge", cost: 50, type: "shieldOvercharge" },
-      { key: "3", name: "Fortify", cost: 70, type: "fortify" },
-    ],
-    price: 500,
-    unlocked: false,
   },
   phantom: {
     id: "phantom",
@@ -117,14 +109,34 @@ const shipLoadouts = {
     baseCooldown: 0.13,
     damageMultiplier: 0.92,
     shotSpeedMultiplier: 1.12,
-    energyRegenMultiplier: 1.1,
-    shieldRegenMultiplier: 0.85,
+    energyRegenMultiplier: 1.3,
+    shieldRegenMultiplier: 4,
     abilities: [
       { key: "1", name: "Blink", cost: 80, type: "blink" },
       { key: "2", name: "Ghostfire", cost: 45, type: "ghostfire" },
       { key: "3", name: "Phase Shift", cost: 65, type: "phaseShift" },
     ],
-    price: 750,
+    price: 600,
+    unlocked: false,
+  },
+  aegis: {
+    id: "aegis",
+    name: "Aegis",
+    speed: 270,
+    maxHp: 200,
+    maxShield: 100,
+    maxEnergy: 110,
+    baseCooldown: 0.18,
+    damageMultiplier: 0.95,
+    shotSpeedMultiplier: 0.95,
+    energyRegenMultiplier: 0.7,
+    shieldRegenMultiplier: 2.3,
+    abilities: [
+      { key: "1", name: "Shockwave", cost: 100, type: "shockwave" },
+      { key: "2", name: "Shield Overcharge", cost: 50, type: "shieldOvercharge" },
+      { key: "3", name: "Fortify", cost: 70, type: "fortify" },
+    ],
+    price: 1200,
     unlocked: false,
   },
   tempest: {
@@ -137,14 +149,14 @@ const shipLoadouts = {
     baseCooldown: 0.14,
     damageMultiplier: 1.05,
     shotSpeedMultiplier: 1.08,
-    energyRegenMultiplier: 1.15,
-    shieldRegenMultiplier: 0.95,
+    energyRegenMultiplier: 1.3,
+    shieldRegenMultiplier: 3.95,
     abilities: [
       { key: "1", name: "Lightning Storm", cost: 100, type: "lightningStorm" },
       { key: "2", name: "Combat Drone", cost: 60, type: "combatDrone" },
       { key: "3", name: "Overload", cost: 70, type: "overload" },
     ],
-    price: 1200,
+    price: 2800,
     unlocked: false,
   },
   titan: {
@@ -157,14 +169,14 @@ const shipLoadouts = {
     baseCooldown: 0.2,
     damageMultiplier: 1.1,
     shotSpeedMultiplier: 0.9,
-    energyRegenMultiplier: 0.85,
-    shieldRegenMultiplier: 1.4,
+    energyRegenMultiplier: 1.3,
+    shieldRegenMultiplier: 4.4,
     abilities: [
       { key: "1", name: "Siege Cannon", cost: 100, type: "siegeCannon" },
       { key: "2", name: "Energy Barrier", cost: 70, type: "energyBarrier" },
       { key: "3", name: "Rampage", cost: 75, type: "rampage" },
     ],
-    price: 1500,
+    price: 5000,
     unlocked: false,
   },
   specter: {
@@ -177,14 +189,14 @@ const shipLoadouts = {
     baseCooldown: 0.12,
     damageMultiplier: 0.9,
     shotSpeedMultiplier: 1.2,
-    energyRegenMultiplier: 1.2,
-    shieldRegenMultiplier: 0.8,
+    energyRegenMultiplier: 2,
+    shieldRegenMultiplier: 4.8,
     abilities: [
       { key: "1", name: "Black Hole", cost: 120, type: "blackHole" },
       { key: "2", name: "Shadow Step", cost: 40, type: "shadowStep" },
       { key: "3", name: "Ethereal", cost: 60, type: "ethereal" },
     ],
-    price: 1800,
+    price: 7500,
     unlocked: false,
   },
 };
@@ -263,9 +275,9 @@ const upgradePool = [
   {
     id: "nova",
     name: "Prismatic Condensers",
-    desc: "+35% Omni Burst damage",
+    desc: "+15% all special abilities damage",
     apply: (player) => {
-      player.novaDamageMultiplier *= 1.35;
+      player.abilityDamageMultiplier *= 1.15;
     },
   },
   {
@@ -916,8 +928,9 @@ class Enemy {
       const baseHp = { titan: 1200, sniper: 800, swarmlord: 900, vortex: 850 }[bossType] || 800;
       this.hp = baseHp + wave * 100;
     } else {
-      const hpMap = { swarm: 20, shooter: 25, charger: 18, defender: 45, dart: 12, orbiter: 30, splitter: 22 };
-      this.hp = (hpMap[kind] || 20) + wave * 3;
+      const hpMap = { swarm: 25, shooter: 15, charger: 18, defender: 250, dart: 15, orbiter: 30, splitter: 22 };
+      // Start slightly harder, scale less aggressively with waves
+      this.hp = (hpMap[kind] || 20) + Math.floor(wave * 0.8) + Math.floor(wave * wave * 0.08);
     }
     this.maxHp = this.hp;
     
@@ -1098,7 +1111,7 @@ class Enemy {
       return;
     } else {
       this.vx = Math.cos(performance.now() / 500 + this.x) * this.speed * 0.2;
-      this.vy = 40 + this.wave * 6;
+      this.vy = 40 + this.wave * 3;
       // Smooth velocity to prevent jittery rotation
       const smoothing = 0.15;
       this.smoothVx += (this.vx - this.smoothVx) * smoothing;
@@ -1211,9 +1224,10 @@ class Enemy {
           this.fireTimer = 1.2; // Slow fire rate
           const aim = Math.atan2(player.y - this.y, player.x - this.x);
           this.shootAngle = aim; // Store shooting angle
-          // Fire 3 large bullets in a spread
-          for (let i = 0; i < 3; i++) {
-            const offset = (i - 1) * 0.15;
+          // Fire 3 large bullets in a spread - one always aimed at player
+          bulletsOut.push(new Bullet(this.x, this.y, aim, 140, false, 14, "#ff4444", 25, "boss"));
+          for (let i = 0; i < 2; i++) {
+            const offset = (i - 0.5) * 0.15;
             const bullet = new Bullet(this.x, this.y, aim + offset, 140, false, 14, "#ff4444", 25, "boss");
             bulletsOut.push(bullet);
           }
@@ -1237,13 +1251,13 @@ class Enemy {
           this.fireTimer = 1.5;
           const aim = Math.atan2(player.y - this.y, player.x - this.x);
           this.shootAngle = aim; // Store shooting angle
-          // Fire 2 explosive shells
-          for (let i = 0; i < 2; i++) {
-            const offset = (i - 0.5) * 0.2;
-            const bullet = new Bullet(this.x, this.y, aim + offset, 120, false, 12, "#ff8800", 20, "boss");
-            bullet.explosive = true; // Mark as explosive
-            bulletsOut.push(bullet);
-          }
+          // Fire 2 explosive shells - one always aimed at player
+          const directBullet = new Bullet(this.x, this.y, aim, 120, false, 12, "#ff8800", 20, "boss");
+          directBullet.explosive = true;
+          bulletsOut.push(directBullet);
+          const offsetBullet = new Bullet(this.x, this.y, aim + 0.2, 120, false, 12, "#ff8800", 20, "boss");
+          offsetBullet.explosive = true;
+          bulletsOut.push(offsetBullet);
         }
       }
     } else if (this.bossType === "sniper") {
@@ -1255,9 +1269,11 @@ class Enemy {
           this.fireTimer = 0.08; // Much faster fire rate
           const aim = Math.atan2(player.y - this.y, player.x - this.x);
           this.shootAngle = aim; // Store shooting angle
-          // Fire many bullets in a wide spread
-          for (let i = 0; i < 8; i++) {
-            const offset = (i - 3.5) * 0.25; // Wide spread
+          // Fire many bullets in a wide spread - one always aimed at player
+          bulletsOut.push(new Bullet(this.x, this.y, aim, 320, false, 6, "#00ffff", 5, "boss"));
+          // Fire 7 more bullets in spread around center
+          for (let i = 0; i < 7; i++) {
+            const offset = (i < 3.5 ? (i - 3.5) * 0.25 : (i - 2.5) * 0.25);
             bulletsOut.push(
               new Bullet(this.x, this.y, aim + offset, 320, false, 6, "#00ffff", 5, "boss")
             );
@@ -1272,9 +1288,11 @@ class Enemy {
             this.tripleShotCount++;
             const aim = Math.atan2(player.y - this.y, player.x - this.x);
             this.shootAngle = aim; // Store shooting angle
-            // Fire wide spread of bullets
-            for (let i = 0; i < 6; i++) {
-              const offset = (i - 2.5) * 0.2;
+            // Fire wide spread of bullets - one always aimed at player
+            bulletsOut.push(new Bullet(this.x, this.y, aim, 320, false, 6, "#00ffff", 5, "boss"));
+            // Fire 5 more bullets in spread around center
+            for (let i = 0; i < 5; i++) {
+              const offset = (i < 2.5 ? (i - 2.5) * 0.2 : (i - 1.5) * 0.2);
               bulletsOut.push(
                 new Bullet(this.x, this.y, aim + offset, 320, false, 6, "#00ffff", 5, "boss")
               );
@@ -1291,9 +1309,14 @@ class Enemy {
           this.fireTimer = 0.15; // Faster fire rate
           const aim = Math.atan2(player.y - this.y, player.x - this.x);
           this.shootAngle = aim; // Store shooting angle
-          // Fire many piercing bullets in wide spread
-          for (let i = 0; i < 10; i++) {
-            const offset = (i - 4.5) * 0.2;
+          // Fire many piercing bullets in wide spread - one always aimed at player
+          const directPiercing = new Bullet(this.x, this.y, aim, 300, false, 7, "#00ffff", 5, "boss");
+          directPiercing.piercing = true;
+          directPiercing.life = 8;
+          bulletsOut.push(directPiercing);
+          // Fire 9 more bullets in spread around center
+          for (let i = 0; i < 9; i++) {
+            const offset = (i < 4.5 ? (i - 4.5) * 0.2 : (i - 3.5) * 0.2);
             const bullet = new Bullet(this.x, this.y, aim + offset, 300, false, 7, "#00ffff", 5, "boss");
             bullet.piercing = true;
             bullet.life = 8; // Longer life for piercing
@@ -1352,13 +1375,10 @@ class Enemy {
           this.fireTimer = 0.4;
           const aim = Math.atan2(player.y - this.y, player.x - this.x);
           this.shootAngle = aim; // Store shooting angle
-          // Fire 3 weak bullets in spread
-          for (let i = 0; i < 3; i++) {
-            const offset = (i - 1) * 0.12;
-            bulletsOut.push(
-              new Bullet(this.x, this.y, aim + offset, 180, false, 4, "#ff7dd1", 3, "boss")
-            );
-          }
+          // Fire 3 weak bullets in spread - one always aimed at player
+          bulletsOut.push(new Bullet(this.x, this.y, aim, 180, false, 4, "#ff7dd1", 3, "boss"));
+          bulletsOut.push(new Bullet(this.x, this.y, aim - 0.12, 180, false, 4, "#ff7dd1", 3, "boss"));
+          bulletsOut.push(new Bullet(this.x, this.y, aim + 0.12, 180, false, 4, "#ff7dd1", 3, "boss"));
         }
         // Frequent minion spawn
         this.minionSpawnTimer -= dt;
@@ -1436,9 +1456,13 @@ class Enemy {
           if (this.rapidFireCount < 30) {
             const aim = Math.atan2(player.y - this.y, player.x - this.x);
             this.shootAngle = aim; // Store shooting angle
-            const spread = (Math.random() - 0.5) * 0.4; // Random spread
-            const bullet = new Bullet(this.x, this.y, aim + spread, 250, false, 3, "#9b7fff", 2, "boss");
-            bulletsOut.push(bullet);
+            // Every 3rd bullet is aimed directly at player, others have random spread
+            if (this.rapidFireCount % 3 === 0) {
+              bulletsOut.push(new Bullet(this.x, this.y, aim, 250, false, 3, "#9b7fff", 2, "boss"));
+            } else {
+              const spread = (Math.random() - 0.5) * 0.4; // Random spread
+              bulletsOut.push(new Bullet(this.x, this.y, aim + spread, 250, false, 3, "#9b7fff", 2, "boss"));
+            }
           } else {
             this.rapidFireCount = 0;
             this.fireTimer = 0.8; // Brief pause after spray
@@ -1468,13 +1492,10 @@ class Enemy {
           if (this.rapidFireCount < 20) {
             const aim = Math.atan2(player.y - this.y, player.x - this.x);
             this.shootAngle = aim; // Store shooting angle
-            // Fire 3 parallel bullets
-            for (let i = 0; i < 3; i++) {
-              const offset = (i - 1) * 0.08; // Tight parallel spread
-              bulletsOut.push(
-                new Bullet(this.x, this.y, aim + offset, 280, false, 4, "#9b7fff", 3, "boss")
-              );
-            }
+            // Fire 3 parallel bullets - center one always aimed at player
+            bulletsOut.push(new Bullet(this.x, this.y, aim, 280, false, 4, "#9b7fff", 3, "boss"));
+            bulletsOut.push(new Bullet(this.x, this.y, aim - 0.08, 280, false, 4, "#9b7fff", 3, "boss"));
+            bulletsOut.push(new Bullet(this.x, this.y, aim + 0.08, 280, false, 4, "#9b7fff", 3, "boss"));
           } else {
             this.rapidFireCount = 0;
             this.fireTimer = 0.6; // Brief pause after stream
@@ -1490,8 +1511,11 @@ class Enemy {
           const aim = Math.atan2(player.y - this.y, player.x - this.x);
           this.shootAngle = aim; // Store shooting angle
           const spread = 5;
-          for (let i = 0; i < spread; i++) {
-            const offset = (i - (spread - 1) / 2) * 0.15;
+          // One bullet always aimed at player (center)
+          bulletsOut.push(new Bullet(this.x, this.y, aim, 210, false, 6, "#ff7dd1", 5, "boss"));
+          // Rest in spread around it
+          for (let i = 0; i < spread - 1; i++) {
+            const offset = (i < 2 ? (i - 2) * 0.15 : (i - 1) * 0.15);
             bulletsOut.push(
               new Bullet(this.x, this.y, aim + offset, 210, false, 6, "#ff7dd1", 5, "boss")
             );
@@ -1516,8 +1540,11 @@ class Enemy {
           this.shootAngle = aim; // Store shooting angle (use player direction for orientation)
           const rays = 10;
           const base = performance.now() / 500;
-          for (let i = 0; i < rays; i++) {
-            const ang = base + (i / rays) * Math.PI * 2;
+          // One bullet always aimed at player
+          bulletsOut.push(new Bullet(this.x, this.y, aim, 200, false, 5, "#ff5f9e", 5, "boss"));
+          // Rest in radial pattern
+          for (let i = 0; i < rays - 1; i++) {
+            const ang = base + (i / (rays - 1)) * Math.PI * 2;
             bulletsOut.push(
               new Bullet(this.x, this.y, ang, 200, false, 5, "#ff5f9e", 5, "boss")
             );
@@ -2102,6 +2129,7 @@ class Player {
     this.shieldRegenMultiplier = loadout.shieldRegenMultiplier;
     this.extraProjectiles = 0;
     this.novaDamageMultiplier = 1;
+    this.abilityDamageMultiplier = 1;
     this.abilities = loadout.abilities || [];
     this.shipId = loadout.id;
     this.invincible = false;
@@ -2124,10 +2152,25 @@ class Player {
   update(dt) {
     const accel = 600;
     const friction = 8;
-    if (input.keys.has("w") || input.keys.has("ArrowUp")) this.vy -= accel * dt;
-    if (input.keys.has("s") || input.keys.has("ArrowDown")) this.vy += accel * dt;
-    if (input.keys.has("a") || input.keys.has("ArrowLeft")) this.vx -= accel * dt;
-    if (input.keys.has("d") || input.keys.has("ArrowRight")) this.vx += accel * dt;
+    const wasMoving = Math.abs(this.vx) > 1 || Math.abs(this.vy) > 1;
+    // Lock movement until movement tutorial step
+    const canMove = !state.tutorialMode || state.tutorialStep >= 1 || state.tutorialTestWave;
+    if (canMove) {
+      // Support WASD and Arrow keys for movement
+      if (input.keys.has("w") || input.keys.has("arrowup")) this.vy -= accel * dt;
+      if (input.keys.has("s") || input.keys.has("arrowdown")) this.vy += accel * dt;
+      if (input.keys.has("a") || input.keys.has("arrowleft")) this.vx -= accel * dt;
+      if (input.keys.has("d") || input.keys.has("arrowright")) this.vx += accel * dt;
+    }
+    
+    // Track movement for tutorial
+    if (state.tutorialMode && !state.tutorialProgress.moved && !state.tutorialTestWave) {
+      const isMoving = Math.abs(this.vx) > 1 || Math.abs(this.vy) > 1;
+      if (isMoving && !wasMoving) {
+        state.tutorialProgress.moved = true;
+        checkTutorialStepCompletion();
+      }
+    }
 
     this.vx -= this.vx * friction * dt;
     this.vy -= this.vy * friction * dt;
@@ -2147,8 +2190,12 @@ class Player {
       0,
       this.maxShield
     );
+    // Energy regeneration: triple when fortify is active
+    const energyRegenMultiplier = this.fortifyActive 
+      ? this.energyRegenMultiplier * 3 
+      : this.energyRegenMultiplier;
     this.energy = clamp(
-      this.energy + dt * 6 * this.energyRegenMultiplier,
+      this.energy + dt * 20 * energyRegenMultiplier,
       0,
       this.maxEnergy
     );
@@ -2167,6 +2214,21 @@ class Player {
   }
   shoot(bullets) {
     if (this.cooldown > 0 && !this.rapidVolleyActive) return;
+    // Lock shooting until shooting tutorial step (step 2: "Aiming and Shooting")
+    // In tutorial mode, only allow shooting when on step 2 or later, or during test wave
+    // In normal game mode (not tutorial), always allow shooting
+    const canShoot = !state.tutorialMode || state.tutorialStep >= 2 || state.tutorialTestWave;
+    if (!canShoot) return;
+    
+    // Track shooting for tutorial (just needs mouse movement to aim)
+    if (state.tutorialMode && !state.tutorialProgress.shot && !state.tutorialTestWave) {
+      // Check if mouse has moved significantly from center
+      const mouseMoved = Math.abs(input.mouse.x - config.width / 2) > 50 || Math.abs(input.mouse.y - config.height / 2) > 50;
+      if (mouseMoved) {
+        state.tutorialProgress.shot = true;
+        checkTutorialStepCompletion();
+      }
+    }
     const angle = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
     const burstActive = this.burstTimer > 0;
     const rapidActive = this.rapidTimer > 0;
@@ -2356,474 +2418,417 @@ class Player {
     ctx.shadowColor = coreColor;
     
     if (this.shipId === "striker") {
-      // Balanced fighter - detailed hull with multiple sections
-      // Main fuselage
+      // Fighter jet design - streamlined fuselage with swept wings
+      // Main fuselage (long and narrow like a fighter jet)
       ctx.beginPath();
-      ctx.moveTo(20, 0); // Sharp nose
-      ctx.lineTo(12, -6); // Top front
-      ctx.lineTo(6, -10); // Top mid-front
-      ctx.lineTo(-4, -12); // Top mid
-      ctx.lineTo(-10, -8); // Top rear
-      ctx.lineTo(-12, -4); // Top side rear
-      ctx.lineTo(-10, 0); // Rear center
-      ctx.lineTo(-12, 4); // Bottom side rear
-      ctx.lineTo(-10, 8); // Bottom rear
-      ctx.lineTo(-4, 12); // Bottom mid
-      ctx.lineTo(6, 10); // Bottom mid-front
-      ctx.lineTo(12, 6); // Bottom front
+      ctx.moveTo(22, 0); // Sharp nose
+      ctx.lineTo(18, -3); // Top front
+      ctx.lineTo(12, -4); // Top mid-front
+      ctx.lineTo(4, -5); // Top mid
+      ctx.lineTo(-6, -4); // Top rear
+      ctx.lineTo(-12, -2); // Top tail
+      ctx.lineTo(-14, 0); // Rear tip
+      ctx.lineTo(-12, 2); // Bottom tail
+      ctx.lineTo(-6, 4); // Bottom rear
+      ctx.lineTo(4, 5); // Bottom mid
+      ctx.lineTo(12, 4); // Bottom mid-front
+      ctx.lineTo(18, 3); // Bottom front
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
       
-      // Forward wing sections
+      // Large swept-back wings (wide at base, tapering outward)
       ctx.fillStyle = accentColor;
       ctx.beginPath();
-      ctx.moveTo(10, -5);
-      ctx.lineTo(16, -8);
-      ctx.lineTo(14, -4);
-      ctx.lineTo(10, -2);
+      ctx.moveTo(4, -5); // Wide start near body
+      ctx.lineTo(2, -6);
+      ctx.lineTo(-8, -18); // Far out tip
+      ctx.lineTo(-10, -14); // Outer edge
+      ctx.lineTo(-2, -8); // Back to body
+      ctx.lineTo(4, -4); // Back to start
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(10, 5);
-      ctx.lineTo(16, 8);
-      ctx.lineTo(14, 4);
-      ctx.lineTo(10, 2);
+      ctx.moveTo(4, 5); // Wide start near body
+      ctx.lineTo(2, 6);
+      ctx.lineTo(-8, 18); // Far out tip
+      ctx.lineTo(-10, 14); // Outer edge
+      ctx.lineTo(-2, 8); // Back to body
+      ctx.lineTo(4, 4); // Back to start
       ctx.closePath();
       ctx.fill();
       
-      // Side weapon pods with barrels
-      ctx.fillStyle = coreColor;
+      // Cockpit canopy (bubble canopy like fighter jet)
+      ctx.fillStyle = "rgba(200, 240, 255, 0.7)";
       ctx.beginPath();
-      ctx.moveTo(14, -7);
-      ctx.lineTo(18, -9);
-      ctx.lineTo(17, -5);
-      ctx.lineTo(14, -4);
+      ctx.ellipse(6, 0, 4, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Nose cone detail
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(20, 0, 2, 0, Math.PI * 2);
+      ctx.fill();
+      
+    } else if (this.shipId === "aegis") {
+      // Heavy fighter/bomber design - wider fuselage with large wings
+      // Main fuselage (wider and more robust)
+      ctx.beginPath();
+      ctx.moveTo(20, 0); // Nose
+      ctx.lineTo(16, -4); // Top front
+      ctx.lineTo(10, -6); // Top mid-front
+      ctx.lineTo(2, -7); // Top mid
+      ctx.lineTo(-6, -6); // Top rear
+      ctx.lineTo(-12, -4); // Top tail
+      ctx.lineTo(-14, 0); // Rear tip
+      ctx.lineTo(-12, 4); // Bottom tail
+      ctx.lineTo(-6, 6); // Bottom rear
+      ctx.lineTo(2, 7); // Bottom mid
+      ctx.lineTo(10, 6); // Bottom mid-front
+      ctx.lineTo(16, 4); // Bottom front
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Very large swept wings (wide at base, extending far out)
+      ctx.fillStyle = accentColor;
+      ctx.beginPath();
+      ctx.moveTo(2, -7); // Wide start near body
+      ctx.lineTo(0, -8);
+      ctx.lineTo(-10, -20); // Far out tip
+      ctx.lineTo(-12, -16); // Outer edge
+      ctx.lineTo(-4, -10); // Back to body
+      ctx.lineTo(2, -6); // Back to start
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(14, 7);
-      ctx.lineTo(18, 9);
-      ctx.lineTo(17, 5);
-      ctx.lineTo(14, 4);
+      ctx.moveTo(2, 7); // Wide start near body
+      ctx.lineTo(0, 8);
+      ctx.lineTo(-10, 20); // Far out tip
+      ctx.lineTo(-12, 16); // Outer edge
+      ctx.lineTo(-4, 10); // Back to body
+      ctx.lineTo(2, 6); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      
+      // Cockpit canopy
+      ctx.fillStyle = "rgba(200, 240, 255, 0.7)";
+      ctx.beginPath();
+      ctx.ellipse(8, 0, 5, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Engine intakes on sides
+      ctx.fillStyle = coreColor;
+      ctx.beginPath();
+      ctx.ellipse(-4, -5, 3, 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(-4, 5, 3, 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+    } else if (this.shipId === "phantom") {
+      // Stealth fighter design - very sleek and angular
+      // Main fuselage (narrow and stealthy)
+      ctx.beginPath();
+      ctx.moveTo(24, 0); // Very sharp nose
+      ctx.lineTo(20, -2); // Top front
+      ctx.lineTo(14, -3); // Top mid-front
+      ctx.lineTo(6, -4); // Top mid
+      ctx.lineTo(-4, -3); // Top rear
+      ctx.lineTo(-10, -1); // Top tail
+      ctx.lineTo(-12, 0); // Rear tip
+      ctx.lineTo(-10, 1); // Bottom tail
+      ctx.lineTo(-4, 3); // Bottom rear
+      ctx.lineTo(6, 4); // Bottom mid
+      ctx.lineTo(14, 3); // Bottom mid-front
+      ctx.lineTo(20, 2); // Bottom front
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Large forward-swept wings (wide at base, extending forward)
+      ctx.fillStyle = accentColor;
+      ctx.beginPath();
+      ctx.moveTo(6, -4); // Wide start near body
+      ctx.lineTo(4, -5);
+      ctx.lineTo(24, -10); // Far forward tip
+      ctx.lineTo(22, -6); // Outer edge
+      ctx.lineTo(10, -2); // Back to body
+      ctx.lineTo(6, -3); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(6, 4); // Wide start near body
+      ctx.lineTo(4, 5);
+      ctx.lineTo(24, 10); // Far forward tip
+      ctx.lineTo(22, 6); // Outer edge
+      ctx.lineTo(10, 2); // Back to body
+      ctx.lineTo(6, 3); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      
+      // Cockpit (low profile)
+      ctx.fillStyle = "rgba(200, 200, 255, 0.6)";
+      ctx.beginPath();
+      ctx.ellipse(8, 0, 3, 2.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Stealth angular panels
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(4, -3);
+      ctx.lineTo(0, -4);
+      ctx.lineTo(2, -2);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(4, 3);
+      ctx.lineTo(0, 4);
+      ctx.lineTo(2, 2);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      
+    } else if (this.shipId === "tempest") {
+      // Fighter jet with energy weapons - angular design
+      // Main fuselage
+      ctx.beginPath();
+      ctx.moveTo(22, 0); // Nose
+      ctx.lineTo(18, -3); // Top front
+      ctx.lineTo(12, -4); // Top mid-front
+      ctx.lineTo(4, -5); // Top mid
+      ctx.lineTo(-6, -4); // Top rear
+      ctx.lineTo(-12, -2); // Top tail
+      ctx.lineTo(-14, 0); // Rear tip
+      ctx.lineTo(-12, 2); // Bottom tail
+      ctx.lineTo(-6, 4); // Bottom rear
+      ctx.lineTo(4, 5); // Bottom mid
+      ctx.lineTo(12, 4); // Bottom mid-front
+      ctx.lineTo(18, 3); // Bottom front
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Large delta wings with energy nodes (wide at base)
+      ctx.fillStyle = accentColor;
+      ctx.beginPath();
+      ctx.moveTo(4, -5); // Wide start near body
+      ctx.lineTo(2, -6);
+      ctx.lineTo(-8, -18); // Far out tip
+      ctx.lineTo(-10, -14); // Outer edge
+      ctx.lineTo(-2, -8); // Back to body
+      ctx.lineTo(4, -4); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(4, 5); // Wide start near body
+      ctx.lineTo(2, 6);
+      ctx.lineTo(-8, 18); // Far out tip
+      ctx.lineTo(-10, 14); // Outer edge
+      ctx.lineTo(-2, 8); // Back to body
+      ctx.lineTo(4, 4); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      
+      // Energy weapon pods on wingtips
+      ctx.fillStyle = "#ffff00";
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "#ffff00";
+      ctx.beginPath();
+      ctx.arc(-8, -16, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-8, 16, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(-8, -16, 1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-8, 16, 1, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Cockpit
+      ctx.fillStyle = "rgba(255, 255, 200, 0.7)";
+      ctx.beginPath();
+      ctx.ellipse(6, 0, 4, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Energy conduits (lightning pattern)
+      ctx.strokeStyle = "#ffff00";
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(4, -5);
+      ctx.lineTo(2, -6);
+      ctx.lineTo(-8, -16);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(4, 5);
+      ctx.lineTo(2, 6);
+      ctx.lineTo(-8, 16);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      
+    } else if (this.shipId === "titan") {
+      // Heavy bomber/attack aircraft - wide and heavily armed
+      // Main fuselage (wide and robust)
+      ctx.beginPath();
+      ctx.moveTo(18, 0); // Nose
+      ctx.lineTo(14, -5); // Top front
+      ctx.lineTo(8, -7); // Top mid-front
+      ctx.lineTo(0, -8); // Top mid
+      ctx.lineTo(-8, -7); // Top rear
+      ctx.lineTo(-14, -5); // Top tail
+      ctx.lineTo(-16, 0); // Rear tip
+      ctx.lineTo(-14, 5); // Bottom tail
+      ctx.lineTo(-8, 7); // Bottom rear
+      ctx.lineTo(0, 8); // Bottom mid
+      ctx.lineTo(8, 7); // Bottom mid-front
+      ctx.lineTo(14, 5); // Bottom front
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Very large swept wings (wide at base, extending far out)
+      ctx.fillStyle = accentColor;
+      ctx.beginPath();
+      ctx.moveTo(0, -8); // Wide start near body
+      ctx.lineTo(-2, -9);
+      ctx.lineTo(-12, -22); // Far out tip
+      ctx.lineTo(-14, -18); // Outer edge
+      ctx.lineTo(-6, -12); // Back to body
+      ctx.lineTo(0, -7); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, 8); // Wide start near body
+      ctx.lineTo(-2, 9);
+      ctx.lineTo(-12, 22); // Far out tip
+      ctx.lineTo(-14, 18); // Outer edge
+      ctx.lineTo(-6, 12); // Back to body
+      ctx.lineTo(0, 7); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      
+      // Heavy weapon pods under wings
+      ctx.fillStyle = coreColor;
+      ctx.beginPath();
+      ctx.moveTo(-6, -12);
+      ctx.lineTo(-10, -14);
+      ctx.lineTo(-9, -11);
+      ctx.lineTo(-5, -10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-6, 12);
+      ctx.lineTo(-10, 14);
+      ctx.lineTo(-9, 11);
+      ctx.lineTo(-5, 10);
       ctx.closePath();
       ctx.fill();
       // Weapon barrels
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
-      ctx.arc(16, -7, 1.5, 0, Math.PI * 2);
+      ctx.arc(-8, -12, 2, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(16, 7, 1.5, 0, Math.PI * 2);
+      ctx.arc(-8, 12, 2, 0, Math.PI * 2);
       ctx.fill();
-      
-      // Cockpit canopy
-      ctx.fillStyle = "rgba(200, 240, 255, 0.6)";
-      ctx.beginPath();
-      ctx.ellipse(4, 0, 3, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Hull details
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(-2, -6);
-      ctx.lineTo(-6, -8);
-      ctx.moveTo(-2, 6);
-      ctx.lineTo(-6, 8);
-      ctx.stroke();
-      
-    } else if (this.shipId === "aegis") {
-      // Heavy defensive tank - multi-layered armored hull
-      // Main armored body
-      ctx.beginPath();
-      ctx.moveTo(18, 0); // Nose
-      ctx.lineTo(12, -8); // Top front
-      ctx.lineTo(4, -12); // Top mid-front
-      ctx.lineTo(-4, -14); // Top mid
-      ctx.lineTo(-10, -12); // Top rear
-      ctx.lineTo(-14, -8); // Top side
-      ctx.lineTo(-16, -4); // Top corner
-      ctx.lineTo(-16, 0); // Rear center top
-      ctx.lineTo(-16, 4); // Bottom corner
-      ctx.lineTo(-14, 8); // Bottom side
-      ctx.lineTo(-10, 12); // Bottom rear
-      ctx.lineTo(-4, 14); // Bottom mid
-      ctx.lineTo(4, 12); // Bottom mid-front
-      ctx.lineTo(12, 8); // Bottom front
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      // Heavy armor plates on sides
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(-6, -10);
-      ctx.lineTo(-10, -12);
-      ctx.lineTo(-12, -8);
-      ctx.lineTo(-8, -6);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-6, 10);
-      ctx.lineTo(-10, 12);
-      ctx.lineTo(-12, 8);
-      ctx.lineTo(-8, 6);
-      ctx.closePath();
-      ctx.fill();
-      
-      // Central reactor core
-      ctx.fillStyle = coreColor;
-      ctx.shadowBlur = 15;
-      ctx.shadowColor = coreColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      
-      // Shield generator nodes
-      ctx.fillStyle = coreColor;
-      ctx.beginPath();
-      ctx.arc(-10, -10, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(-10, 10, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      // Generator details
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(-10, -10, 3.5, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(-10, 10, 3.5, 0, Math.PI * 2);
-      ctx.stroke();
-      
-      // Reinforcement lines
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(-6, -12);
-      ctx.lineTo(-6, 12);
-      ctx.moveTo(2, -10);
-      ctx.lineTo(2, 10);
-      ctx.stroke();
-      
-    } else if (this.shipId === "phantom") {
-      // Sleek interceptor - narrow stealth fighter
-      // Main streamlined hull
-      ctx.beginPath();
-      ctx.moveTo(22, 0); // Very sharp nose
-      ctx.lineTo(16, -5); // Top front
-      ctx.lineTo(8, -8); // Top mid-front
-      ctx.lineTo(0, -10); // Top mid
-      ctx.lineTo(-6, -9); // Top rear
-      ctx.lineTo(-10, -6); // Top corner
-      ctx.lineTo(-10, -2); // Top side
-      ctx.lineTo(-8, 0); // Rear center
-      ctx.lineTo(-10, 2); // Bottom side
-      ctx.lineTo(-10, 6); // Bottom corner
-      ctx.lineTo(-6, 9); // Bottom rear
-      ctx.lineTo(0, 10); // Bottom mid
-      ctx.lineTo(8, 8); // Bottom mid-front
-      ctx.lineTo(16, 5); // Bottom front
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      // Forward swept wings
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(10, -6);
-      ctx.lineTo(18, -8);
-      ctx.lineTo(16, -4);
-      ctx.lineTo(10, -2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(10, 6);
-      ctx.lineTo(18, 8);
-      ctx.lineTo(16, 4);
-      ctx.lineTo(10, 2);
-      ctx.closePath();
-      ctx.fill();
-      
-      // Rear stabilizer fins
-      ctx.beginPath();
-      ctx.moveTo(-8, -4);
-      ctx.lineTo(-12, -6);
-      ctx.lineTo(-10, -2);
-      ctx.lineTo(-6, -1);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-8, 4);
-      ctx.lineTo(-12, 6);
-      ctx.lineTo(-10, 2);
-      ctx.lineTo(-6, 1);
-      ctx.closePath();
-      ctx.fill();
-      
-      // Stealth panels (angular sections)
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.moveTo(-2, -6);
-      ctx.lineTo(-6, -8);
-      ctx.lineTo(-4, -4);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(-2, 6);
-      ctx.lineTo(-6, 8);
-      ctx.lineTo(-4, 4);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.globalAlpha = 1;
       
       // Cockpit
-      ctx.fillStyle = "rgba(200, 200, 255, 0.5)";
+      ctx.fillStyle = "rgba(255, 200, 200, 0.7)";
       ctx.beginPath();
-      ctx.ellipse(2, 0, 2.5, 3.5, 0, 0, Math.PI * 2);
+      ctx.ellipse(10, 0, 5, 4, 0, 0, Math.PI * 2);
       ctx.fill();
       
-    } else if (this.shipId === "tempest") {
-      // Lightning ship - angular with energy conduits and nodes
-      // Main angular hull
-      ctx.beginPath();
-      ctx.moveTo(21, 0); // Nose
-      ctx.lineTo(14, -8); // Top front
-      ctx.lineTo(8, -12); // Top mid-front
-      ctx.lineTo(0, -14); // Top mid
-      ctx.lineTo(-6, -13); // Top rear
-      ctx.lineTo(-10, -10); // Top corner
-      ctx.lineTo(-12, -5); // Top side
-      ctx.lineTo(-12, 0); // Rear center
-      ctx.lineTo(-12, 5); // Bottom side
-      ctx.lineTo(-10, 10); // Bottom corner
-      ctx.lineTo(-6, 13); // Bottom rear
-      ctx.lineTo(0, 14); // Bottom mid
-      ctx.lineTo(8, 12); // Bottom mid-front
-      ctx.lineTo(14, 8); // Bottom front
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      // Energy conduit channels
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(10, -8);
-      ctx.lineTo(4, -12);
-      ctx.lineTo(-4, -10);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(10, 8);
-      ctx.lineTo(4, 12);
-      ctx.lineTo(-4, 10);
-      ctx.stroke();
-      
-      // Large energy nodes on sides
-      ctx.fillStyle = "#ffff00";
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = "#ffff00";
-      ctx.beginPath();
-      ctx.arc(12, -7, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(12, 7, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      // Node cores
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(12, -7, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(12, 7, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Lightning pattern details
-      ctx.strokeStyle = "#ffff00";
-      ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.moveTo(-6, -8);
-      ctx.lineTo(-4, -10);
-      ctx.lineTo(-8, -12);
-      ctx.lineTo(-6, -10);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(-6, 8);
-      ctx.lineTo(-4, 10);
-      ctx.lineTo(-8, 12);
-      ctx.lineTo(-6, 10);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      
-      // Central power core
+      // Engine details
       ctx.fillStyle = coreColor;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = 8;
       ctx.shadowColor = coreColor;
       ctx.beginPath();
-      ctx.arc(0, 0, 4, 0, Math.PI * 2);
+      ctx.arc(-6, -6, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(-6, 6, 2.5, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
-      
-    } else if (this.shipId === "titan") {
-      // Massive siege ship - very wide, heavily armored
-      // Main massive hull
-      ctx.beginPath();
-      ctx.moveTo(16, 0); // Nose
-      ctx.lineTo(10, -10); // Top front
-      ctx.lineTo(2, -14); // Top mid-front
-      ctx.lineTo(-6, -16); // Top mid
-      ctx.lineTo(-12, -15); // Top rear
-      ctx.lineTo(-16, -12); // Top side
-      ctx.lineTo(-18, -8); // Top corner
-      ctx.lineTo(-18, 0); // Rear center
-      ctx.lineTo(-18, 8); // Bottom corner
-      ctx.lineTo(-16, 12); // Bottom side
-      ctx.lineTo(-12, 15); // Bottom rear
-      ctx.lineTo(-6, 16); // Bottom mid
-      ctx.lineTo(2, 14); // Bottom mid-front
-      ctx.lineTo(10, 10); // Bottom front
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      // Heavy armor plating sections
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(-8, -14);
-      ctx.lineTo(-14, -13);
-      ctx.lineTo(-16, -10);
-      ctx.lineTo(-12, -8);
-      ctx.lineTo(-8, -10);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-8, 14);
-      ctx.lineTo(-14, 13);
-      ctx.lineTo(-16, 10);
-      ctx.lineTo(-12, 8);
-      ctx.lineTo(-8, 10);
-      ctx.closePath();
-      ctx.fill();
-      
-      // Siege cannon mounts (large)
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(-14, -10);
-      ctx.lineTo(-18, -12);
-      ctx.lineTo(-17, -8);
-      ctx.lineTo(-14, -6);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-14, 10);
-      ctx.lineTo(-18, 12);
-      ctx.lineTo(-17, 8);
-      ctx.lineTo(-14, 6);
-      ctx.closePath();
-      ctx.fill();
-      // Cannon barrels
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(-16, -9, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(-16, 9, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Central reactor core (large)
-      ctx.fillStyle = coreColor;
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = coreColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      
-      // Reinforcement lines
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(-8, -14);
-      ctx.lineTo(-8, 14);
-      ctx.moveTo(0, -12);
-      ctx.lineTo(0, 12);
-      ctx.stroke();
       
     } else if (this.shipId === "specter") {
-      // Void ship - ethereal, otherworldly design
-      // Main wispy hull
+      // Stealth fighter with phase tech - very sleek
+      // Main fuselage (long and narrow)
       ctx.beginPath();
-      ctx.moveTo(23, 0); // Very long sharp nose
-      ctx.lineTo(18, -6); // Top front
-      ctx.lineTo(12, -9); // Top mid-front
-      ctx.lineTo(4, -11); // Top mid
-      ctx.lineTo(-4, -11); // Top rear
-      ctx.lineTo(-10, -8); // Top corner
-      ctx.lineTo(-11, -4); // Top side
-      ctx.lineTo(-10, 0); // Rear center
-      ctx.lineTo(-11, 4); // Bottom side
-      ctx.lineTo(-10, 8); // Bottom corner
-      ctx.lineTo(-4, 11); // Bottom rear
-      ctx.lineTo(4, 11); // Bottom mid
-      ctx.lineTo(12, 9); // Bottom mid-front
-      ctx.lineTo(18, 6); // Bottom front
+      ctx.moveTo(26, 0); // Very long sharp nose
+      ctx.lineTo(22, -2); // Top front
+      ctx.lineTo(16, -3); // Top mid-front
+      ctx.lineTo(8, -4); // Top mid
+      ctx.lineTo(-2, -3); // Top rear
+      ctx.lineTo(-10, -1); // Top tail
+      ctx.lineTo(-12, 0); // Rear tip
+      ctx.lineTo(-10, 1); // Bottom tail
+      ctx.lineTo(-2, 3); // Bottom rear
+      ctx.lineTo(8, 4); // Bottom mid
+      ctx.lineTo(16, 3); // Bottom mid-front
+      ctx.lineTo(22, 2); // Bottom front
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
       
-      // Void energy trails (wispy)
-      ctx.globalAlpha = 0.6;
-      ctx.fillStyle = coreColor;
-      ctx.beginPath();
-      ctx.ellipse(-10, 0, 12, 5, angle + Math.PI / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      
-      // Void crystals (glowing)
+      // Large forward-swept wings (wide at base, extending forward)
       ctx.fillStyle = accentColor;
-      ctx.shadowBlur = 15;
+      ctx.beginPath();
+      ctx.moveTo(8, -4); // Wide start near body
+      ctx.lineTo(6, -5);
+      ctx.lineTo(28, -8); // Far forward tip
+      ctx.lineTo(26, -4); // Outer edge
+      ctx.lineTo(12, -2); // Back to body
+      ctx.lineTo(8, -3); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(8, 4); // Wide start near body
+      ctx.lineTo(6, 5);
+      ctx.lineTo(28, 8); // Far forward tip
+      ctx.lineTo(26, 4); // Outer edge
+      ctx.lineTo(12, 2); // Back to body
+      ctx.lineTo(8, 3); // Back to start
+      ctx.closePath();
+      ctx.fill();
+      
+      // Cockpit (low profile)
+      ctx.fillStyle = "rgba(200, 200, 255, 0.6)";
+      ctx.beginPath();
+      ctx.ellipse(10, 0, 3.5, 2.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Phase shift crystals (glowing)
+      ctx.fillStyle = accentColor;
+      ctx.shadowBlur = 12;
       ctx.shadowColor = accentColor;
       ctx.beginPath();
-      ctx.moveTo(-6, -5);
-      ctx.lineTo(-4, -7);
-      ctx.lineTo(-8, -7);
+      ctx.moveTo(-4, -3);
+      ctx.lineTo(-2, -5);
+      ctx.lineTo(-6, -5);
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(-6, 5);
-      ctx.lineTo(-4, 7);
-      ctx.lineTo(-8, 7);
+      ctx.moveTo(-4, 3);
+      ctx.lineTo(-2, 5);
+      ctx.lineTo(-6, 5);
       ctx.closePath();
       ctx.fill();
       ctx.shadowBlur = 0;
       
-      // Phase shift indicators (rings)
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.6;
-      ctx.beginPath();
-      ctx.arc(0, 0, 9, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(0, 0, 6, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      
-      // Central void core
+      // Phase energy trails (subtle)
+      ctx.globalAlpha = 0.4;
       ctx.fillStyle = coreColor;
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = coreColor;
       ctx.beginPath();
-      ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+      ctx.ellipse(-8, 0, 10, 4, angle + Math.PI / 2, 0, Math.PI * 2);
       ctx.fill();
-      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
     }
     
     ctx.shadowBlur = 0;
@@ -2835,98 +2840,88 @@ class Player {
     ctx.shadowColor = coreColor;
     ctx.beginPath();
     if (this.shipId === "striker") {
-      ctx.moveTo(20, 0);
-      ctx.lineTo(12, -6);
-      ctx.lineTo(6, -10);
-      ctx.lineTo(-4, -12);
-      ctx.lineTo(-10, -8);
-      ctx.lineTo(-12, -4);
-      ctx.lineTo(-10, 0);
-      ctx.lineTo(-12, 4);
-      ctx.lineTo(-10, 8);
-      ctx.lineTo(-4, 12);
-      ctx.lineTo(6, 10);
-      ctx.lineTo(12, 6);
+      ctx.moveTo(22, 0);
+      ctx.lineTo(18, -3);
+      ctx.lineTo(12, -4);
+      ctx.lineTo(4, -5);
+      ctx.lineTo(-6, -4);
+      ctx.lineTo(-12, -2);
+      ctx.lineTo(-14, 0);
+      ctx.lineTo(-12, 2);
+      ctx.lineTo(-6, 4);
+      ctx.lineTo(4, 5);
+      ctx.lineTo(12, 4);
+      ctx.lineTo(18, 3);
       ctx.closePath();
     } else if (this.shipId === "aegis") {
-      ctx.moveTo(18, 0);
-      ctx.lineTo(12, -8);
-      ctx.lineTo(4, -12);
-      ctx.lineTo(-4, -14);
-      ctx.lineTo(-10, -12);
-      ctx.lineTo(-14, -8);
-      ctx.lineTo(-16, -4);
-      ctx.lineTo(-16, 0);
-      ctx.lineTo(-16, 4);
-      ctx.lineTo(-14, 8);
-      ctx.lineTo(-10, 12);
-      ctx.lineTo(-4, 14);
-      ctx.lineTo(4, 12);
-      ctx.lineTo(12, 8);
+      ctx.moveTo(20, 0);
+      ctx.lineTo(16, -4);
+      ctx.lineTo(10, -6);
+      ctx.lineTo(2, -7);
+      ctx.lineTo(-6, -6);
+      ctx.lineTo(-12, -4);
+      ctx.lineTo(-14, 0);
+      ctx.lineTo(-12, 4);
+      ctx.lineTo(-6, 6);
+      ctx.lineTo(2, 7);
+      ctx.lineTo(10, 6);
+      ctx.lineTo(16, 4);
       ctx.closePath();
     } else if (this.shipId === "phantom") {
-      ctx.moveTo(22, 0);
-      ctx.lineTo(16, -5);
-      ctx.lineTo(8, -8);
-      ctx.lineTo(0, -10);
-      ctx.lineTo(-6, -9);
-      ctx.lineTo(-10, -6);
-      ctx.lineTo(-10, -2);
-      ctx.lineTo(-8, 0);
-      ctx.lineTo(-10, 2);
-      ctx.lineTo(-10, 6);
-      ctx.lineTo(-6, 9);
-      ctx.lineTo(0, 10);
-      ctx.lineTo(8, 8);
-      ctx.lineTo(16, 5);
+      ctx.moveTo(24, 0);
+      ctx.lineTo(20, -2);
+      ctx.lineTo(14, -3);
+      ctx.lineTo(6, -4);
+      ctx.lineTo(-4, -3);
+      ctx.lineTo(-10, -1);
+      ctx.lineTo(-12, 0);
+      ctx.lineTo(-10, 1);
+      ctx.lineTo(-4, 3);
+      ctx.lineTo(6, 4);
+      ctx.lineTo(14, 3);
+      ctx.lineTo(20, 2);
       ctx.closePath();
     } else if (this.shipId === "tempest") {
-      ctx.moveTo(21, 0);
-      ctx.lineTo(14, -8);
-      ctx.lineTo(8, -12);
-      ctx.lineTo(0, -14);
-      ctx.lineTo(-6, -13);
-      ctx.lineTo(-10, -10);
-      ctx.lineTo(-12, -5);
-      ctx.lineTo(-12, 0);
-      ctx.lineTo(-12, 5);
-      ctx.lineTo(-10, 10);
-      ctx.lineTo(-6, 13);
-      ctx.lineTo(0, 14);
-      ctx.lineTo(8, 12);
-      ctx.lineTo(14, 8);
+      ctx.moveTo(22, 0);
+      ctx.lineTo(18, -3);
+      ctx.lineTo(12, -4);
+      ctx.lineTo(4, -5);
+      ctx.lineTo(-6, -4);
+      ctx.lineTo(-12, -2);
+      ctx.lineTo(-14, 0);
+      ctx.lineTo(-12, 2);
+      ctx.lineTo(-6, 4);
+      ctx.lineTo(4, 5);
+      ctx.lineTo(12, 4);
+      ctx.lineTo(18, 3);
       ctx.closePath();
     } else if (this.shipId === "titan") {
-      ctx.moveTo(16, 0);
-      ctx.lineTo(10, -10);
-      ctx.lineTo(2, -14);
-      ctx.lineTo(-6, -16);
-      ctx.lineTo(-12, -15);
-      ctx.lineTo(-16, -12);
-      ctx.lineTo(-18, -8);
-      ctx.lineTo(-18, 0);
-      ctx.lineTo(-18, 8);
-      ctx.lineTo(-16, 12);
-      ctx.lineTo(-12, 15);
-      ctx.lineTo(-6, 16);
-      ctx.lineTo(2, 14);
-      ctx.lineTo(10, 10);
+      ctx.moveTo(18, 0);
+      ctx.lineTo(14, -5);
+      ctx.lineTo(8, -7);
+      ctx.lineTo(0, -8);
+      ctx.lineTo(-8, -7);
+      ctx.lineTo(-14, -5);
+      ctx.lineTo(-16, 0);
+      ctx.lineTo(-14, 5);
+      ctx.lineTo(-8, 7);
+      ctx.lineTo(0, 8);
+      ctx.lineTo(8, 7);
+      ctx.lineTo(14, 5);
       ctx.closePath();
     } else if (this.shipId === "specter") {
-      ctx.moveTo(23, 0);
-      ctx.lineTo(18, -6);
-      ctx.lineTo(12, -9);
-      ctx.lineTo(4, -11);
-      ctx.lineTo(-4, -11);
-      ctx.lineTo(-10, -8);
-      ctx.lineTo(-11, -4);
-      ctx.lineTo(-10, 0);
-      ctx.lineTo(-11, 4);
-      ctx.lineTo(-10, 8);
-      ctx.lineTo(-4, 11);
-      ctx.lineTo(4, 11);
-      ctx.lineTo(12, 9);
-      ctx.lineTo(18, 6);
+      ctx.moveTo(26, 0);
+      ctx.lineTo(22, -2);
+      ctx.lineTo(16, -3);
+      ctx.lineTo(8, -4);
+      ctx.lineTo(-2, -3);
+      ctx.lineTo(-10, -1);
+      ctx.lineTo(-12, 0);
+      ctx.lineTo(-10, 1);
+      ctx.lineTo(-2, 3);
+      ctx.lineTo(8, 4);
+      ctx.lineTo(16, 3);
+      ctx.lineTo(22, 2);
       ctx.closePath();
     }
     ctx.stroke();
@@ -3095,6 +3090,21 @@ const state = {
   enemiesToSpawn: [], // Queue of enemies to spawn
   spawnTimer: 0, // Timer for spawning next batch
   waveComplete: false, // Whether all enemies have been spawned
+  currentSegmentEnemies: 0, // Total enemies spawned in current wave (for segment calculation)
+  maxEnemiesOnScreen: 12, // Maximum enemies on screen at once
+  segmentsSpawned: 0, // Number of segments spawned in current wave
+  abilityKeys: JSON.parse(localStorage.getItem("orbital-ability-keys") || '["1", "2", "3"]'), // Key bindings for abilities
+  tutorialMode: false,
+  tutorialStep: 0,
+  tutorialTestWave: false,
+  tutorialStepStartTime: 0,
+  tutorialProgress: {
+    moved: false,
+    shot: false,
+    usedAbility1: false,
+    usedAbility2: false,
+    usedAbility3: false,
+  },
 };
 
 const addEnergy = (amount) => {
@@ -3127,6 +3137,21 @@ const applyUpgradeChoice = (choice) => {
 };
 
 const openUpgradePanel = () => {
+  // Clear all entities before showing upgrade panel
+  state.bullets = [];
+  state.enemyBullets = [];
+  state.particles = [];
+  state.powerUps = [];
+  state.drones = [];
+  state.barriers = [];
+  state.blackHoles = [];
+  state.expandingCircles = [];
+  state.timeDilationFields = [];
+  
+  // Reset player to starting position (center bottom)
+  state.player.x = config.width / 2;
+  state.player.y = config.height - 100;
+  
   state.upgradePending = true;
   state.paused = true;
   upgradePanel.classList.remove("hidden");
@@ -3142,7 +3167,7 @@ const openUpgradePanel = () => {
 };
 
 const onEnemyDestroyed = (enemy, index) => {
-  state.score += enemy.kind === "boss" ? 500 : 40;
+  state.score += enemy.kind === "boss" ? 500 : 30;
   
   // Award quantum cores immediately
   const diff = difficultyModes[state.difficultyKey] || difficultyModes.veteran;
@@ -3150,7 +3175,16 @@ const onEnemyDestroyed = (enemy, index) => {
   if (enemy.kind === "boss") {
     coresAwarded = Math.floor((50 + state.wave * 5) * (diff.bossHpMultiplier || 1));
   } else {
-    coresAwarded = Math.floor((2 + state.wave * 0.5) * (state.difficultyKey === "nightmare" ? 1.5 : state.difficultyKey === "veteran" ? 1.2 : 1));
+    const baseCores = 2 + state.wave * 0.5;
+    let multiplier = 1;
+    if (state.difficultyKey === "nightmare") {
+      multiplier = 1.5;
+    } else if (state.difficultyKey === "veteran") {
+      multiplier = 1.2;
+    } else if (state.difficultyKey === "recruit") {
+      multiplier = 0.3; // Significantly reduced for recruit
+    }
+    coresAwarded = Math.floor(baseCores * multiplier);
   }
   state.quantumCores += coresAwarded;
   state.quantumCoresEarnedThisRun += coresAwarded;
@@ -3184,7 +3218,7 @@ const onEnemyDestroyed = (enemy, index) => {
       )
     );
   }
-  addEnergy(enemy.kind === "boss" ? 35 : 15);
+  addEnergy(enemy.kind === "boss" ? 65 : 1);
   if (enemy.kind === "boss") {
     state.boss = null;
   }
@@ -3217,9 +3251,9 @@ const abilityHandlers = {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     abilityParticleBurst("#9bf5ff", 250, 100);
     const sprays = 48;
-    const damage = 7 * state.player.damageMultiplier * state.player.novaDamageMultiplier;
+    const damage = 7 * state.player.damageMultiplier * state.player.novaDamageMultiplier * state.player.abilityDamageMultiplier;
     const baseSpeed = 420 * state.player.shotSpeedMultiplier;
-    for (let ring = 0; ring < 4; ring++) {
+    for (let ring = 0; ring < 2; ring++) {
       for (let i = 0; i < sprays; i++) {
         const angle = (i / sprays) * Math.PI * 2 + ring * 0.04;
         state.bullets.push(
@@ -3233,7 +3267,7 @@ const abilityHandlers = {
     abilityParticleBurst("#ffd166", 120, 60);
     // Activate rapid volley mode: fires 2 parallel bullets rapidly
     state.player.rapidVolleyActive = true;
-    state.player.rapidVolleyTimer = 1.5; // 1.5 seconds of rapid firing
+    state.player.rapidVolleyTimer = 0.75; // 0.75 seconds of rapid firing
     // Auto-fire immediately when ability is activated
     state.player.shoot(state.bullets);
   },
@@ -3241,7 +3275,7 @@ const abilityHandlers = {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     abilityParticleBurst("#74ffce", 100, 50);
     // Energy orbs flying in spiral formation outwards
-    const orbCount = 32; // Increased from 16
+    const orbCount = 64; // Doubled from 32
     const baseSpeed = 300;
     for (let i = 0; i < orbCount; i++) {
       const spiralAngle = (i / orbCount) * Math.PI * 4; // Multiple rotations
@@ -3258,7 +3292,7 @@ const abilityHandlers = {
           true,
           5,
           "#74ffce",
-          12 * state.player.damageMultiplier
+          12 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
         )
       );
     }
@@ -3309,7 +3343,7 @@ const abilityHandlers = {
     for (let i = 0; i < 8; i++) {
       const spread = (i - 4) * 0.2;
       state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 400 * state.player.shotSpeedMultiplier, true, 4, "#ffe29b", 5 * state.player.damageMultiplier)
+        new Bullet(state.player.x, state.player.y, angle + spread, 400 * state.player.shotSpeedMultiplier, true, 4, "#ffe29b", 5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
       );
     }
   },
@@ -3337,7 +3371,7 @@ const abilityHandlers = {
     const bolts = 18;
     for (let i = 0; i < bolts; i++) {
       const spread = (i / bolts) * Math.PI * 2;
-      state.bullets.push(new Bullet(state.player.x, state.player.y, spread, 360, true, 4, "#d1afff", 7 * state.player.damageMultiplier));
+      state.bullets.push(new Bullet(state.player.x, state.player.y, spread, 360, true, 4, "#d1afff", 7 * state.player.damageMultiplier * state.player.abilityDamageMultiplier));
     }
   },
   ghostfire: (cost) => {
@@ -3346,7 +3380,7 @@ const abilityHandlers = {
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     for (let i = 0; i < 12; i++) {
       const offset = (i - 6) * 0.1;
-      state.bullets.push(new Bullet(state.player.x, state.player.y, angle + offset, 480 * state.player.shotSpeedMultiplier, true, 5, "#d1afff", 8 * state.player.damageMultiplier));
+      state.bullets.push(new Bullet(state.player.x, state.player.y, angle + offset, 480 * state.player.shotSpeedMultiplier, true, 5, "#d1afff", 8 * state.player.damageMultiplier * state.player.abilityDamageMultiplier));
     }
     state.player.burstTimer = Math.min(state.player.burstTimer + 5, 9);
   },
@@ -3363,7 +3397,7 @@ const abilityHandlers = {
     for (let i = 0; i < 6; i++) {
       const spread = (i - 3) * 0.15;
       state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 450 * state.player.shotSpeedMultiplier, true, 4, "#9b7fff", 6 * state.player.damageMultiplier)
+        new Bullet(state.player.x, state.player.y, angle + spread, 450 * state.player.shotSpeedMultiplier, true, 4, "#9b7fff", 6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
       );
     }
   },
@@ -3416,7 +3450,7 @@ const abilityHandlers = {
       // Damage target if found
       if (target) {
         hitEnemies.add(target.index);
-        target.enemy.hp -= 120 * state.player.damageMultiplier;
+        target.enemy.hp -= 120 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
         for (let j = 0; j < 30; j++) {
           state.particles.push(new Particle(target.enemy.x, target.enemy.y, "#ffff00"));
         }
@@ -3456,7 +3490,7 @@ const abilityHandlers = {
       }
     }
     if (target) {
-      const bolt = new Bullet(state.player.x, state.player.y, angle, 600 * state.player.shotSpeedMultiplier, true, 6, "#ffff00", 15 * state.player.damageMultiplier);
+      const bolt = new Bullet(state.player.x, state.player.y, angle, 600 * state.player.shotSpeedMultiplier, true, 6, "#ffff00", 15 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
       state.bullets.push(bolt);
       // Chain lightning effect from player to target
       for (let k = 0; k < 20; k++) {
@@ -3474,7 +3508,7 @@ const abilityHandlers = {
     abilityParticleBurst("#ffff00", 200, 90);
     // Replace stat boost with AOE lightning attack
     const radius = 200;
-    const baseDamage = 80 * state.player.damageMultiplier;
+    const baseDamage = 80 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
     
     // Create visible expanding circle with continuous damage
     // Circle follows the player
@@ -3498,7 +3532,7 @@ const abilityHandlers = {
     }
     for (let i = 0; i < 5; i++) {
       const offset = (i - 2) * 0.12;
-      const bullet = new Bullet(state.player.x, state.player.y, angle + offset, 400 * state.player.shotSpeedMultiplier, true, 12, "#ff4444", 35 * state.player.damageMultiplier);
+      const bullet = new Bullet(state.player.x, state.player.y, angle + offset, 400 * state.player.shotSpeedMultiplier, true, 12, "#ff4444", 35 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
       state.bullets.push(bullet);
     }
   },
@@ -3557,7 +3591,7 @@ const abilityHandlers = {
     for (let i = 0; i < 15; i++) {
       const spread = (i - 7) * 0.1;
       state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 550 * state.player.shotSpeedMultiplier, true, 6, "#ff4444", 12 * state.player.damageMultiplier)
+        new Bullet(state.player.x, state.player.y, angle + spread, 550 * state.player.shotSpeedMultiplier, true, 6, "#ff4444", 12 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
       );
     }
   },
@@ -3614,6 +3648,22 @@ const abilityHandlers = {
 const triggerAbility = (abilityType) => {
   const ability = state.player.abilities.find(a => a.type === abilityType);
   if (!ability) return;
+  
+  // Track ability usage for tutorial
+  if (state.tutorialMode && !state.tutorialTestWave) {
+    const abilityIndex = state.player.abilities.findIndex(a => a.type === abilityType);
+    if (abilityIndex === 0 && !state.tutorialProgress.usedAbility1) {
+      state.tutorialProgress.usedAbility1 = true;
+      checkTutorialStepCompletion();
+    } else if (abilityIndex === 1 && !state.tutorialProgress.usedAbility2) {
+      state.tutorialProgress.usedAbility2 = true;
+      checkTutorialStepCompletion();
+    } else if (abilityIndex === 2 && !state.tutorialProgress.usedAbility3) {
+      state.tutorialProgress.usedAbility3 = true;
+      checkTutorialStepCompletion();
+    }
+  }
+  
   const handler = abilityHandlers[abilityType];
   if (handler) handler(ability.cost);
 };
@@ -3629,9 +3679,10 @@ const spawnStars = () => {
 
 const spawnWave = () => {
   const diff = difficultyModes[state.difficultyKey] || difficultyModes.veteran;
-  // Significantly increase enemy count
-  const baseCount = Math.min(20 + Math.floor(state.wave * 3), 150);
-  const count = Math.max(1, Math.round(baseCount * diff.enemyCount));
+  // No maximum enemy count - enemies spawn in segments
+  // Max enemies on screen increases with waves
+  state.maxEnemiesOnScreen = Math.floor(15 + state.wave * 0.5);
+  
   state.enemies.length = 0;
   state.enemyBullets = [];
   state.bullets = [];
@@ -3647,6 +3698,9 @@ const spawnWave = () => {
   state.waveComplete = false;
   state.enemiesToSpawn = [];
   state.spawnTimer = 0;
+  state.currentSegmentEnemies = 0;
+  state.segmentsSpawned = 0;
+  state.segmentsSpawned = 0;
   bossBar.classList.add("hidden");
   bossBar.style.display = "none";
   const types = ["swarm", "shooter", "charger", "defender", "dart", "orbiter", "splitter"];
@@ -3669,23 +3723,32 @@ const spawnWave = () => {
     bossBarFill.style.height = "100%";
     state.waveComplete = true; // Boss waves spawn immediately
   } else {
-    // Regular wave - create queue of enemies to spawn
+    // Regular wave - enemies spawn in segments
+    // Each segment has slightly more enemies, and spawns when previous segment has <= 2 enemies left
     const availableTypes = state.wave < 3 ? ["swarm", "shooter", "charger"] :
                           state.wave < 6 ? ["swarm", "shooter", "charger", "defender", "dart"] :
                           types;
-    // Create enemy data to spawn (not actual enemies yet)
-    for (let i = 0; i < count; i++) {
+    
+    // Calculate segment size - increased but scales less with waves
+    const baseSegmentSize = 10 + Math.floor(state.wave * 0.8);
+    const segmentSize = Math.max(1, Math.round(baseSegmentSize * diff.enemyCount));
+    
+    // Create first segment of enemies
+    for (let i = 0; i < segmentSize; i++) {
       const kind = availableTypes[Math.floor(Math.random() * availableTypes.length)];
       state.enemiesToSpawn.push({
         kind: kind,
         x: rng(60, config.width - 60),
         y: 30, // Start at top of screen
         wave: state.wave,
-        diff: diff
+        diff: diff,
+        segment: 1
       });
     }
-    // Spawn first batch immediately
-    state.spawnTimer = 0.8; // Time until next batch
+    
+    // Mark that we have enemies ready to spawn
+    state.spawnTimer = 0.3; // Small initial delay
+    state.segmentsSpawned = 1; // First segment
   }
 };
 
@@ -3710,6 +3773,221 @@ const updateBossBar = () => {
   } else {
     bossBar.classList.add("hidden");
     bossBar.style.display = "none";
+  }
+};
+
+const tutorialSteps = [
+  {
+    title: "Welcome to Orbital Barrage!",
+    text: "This tutorial will teach you the basics. Let's start with movement.",
+    checkComplete: () => true,
+  },
+  {
+    title: "Movement",
+    text: "Use <kbd>WASD</kbd> or <kbd>Arrow Keys</kbd> to move your ship. Try moving around!",
+    checkComplete: () => state.tutorialProgress.moved,
+  },
+  {
+    title: "Aiming and Shooting",
+    text: "Aim with your <kbd>Mouse</kbd> and your ship will automatically fire bullets. Try moving your mouse around to aim!",
+    checkComplete: () => state.tutorialProgress.shot,
+  },
+  {
+    title: "Abilities",
+    text: "Your ship has 3 special abilities. The keys are customizable in settings, but default to <kbd>1</kbd>, <kbd>2</kbd>, and <kbd>3</kbd>. Each costs energy. Try using all three abilities!",
+    checkComplete: () => state.tutorialProgress.usedAbility1 && state.tutorialProgress.usedAbility2 && state.tutorialProgress.usedAbility3,
+  },
+  {
+    title: "HUD Elements",
+    text: "Watch your <strong>HP</strong> (health), <strong>Shield</strong> (regenerates), and <strong>Energy</strong> (for abilities). The ability icons on the left show when abilities are ready.",
+    checkComplete: () => true,
+  },
+  {
+    title: "Test Wave",
+    text: "Now let's test your skills! A wave of enemies will spawn. Clear them to complete the tutorial.",
+    checkComplete: () => false, // This step is completed when wave is cleared
+  },
+];
+
+const startTutorial = () => {
+  state.tutorialMode = true;
+  state.tutorialStep = 0;
+  state.tutorialStepStartTime = performance.now();
+  state.tutorialProgress = {
+    moved: false,
+    shot: false,
+    usedAbility1: false,
+    usedAbility2: false,
+    usedAbility3: false,
+  };
+  
+  // Reset game state for tutorial
+  if (!state.unlockedShips.includes(state.shipKey)) {
+    state.shipKey = "striker";
+  }
+  const loadout = shipLoadouts[state.shipKey] || shipLoadouts.striker;
+  state.player = new Player(loadout);
+  state.player.energy = 1000; // Start with 1000 energy for tutorial
+  state.player.maxEnergy = 1000; // Temporarily increase max energy for tutorial
+  state.bullets = [];
+  state.enemyBullets = [];
+  state.enemies = [];
+  state.particles = [];
+  state.powerUps = [];
+  state.drones = [];
+  state.barriers = [];
+  state.blackHoles = [];
+  state.expandingCircles = [];
+  state.timeDilationFields = [];
+  state.wave = 1;
+  state.score = 0;
+  state.quantumCoresEarnedThisRun = 0;
+  state.lastBossType = null;
+  state.running = true;
+  state.paused = false;
+  state.boss = null;
+  state.upgradePending = false;
+  state.awaitingUpgrade = false;
+  state.upgradeChoices = [];
+  state.waveAnnouncementTimer = 0;
+  
+  // Reset completed flags for all tutorial steps
+  tutorialSteps.forEach(step => {
+    step.completed = false;
+  });
+  
+  spawnStars();
+  updateHud();
+  instructionsEl.classList.add("hidden");
+  tutorialOverlay.classList.remove("hidden");
+  bossBar.classList.add("hidden");
+  bossBar.style.display = "none";
+  upgradePanel.classList.add("hidden");
+  if (hudSettingsButton) hudSettingsButton.classList.remove("hidden");
+  if (abilityIcons) abilityIcons.classList.remove("hidden");
+  
+  updateTutorialDisplay();
+  state.lastTime = performance.now();
+  requestAnimationFrame(gameLoop);
+};
+
+const checkTutorialStepCompletion = () => {
+  if (!state.tutorialMode || state.tutorialTestWave) return;
+  
+  const step = tutorialSteps[state.tutorialStep];
+  if (!step) return;
+  
+  // Calculate how long the current step has been active
+  const stepElapsedTime = (performance.now() - state.tutorialStepStartTime) / 1000; // Convert to seconds
+  const minStepDuration = 3; // Minimum 3 seconds per step
+  
+  // Check if step is complete and hasn't been marked as completed yet
+  if (step.checkComplete() && !step.completed) {
+    // Mark step as completed
+    step.completed = true;
+    
+    // Calculate remaining time needed to reach minimum duration
+    const remainingTime = Math.max(0, minStepDuration - stepElapsedTime);
+    
+    // Advance to next step after remaining time (or immediately if already past 3 seconds)
+    setTimeout(() => {
+      if (state.tutorialMode && !state.tutorialTestWave) {
+        advanceTutorialStep();
+      }
+    }, remainingTime * 1000);
+  } else if (!step.completed) {
+    // Only update display if step hasn't been completed yet
+    updateTutorialDisplay();
+  }
+};
+
+const advanceTutorialStep = () => {
+  if (state.tutorialStep < tutorialSteps.length - 1) {
+    state.tutorialStep++;
+    // Reset the start time for the new step
+    state.tutorialStepStartTime = performance.now();
+    // Reset completed flag for new step
+    if (tutorialSteps[state.tutorialStep]) {
+      tutorialSteps[state.tutorialStep].completed = false;
+    }
+    updateTutorialDisplay();
+    // If we've reached the test wave step, start it
+    if (state.tutorialStep === tutorialSteps.length - 1) {
+      // Wait a moment before starting test wave
+      setTimeout(() => {
+        if (state.tutorialMode) {
+          startTutorialTestWave();
+        }
+      }, 2000);
+    }
+  }
+};
+
+const updateTutorialDisplay = () => {
+  if (!state.tutorialMode) return;
+  
+  // Hide tutorial text during test wave
+  if (state.tutorialTestWave) {
+    if (tutorialOverlay) tutorialOverlay.classList.add("hidden");
+    if (tutorialTextTop) tutorialTextTop.classList.add("hidden");
+    return;
+  }
+  
+  const step = tutorialSteps[state.tutorialStep];
+  if (!step) {
+    startTutorialTestWave();
+    return;
+  }
+  
+  // Show tutorial overlay with text at top
+  if (tutorialOverlay) tutorialOverlay.classList.remove("hidden");
+  if (tutorialTextTop) tutorialTextTop.classList.remove("hidden");
+  
+  // Update text content - strip HTML tags and format nicely
+  if (tutorialTextTopContent) {
+    let text = step.text;
+    // Replace kbd tags with their content in brackets before stripping all HTML
+    text = text.replace(/<kbd>([^<]*)<\/kbd>/g, '[$1]');
+    text = text.replace(/<strong>([^<]*)<\/strong>/g, '$1');
+    // Strip any remaining HTML tags
+    text = text.replace(/<[^>]*>/g, '');
+    tutorialTextTopContent.textContent = `${step.title}: ${text}`;
+  }
+};
+
+const startTutorialTestWave = () => {
+  state.tutorialTestWave = true;
+  tutorialOverlay.classList.add("hidden");
+  
+  // Set difficulty to recruit and start wave 1
+  state.difficultyKey = "recruit";
+  state.wave = 1;
+  state.waveComplete = false;
+  state.enemiesToSpawn = [];
+  state.spawnTimer = 0;
+  state.segmentsSpawned = 0;
+  state.currentSegmentEnemies = 0;
+  
+  spawnWave();
+};
+
+const endTutorial = () => {
+  state.tutorialMode = false;
+  state.tutorialTestWave = false;
+  if (tutorialOverlay) tutorialOverlay.classList.add("hidden");
+  instructionsEl.classList.remove("hidden");
+  state.running = false;
+  if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
+  if (abilityIcons) abilityIcons.classList.add("hidden");
+  
+  // Clear canvas
+  clearCanvas();
+  
+  // Reset player energy to normal
+  if (state.player) {
+    const loadout = shipLoadouts[state.shipKey] || shipLoadouts.striker;
+    state.player.maxEnergy = loadout.maxEnergy;
+    state.player.energy = Math.min(state.player.energy, state.player.maxEnergy);
   }
 };
 
@@ -3746,11 +4024,104 @@ const resetGame = () => {
   bossBar.classList.add("hidden");
   bossBar.style.display = "none";
   upgradePanel.classList.add("hidden");
+  if (hudSettingsButton) hudSettingsButton.classList.remove("hidden");
+  if (abilityIcons) abilityIcons.classList.remove("hidden");
   state.lastTime = performance.now();
   requestAnimationFrame(gameLoop);
 };
 
+const getAbilityIcon = (abilityType) => {
+  const iconMap = {
+    burst: "💥",
+    rapidVolley: "⚡",
+    energySurge: "🔋",
+    shockwave: "🌊",
+    shieldOvercharge: "🛡️",
+    fortify: "💎",
+    blink: "✨",
+    ghostfire: "👻",
+    phaseShift: "🌀",
+    lightningStorm: "⚡",
+    combatDrone: "🤖",
+    overload: "🔥",
+    siegeCannon: "💣",
+    energyBarrier: "🔷",
+    rampage: "⚔️",
+    blackHole: "🕳️",
+    shadowStep: "🌑",
+    ethereal: "👁️",
+  };
+  return iconMap[abilityType] || "⭐";
+};
+
+const getKeyDisplay = (binding) => {
+  const keyNames = {
+    "1": "1", "2": "2", "3": "3",
+    "lm": "LM", "mm": "MM", "rm": "RM"
+  };
+  return keyNames[binding] || binding.toUpperCase();
+};
+
+const updateAbilityIcons = () => {
+  if (!abilityIcons || !state.player || !state.player.abilities) {
+    if (abilityIcons) abilityIcons.classList.add("hidden");
+    return;
+  }
+  
+  // Hide icons if game is not running or upgrade panel is open
+  if (!state.running || state.upgradePending) {
+    abilityIcons.classList.add("hidden");
+    return;
+  }
+  
+  const abilities = state.player.abilities;
+  const currentEnergy = state.player.energy;
+  
+  // Clear existing icons
+  abilityIcons.innerHTML = "";
+  
+  // Create icon for each ability
+  abilities.forEach((ability, index) => {
+    const binding = state.abilityKeys && state.abilityKeys[index] ? state.abilityKeys[index] : ability.key;
+    const keyDisplay = getKeyDisplay(binding);
+    const isReady = currentEnergy >= ability.cost;
+    const energyPercent = Math.min((currentEnergy / ability.cost) * 100, 100);
+    
+    const iconDiv = document.createElement("div");
+    iconDiv.className = `ability-icon ${isReady ? "ready" : "not-ready"}`;
+    iconDiv.innerHTML = `
+      <div class="ability-icon__symbol">${getAbilityIcon(ability.type)}</div>
+      <div class="ability-icon__key">${keyDisplay}</div>
+      <div class="ability-icon__energy-bar">
+        <div class="ability-icon__energy-fill" style="width: ${energyPercent}%"></div>
+      </div>
+    `;
+    
+    abilityIcons.appendChild(iconDiv);
+  });
+  
+  // Show icons
+  abilityIcons.classList.remove("hidden");
+};
+
 const updateHud = () => {
+  // Only show HUD when game is running
+  const hudElement = document.querySelector('.hud');
+  if (state.running) {
+    if (hudElement) hudElement.classList.remove("hidden");
+    if (quantumCoresDisplay) quantumCoresDisplay.classList.remove("hidden");
+  } else {
+    if (hudElement) hudElement.classList.add("hidden");
+    if (quantumCoresDisplay) quantumCoresDisplay.classList.add("hidden");
+  }
+  
+  // Update quantum cores display (always visible when game is running)
+  if (quantumCoresDisplayValue) {
+    quantumCoresDisplayValue.textContent = state.quantumCores;
+  }
+  
+  if (!state.running) return;
+  
   const p = state.player;
   hud.hp.textContent = `${Math.round(p.hp)}/${p.maxHp}`;
   hud.shield.textContent = `${Math.round(p.shield)}/${p.maxShield}`;
@@ -3761,6 +4132,7 @@ const updateHud = () => {
   if (hud.quantumCores) {
     hud.quantumCores.textContent = state.quantumCores;
   }
+  updateAbilityIcons();
 };
 
 const handleCollisions = (dt) => {
@@ -3936,7 +4308,7 @@ const applyPowerUp = (kind) => {
 
 const updateEntities = (dt) => {
   state.player.update(dt);
-  // Bullets fire automatically at all times
+  // Bullets fire automatically
   state.player.shoot(state.bullets);
   state.bullets = state.bullets.filter((b) => {
     b.update(dt);
@@ -4016,34 +4388,97 @@ const updateEntities = (dt) => {
     );
   });
 
-  // Spawn enemies in batches over time
+  // Spawn enemies in segments
+  // Don't spawn enemies during tutorial (except test wave)
+  if (!state.tutorialMode || state.tutorialTestWave) {
+    // Check if we should spawn next segment (when <= 2 enemies remain and no enemies queued)
+    // Limit segments per wave to prevent infinite spawning
+    const diff = difficultyModes[state.difficultyKey] || difficultyModes.veteran;
+    const baseMaxSegments = 2 + Math.floor(state.wave / 5); // 2 segments for wave 1, increases slowly
+    const maxSegmentsPerWave = Math.max(1, Math.floor(baseMaxSegments * diff.enemyCount * 1.2)); // More segments for harder difficulties
+    if (state.enemies.length <= 2 && state.enemiesToSpawn.length === 0 && !state.waveComplete && state.spawnTimer <= 0 && state.segmentsSpawned < maxSegmentsPerWave) {
+    // Generate next segment
+    const availableTypes = state.wave < 3 ? ["swarm", "shooter", "charger"] :
+                          state.wave < 6 ? ["swarm", "shooter", "charger", "defender", "dart"] :
+                          ["swarm", "shooter", "charger", "defender", "dart", "orbiter", "splitter"];
+    
+    // Calculate segment number based on how many segments we've spawned
+    const segmentNumber = state.segmentsSpawned + 1;
+    const baseSegmentSize = 10 + Math.floor(state.wave * 0.8) + Math.floor(segmentNumber * 0.5);
+    const segmentSize = Math.max(1, Math.round(baseSegmentSize * diff.enemyCount));
+    
+    for (let i = 0; i < segmentSize; i++) {
+      const kind = availableTypes[Math.floor(Math.random() * availableTypes.length)];
+      state.enemiesToSpawn.push({
+        kind: kind,
+        x: rng(60, config.width - 60),
+        y: 30,
+        wave: state.wave,
+        diff: diff,
+        segment: segmentNumber
+      });
+    }
+    
+    // Reduced delay before next segment spawns
+    state.spawnTimer = 1.0 + state.wave * 0.05;
+    state.currentSegmentEnemies = 0; // Reset counter for new segment
+    state.segmentsSpawned++;
+  }
+  
+  // Spawn enemies from current segment (respecting max on screen)
   if (state.enemiesToSpawn.length > 0 && !state.waveComplete) {
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0) {
-      // Spawn a batch of ~10 enemies
-      const batchSize = Math.min(10, state.enemiesToSpawn.length);
-      for (let i = 0; i < batchSize; i++) {
-        const enemyData = state.enemiesToSpawn.shift();
-        const enemy = new Enemy(
-          enemyData.kind,
-          enemyData.x,
-          enemyData.y,
-          enemyData.wave
-        );
-        applyDifficultyToEnemy(enemy, enemyData.diff, false);
-        state.enemies.push(enemy);
-      }
-      // Set timer for next batch (1-2 seconds)
-      if (state.enemiesToSpawn.length > 0) {
-        state.spawnTimer = rng(1.0, 2.0);
+      // Spawn enemies up to max on screen
+      const availableSlots = state.maxEnemiesOnScreen - state.enemies.length;
+      if (availableSlots > 0) {
+        const batchSize = Math.min(availableSlots, state.enemiesToSpawn.length);
+        for (let i = 0; i < batchSize; i++) {
+          const enemyData = state.enemiesToSpawn.shift();
+          const enemy = new Enemy(
+            enemyData.kind,
+            enemyData.x,
+            enemyData.y,
+            enemyData.wave
+          );
+          applyDifficultyToEnemy(enemy, enemyData.diff, false);
+          state.enemies.push(enemy);
+          state.currentSegmentEnemies++;
+        }
+        // Small delay between batches within same segment
+        if (state.enemiesToSpawn.length > 0) {
+          state.spawnTimer = 0.3;
+        } else {
+          // Current segment fully spawned, wait for next segment trigger
+          state.spawnTimer = 0;
+        }
       } else {
-        // All enemies spawned
-        state.waveComplete = true;
+        // At max capacity, wait a bit before trying again
+        state.spawnTimer = 0.5;
       }
+    }
+    }
+  }
+  
+  // Mark wave complete if no more enemies to spawn and all enemies defeated
+  // Mark complete when all segments are done and all enemies are defeated
+  if (state.enemiesToSpawn.length === 0 && state.enemies.length === 0 && !state.waveComplete) {
+    // Check if we've reached max segments or if timer allows completion
+    const diff = difficultyModes[state.difficultyKey] || difficultyModes.veteran;
+    const baseMaxSegments = 2 + Math.floor(state.wave / 5);
+    const maxSegmentsPerWave = Math.max(1, Math.floor(baseMaxSegments * diff.enemyCount * 1.2)); // More segments for harder difficulties
+    if (state.segmentsSpawned >= maxSegmentsPerWave || state.spawnTimer <= -0.3) {
+      state.waveComplete = true;
+    } else if (state.spawnTimer > -0.3 && state.spawnTimer >= 0) {
+      // Start countdown if not already started
+      state.spawnTimer = -0.3;
     }
   }
 
-  state.enemies.forEach((enemy) => enemy.update(dt, state.player, state.enemyBullets));
+  // Don't update enemies in tutorial mode (except test wave)
+  if (!state.tutorialMode || state.tutorialTestWave) {
+    state.enemies.forEach((enemy) => enemy.update(dt, state.player, state.enemyBullets));
+  }
   state.powerUps = state.powerUps.filter((p) => {
     p.update(dt);
     return p.life > 0;
@@ -4054,18 +4489,27 @@ const updateEntities = (dt) => {
   });
   handleCollisions(dt);
 
-  if (
-    state.running &&
-    state.enemies.length === 0 &&
-    state.waveComplete &&
-    !state.upgradePending &&
-    !state.awaitingUpgrade
-  ) {
-    // Reset player to starting position (center bottom)
-    state.player.x = config.width / 2;
-    state.player.y = config.height - 100;
-    state.awaitingUpgrade = true;
-    openUpgradePanel();
+  // Check for tutorial test wave completion
+  if (state.tutorialMode && state.tutorialTestWave) {
+    if (state.enemies.length === 0 && state.waveComplete) {
+      endTutorial();
+      return;
+    }
+  }
+  
+  // Don't spawn enemies or check for wave completion in tutorial mode (except test wave)
+  if (!state.tutorialMode || state.tutorialTestWave) {
+    if (
+      state.running &&
+      state.enemies.length === 0 &&
+      state.waveComplete &&
+      !state.upgradePending &&
+      !state.awaitingUpgrade &&
+      !state.tutorialTestWave
+    ) {
+      state.awaitingUpgrade = true;
+      openUpgradePanel();
+    }
   }
 };
 
@@ -4096,22 +4540,6 @@ const drawEntities = () => {
   
 };
 
-const drawMiniMap = () => {
-  miniCtx.fillStyle = "rgba(3,6,21,0.9)";
-  miniCtx.fillRect(0, 0, mini.width, mini.height);
-  const scaleX = mini.width / config.width;
-  const scaleY = mini.height / config.height;
-  miniCtx.fillStyle = "#74ffce";
-  miniCtx.fillRect(state.player.x * scaleX - 2, state.player.y * scaleY - 2, 4, 4);
-  miniCtx.fillStyle = "#ff7676";
-  state.enemies.forEach((enemy) => {
-    miniCtx.fillRect(enemy.x * scaleX - 2, enemy.y * scaleY - 2, 3, 3);
-  });
-  miniCtx.fillStyle = "#78c0ff";
-  state.powerUps.forEach((power) => {
-    miniCtx.fillRect(power.x * scaleX - 2, power.y * scaleY - 2, 4, 4);
-  });
-};
 
 const drawWaveBanner = () => {
   if (state.waveAnnouncementTimer <= 0) return;
@@ -4127,31 +4555,52 @@ const drawWaveBanner = () => {
 };
 
 const gameLoop = (timestamp) => {
+  // Clear canvas if start screen is visible
+  if (!state.running && !instructionsEl.classList.contains("hidden")) {
+    clearCanvas();
+    requestAnimationFrame(gameLoop);
+    return;
+  }
+  
   if (!state.running) return;
   const dt = Math.min((timestamp - state.lastTime) / 1000, 0.04);
   state.lastTime = timestamp;
 
-  const active = !state.paused && !state.upgradePending;
+  // Check if settings panel is open
+  const settingsOpen = settingsPanel && !settingsPanel.classList.contains("hidden");
+  
+  const active = !state.paused && !state.upgradePending && !settingsOpen;
 
   if (active) {
-    drawBackground(dt);
-    updateEntities(dt);
-    drawEntities();
-    drawWaveBanner();
-    drawMiniMap();
-    updateHud();
+    // Only draw background if game is running (not on start screen)
+    if (state.running) {
+      drawBackground(dt);
+      updateEntities(dt);
+      drawEntities();
+      if (!state.tutorialMode || state.tutorialTestWave) {
+        drawWaveBanner();
+      }
+      updateHud();
+    }
     state.waveAnnouncementTimer = Math.max(
       state.waveAnnouncementTimer - dt,
       0
     );
-  } else if (state.paused && !state.upgradePending) {
+    
+    // Update tutorial display in tutorial mode
+    if (state.tutorialMode) {
+      updateTutorialDisplay();
+      // Check for step completion (for auto-completing steps)
+      checkTutorialStepCompletion();
+    }
+  } else if (state.paused && !state.upgradePending && !settingsOpen) {
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, config.width, config.height);
     ctx.fillStyle = "#fff";
     ctx.font = "24px Space Grotesk";
     ctx.textAlign = "center";
-    ctx.fillText("Paused - Press P to resume", config.width / 2, config.height / 2);
+    ctx.fillText("Paused - Press P for settings", config.width / 2, config.height / 2);
     ctx.restore();
   }
 
@@ -4166,10 +4615,11 @@ const endGame = () => {
   gameOverTitle.textContent = "Mission Failed";
   gameOverDetails.textContent = `Waves cleared: ${state.wave} · Score: ${state.score} · +${state.quantumCoresEarnedThisRun} Quantum Cores`;
   gameOverEl.classList.remove("hidden");
-  minimapEl.classList.add("hidden");
   bossBar.classList.add("hidden");
   bossBar.style.display = "none";
   upgradePanel.classList.add("hidden");
+  if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
+  if (abilityIcons) abilityIcons.classList.add("hidden");
   state.upgradePending = false;
   state.awaitingUpgrade = false;
   state.quantumCoresEarnedThisRun = 0;
@@ -4178,7 +4628,12 @@ const endGame = () => {
 
 const togglePause = () => {
   if (!state.running || state.upgradePending) return;
-  state.paused = !state.paused;
+  // Open settings panel instead of just pausing
+  if (settingsPanel && settingsPanel.classList.contains("hidden")) {
+    openSettings();
+  } else {
+    closeSettings();
+  }
 };
 
 const onKeyDown = (event) => {
@@ -4187,13 +4642,15 @@ const onKeyDown = (event) => {
     togglePause();
     return;
   }
-  if (key === "1" || key === "2" || key === "3") {
-    const abilityMap = { "1": 0, "2": 1, "3": 2 };
-    const abilityIndex = abilityMap[key];
-    if (state.player.abilities && state.player.abilities[abilityIndex]) {
-      triggerAbility(state.player.abilities[abilityIndex].type);
+  // Check if key matches any ability binding
+  if (state.player.abilities) {
+    for (let i = 0; i < state.player.abilities.length && i < state.abilityKeys.length; i++) {
+      const binding = state.abilityKeys[i];
+      if (binding === key) {
+        triggerAbility(state.player.abilities[i].type);
+        return;
+      }
     }
-    return;
   }
   input.keys.add(key);
 };
@@ -4207,15 +4664,56 @@ canvas.addEventListener("mousemove", (event) => {
   input.mouse.y = ((event.clientY - rect.top) / rect.height) * canvas.height;
 });
 
-canvas.addEventListener("mousedown", () => {
-  input.mouse.down = true;
+canvas.addEventListener("mousedown", (event) => {
+  // Check for ability mouse button bindings first (before setting mouse.down for shooting)
+  if (state.running && state.player.abilities) {
+    let mouseButton = null;
+    if (event.button === 0) mouseButton = "lm"; // Left mouse
+    else if (event.button === 1) mouseButton = "mm"; // Middle mouse
+    else if (event.button === 2) mouseButton = "rm"; // Right mouse
+    
+    if (mouseButton) {
+      for (let i = 0; i < state.player.abilities.length && i < state.abilityKeys.length; i++) {
+        if (state.abilityKeys[i] === mouseButton) {
+          event.preventDefault(); // Prevent context menu for right click, prevent shooting for left
+          triggerAbility(state.player.abilities[i].type);
+          return;
+        }
+      }
+    }
+  }
+  
+  // Only set mouse.down if left click is not bound to an ability
+  if (event.button === 0 && (!state.running || !state.abilityKeys.includes("lm"))) {
+    input.mouse.down = true;
+  }
 });
 window.addEventListener("mouseup", () => {
   input.mouse.down = false;
 });
+// Prevent context menu when right click is bound to ability
+canvas.addEventListener("contextmenu", (event) => {
+  if (state.abilityKeys.includes("rm")) {
+    event.preventDefault();
+  }
+});
 
-window.addEventListener("keydown", onKeyDown);
+// Key down handler is now set up in settings code above
 window.addEventListener("keyup", onKeyUp);
+
+if (tutorialButton) {
+  tutorialButton.addEventListener("click", () => {
+    startTutorial();
+  });
+}
+
+if (tutorialSkipButton) {
+  tutorialSkipButton.addEventListener("click", () => {
+    endTutorial();
+  });
+}
+
+
 
 startButton.addEventListener("click", () => {
   const difficultySelection = document.querySelector(
@@ -4233,7 +4731,6 @@ startButton.addEventListener("click", () => {
   }
   instructionsEl.classList.add("hidden");
   gameOverEl.classList.add("hidden");
-  minimapEl.classList.remove("hidden");
   upgradePanel.classList.add("hidden");
   shipShopPanel.classList.add("hidden");
   resetGame();
@@ -4255,16 +4752,52 @@ if (shopCloseButton) {
 }
 
 restartButton.addEventListener("click", () => {
+  // Stop the game loop
+  state.running = false;
+  
+  // Clear the canvas to remove any visual artifacts
+  clearCanvas();
+  
+  // Hide game elements
   gameOverEl.classList.add("hidden");
-  minimapEl.classList.remove("hidden");
   upgradePanel.classList.add("hidden");
-  resetGame();
+  bossBar.classList.add("hidden");
+  bossBar.style.display = "none";
+  if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
+  if (abilityIcons) abilityIcons.classList.add("hidden");
+  
+  // Show start menu
+  instructionsEl.classList.remove("hidden");
+  
+  // Clear game state to prevent lingering entities
+  state.bullets = [];
+  state.enemyBullets = [];
+  state.enemies = [];
+  state.particles = [];
+  state.powerUps = [];
+  state.drones = [];
+  state.barriers = [];
+  state.blackHoles = [];
+  state.expandingCircles = [];
+  state.timeDilationFields = [];
+  state.boss = null;
 });
+
+// Function to clear canvas
+const clearCanvas = () => {
+  ctx.fillStyle = "#050b1f";
+  ctx.fillRect(0, 0, config.width, config.height);
+};
 
 window.addEventListener("blur", () => {
   input.keys.clear();
   input.mouse.down = false;
-  state.paused = true;
+  // Open settings panel instead of just pausing
+  if (state.running && !state.upgradePending && settingsPanel && settingsPanel.classList.contains("hidden")) {
+    openSettings();
+  } else {
+    state.paused = true;
+  }
 });
 
 const openShipShop = () => {
@@ -4372,12 +4905,224 @@ const updateShipSelection = () => {
   });
 };
 
+// Settings panel functionality
+let listeningToKey = null; // Track which ability button is listening for key input
+let wasPausedBeforeSettings = false; // Track if game was paused before opening settings
+
+const openSettings = () => {
+  settingsPanel.classList.remove("hidden");
+  updateKeyBindingDisplay();
+  updateShipLoadoutDisplay();
+  // Pause the game when settings panel is open (unless upgrade panel is open)
+  if (state.running && !state.upgradePending) {
+    wasPausedBeforeSettings = state.paused;
+    state.paused = true;
+  }
+};
+
+const closeSettings = () => {
+  settingsPanel.classList.add("hidden");
+  listeningToKey = null;
+  // Remove listening class from all buttons
+  [keyBinding1, keyBinding2, keyBinding3].forEach(btn => {
+    if (btn) btn.classList.remove("listening");
+  });
+  // Resume the game when settings panel is closed (restore previous pause state)
+  if (state.running && !state.upgradePending) {
+    state.paused = wasPausedBeforeSettings;
+  }
+};
+
+const updateKeyBindingDisplay = () => {
+  const keyNames = {
+    "1": "1", "2": "2", "3": "3",
+    "lm": "Left Mouse", "mm": "Middle Mouse", "rm": "Right Mouse"
+  };
+  if (keyBinding1 && state.abilityKeys[0]) {
+    keyBinding1.textContent = keyNames[state.abilityKeys[0]] || state.abilityKeys[0].toUpperCase();
+  }
+  if (keyBinding2 && state.abilityKeys[1]) {
+    keyBinding2.textContent = keyNames[state.abilityKeys[1]] || state.abilityKeys[1].toUpperCase();
+  }
+  if (keyBinding3 && state.abilityKeys[2]) {
+    keyBinding3.textContent = keyNames[state.abilityKeys[2]] || state.abilityKeys[2].toUpperCase();
+  }
+};
+
+const updateShipLoadoutDisplay = () => {
+  const shipLoadoutName = document.getElementById("shipLoadoutName");
+  const shipLoadoutAbilities = document.getElementById("shipLoadoutAbilities");
+  
+  if (!shipLoadoutName || !shipLoadoutAbilities) return;
+  
+  // Get current player ship or fallback to shipKey
+  let ship = null;
+  if (state.player && state.player.abilities && state.player.abilities.length > 0) {
+    // Get ship from player's shipId
+    const shipId = state.player.shipId || state.shipKey;
+    ship = shipLoadouts[shipId];
+  } else if (state.shipKey) {
+    ship = shipLoadouts[state.shipKey];
+  }
+  
+  if (!ship) {
+    shipLoadoutName.textContent = "No Ship Selected";
+    shipLoadoutAbilities.innerHTML = '<div class="ship-loadout__ability">No ship selected</div>';
+    return;
+  }
+  
+  shipLoadoutName.textContent = ship.name;
+  
+  // Get the current key bindings to show which key triggers each ability
+  const keyNames = {
+    "1": "1", "2": "2", "3": "3",
+    "lm": "LM", "mm": "MM", "rm": "RM"
+  };
+  
+  shipLoadoutAbilities.innerHTML = ship.abilities.map((ability, index) => {
+    const binding = state.abilityKeys && state.abilityKeys[index] ? state.abilityKeys[index] : ability.key;
+    const keyDisplay = keyNames[binding] || binding.toUpperCase();
+    return `
+      <div class="ship-loadout__ability">
+        <kbd>${keyDisplay}</kbd>
+        <span class="ability-name">${ability.name}</span>
+        <span class="ability-cost">${ability.cost} energy</span>
+      </div>
+    `;
+  }).join("");
+};
+
+const setAbilityKeys = (keys) => {
+  state.abilityKeys = keys;
+  localStorage.setItem("orbital-ability-keys", JSON.stringify(keys));
+  updateKeyBindingDisplay();
+};
+
+const startListeningForKey = (abilityIndex) => {
+  // Stop listening to previous button
+  [keyBinding1, keyBinding2, keyBinding3].forEach(btn => {
+    if (btn) btn.classList.remove("listening");
+  });
+  
+  listeningToKey = abilityIndex;
+  const button = [keyBinding1, keyBinding2, keyBinding3][abilityIndex];
+  if (button) {
+    button.classList.add("listening");
+    button.textContent = "Press any key...";
+  }
+};
+
+const handleKeyBindingInput = (key) => {
+  if (listeningToKey === null) return;
+  
+  // Convert mouse button codes
+  let bindingKey = key.toLowerCase();
+  if (key === "Mouse0" || key === "lm") bindingKey = "lm";
+  else if (key === "Mouse1" || key === "mm") bindingKey = "mm";
+  else if (key === "Mouse2" || key === "rm") bindingKey = "rm";
+  
+  // Update the binding
+  const newKeys = [...state.abilityKeys];
+  newKeys[listeningToKey] = bindingKey;
+  setAbilityKeys(newKeys);
+  
+  listeningToKey = null;
+  [keyBinding1, keyBinding2, keyBinding3].forEach(btn => {
+    if (btn) btn.classList.remove("listening");
+  });
+};
+
+if (settingsButton) {
+  settingsButton.addEventListener("click", () => {
+    openSettings();
+  });
+}
+
+if (hudSettingsButton) {
+  hudSettingsButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    openSettings();
+  });
+}
+
+if (settingsCloseButton) {
+  settingsCloseButton.addEventListener("click", () => {
+    closeSettings();
+  });
+}
+
+if (presetNumbers) {
+  presetNumbers.addEventListener("click", () => {
+    setAbilityKeys(["1", "2", "3"]);
+  });
+}
+
+if (presetMouse) {
+  presetMouse.addEventListener("click", () => {
+    setAbilityKeys(["lm", "mm", "rm"]);
+  });
+}
+
+if (keyBinding1) {
+  keyBinding1.addEventListener("click", () => {
+    startListeningForKey(0);
+  });
+}
+
+if (keyBinding2) {
+  keyBinding2.addEventListener("click", () => {
+    startListeningForKey(1);
+  });
+}
+
+if (keyBinding3) {
+  keyBinding3.addEventListener("click", () => {
+    startListeningForKey(2);
+  });
+}
+
+// Enhanced keydown handler that supports key binding mode
+const enhancedKeyDown = (event) => {
+  if (listeningToKey !== null && !settingsPanel.classList.contains("hidden")) {
+    event.preventDefault();
+    handleKeyBindingInput(event.key);
+    return;
+  }
+  onKeyDown(event);
+};
+
+// Add mousedown handler for key binding mode (before the existing one processes it)
+const keyBindingMouseHandler = (event) => {
+  if (listeningToKey !== null && !settingsPanel.classList.contains("hidden")) {
+    event.preventDefault();
+    event.stopPropagation();
+    let mouseButton = null;
+    if (event.button === 0) mouseButton = "lm";
+    else if (event.button === 1) mouseButton = "mm";
+    else if (event.button === 2) mouseButton = "rm";
+    if (mouseButton) {
+      handleKeyBindingInput(mouseButton);
+    }
+  }
+};
+canvas.addEventListener("mousedown", keyBindingMouseHandler, true); // Use capture phase
+
+window.addEventListener("keydown", enhancedKeyDown);
+
 const closeShipShop = () => {
   shipShopPanel.classList.add("hidden");
   updateShipSelection();
 };
 
-spawnStars();
-updateHud();
+// Don't spawn stars or show HUD on start screen
+// spawnStars();
+// updateHud();
 updateShipSelection();
+// Initialize key binding display (function defined above)
+if (typeof updateKeyBindingDisplay === 'function') {
+  updateKeyBindingDisplay();
+}
+
+
 
