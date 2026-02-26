@@ -2355,10 +2355,11 @@ class Player {
     ctx.fill();
     
     // Shield ring - scales with shield level and max shield
+    // Visual size is larger than collision radius for better visibility
     const shieldPercent = this.shield / this.maxShield;
-    const baseRadius = 20;
-    const maxShieldBonus = (this.maxShield / 100) * 8; // Larger max shield = larger ring
-    const shieldRadius = baseRadius + (shieldPercent * (12 + maxShieldBonus));
+    const baseRadius = 30; // Increased from 20 for larger visual size
+    const maxShieldBonus = (this.maxShield / 100) * 12; // Increased from 8 for larger visual size
+    const shieldRadius = baseRadius + (shieldPercent * (18 + maxShieldBonus)); // Increased from (12 + maxShieldBonus)
     
     // Use override color if active, otherwise use normal glow color
     const shieldColor = this.shieldColorOverride || glowColor;
@@ -3979,6 +3980,7 @@ const endTutorial = () => {
   state.running = false;
   if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
   if (abilityIcons) abilityIcons.classList.add("hidden");
+  updateHud(); // Update to show quantum cores display on start screen
   
   // Clear canvas
   clearCanvas();
@@ -4109,13 +4111,22 @@ const updateHud = () => {
   const hudElement = document.querySelector('.hud');
   if (state.running) {
     if (hudElement) hudElement.classList.remove("hidden");
-    if (quantumCoresDisplay) quantumCoresDisplay.classList.remove("hidden");
+    // Hide quantum cores display during game
+    if (quantumCoresDisplay) quantumCoresDisplay.classList.add("hidden");
   } else {
     if (hudElement) hudElement.classList.add("hidden");
-    if (quantumCoresDisplay) quantumCoresDisplay.classList.add("hidden");
+    // Show quantum cores display on start screen
+    const isStartScreenVisible = instructionsEl && !instructionsEl.classList.contains("hidden");
+    if (quantumCoresDisplay) {
+      if (isStartScreenVisible) {
+        quantumCoresDisplay.classList.remove("hidden");
+      } else {
+        quantumCoresDisplay.classList.add("hidden");
+      }
+    }
   }
   
-  // Update quantum cores display (always visible when game is running)
+  // Update quantum cores display value
   if (quantumCoresDisplayValue) {
     quantumCoresDisplayValue.textContent = state.quantumCores;
   }
@@ -4768,6 +4779,7 @@ restartButton.addEventListener("click", () => {
   
   // Show start menu
   instructionsEl.classList.remove("hidden");
+  updateHud(); // Update to show quantum cores display on start screen
   
   // Clear game state to prevent lingering entities
   state.bullets = [];
@@ -4868,8 +4880,16 @@ const updateShipSelection = () => {
   // Clear existing ship options
   shipContainer.innerHTML = "";
   
-  // Create radio buttons for all unlocked ships
-  state.unlockedShips.forEach(shipId => {
+  // Sort unlocked ships by price (ascending order)
+  const sortedUnlockedShips = [...state.unlockedShips].sort((a, b) => {
+    const shipA = shipLoadouts[a];
+    const shipB = shipLoadouts[b];
+    if (!shipA || !shipB) return 0;
+    return (shipA.price || 0) - (shipB.price || 0);
+  });
+  
+  // Create radio buttons for all unlocked ships (now sorted by price)
+  sortedUnlockedShips.forEach(shipId => {
     const ship = shipLoadouts[shipId];
     if (!ship) return;
     

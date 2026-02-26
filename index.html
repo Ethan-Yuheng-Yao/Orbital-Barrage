@@ -14,22 +14,22 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="overlay">
-      <div class="hud hidden" id="hud">
-        <div class="hud__row">
-          <span>HP: <strong id="hpValue">0</strong></span>
-          <span>Shield: <strong id="shieldValue">0</strong></span>
-          <span>Energy: <strong id="energyValue">0</strong></span>
-        </div>
-        <div class="hud__row">
-          <span>Score: <strong id="scoreValue">0</strong></span>
-          <span>Wave: <strong id="waveValue">0</strong></span>
-          <span>High Score: <strong id="highScoreValue">0</strong></span>
-        </div>
-        <div class="hud__row">
-          <span>Quantum Cores: <strong id="quantumCoresValue">0</strong></span>
-        </div>
+    <div class="hud hidden" id="hud">
+      <div class="hud__row">
+        <span>HP: <strong id="hpValue">0</strong></span>
+        <span>Shield: <strong id="shieldValue">0</strong></span>
+        <span>Energy: <strong id="energyValue">0</strong></span>
       </div>
+      <div class="hud__row">
+        <span>Score: <strong id="scoreValue">0</strong></span>
+        <span>Wave: <strong id="waveValue">0</strong></span>
+        <span>High Score: <strong id="highScoreValue">0</strong></span>
+      </div>
+      <div class="hud__row">
+        <span>Quantum Cores: <strong id="quantumCoresValue">0</strong></span>
+      </div>
+    </div>
+    <div class="overlay">
       <div id="quantumCoresDisplay" class="hidden" style="position: absolute; top: 90px; right: 60px; padding: 6px 12px; font-size: 1rem; background: rgba(92, 95, 247, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); color: white; z-index: 1000; pointer-events: none; border-radius: 6px;">Quantum Cores: <strong id="quantumCoresDisplayValue">0</strong></div>
       <button id="hudSettingsButton" class="hidden" style="position: absolute; top: 90px; right: 8px; padding: 6px 10px; font-size: 1rem; background: rgba(92, 95, 247, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); color: white; cursor: pointer; z-index: 1000; pointer-events: auto;" title="Settings">⚙️</button>
       <div id="abilityIcons" class="ability-icons hidden"></div>
@@ -114,12 +114,13 @@
           <div class="boss-bar__fill" id="bossBarFill"></div>
         </div>
       </div>
-      <div class="upgrade-panel hidden" id="upgradePanel">
-        <h3>Choose an Upgrade</h3>
-        <p>Each wave cleared grants one permanent enhancement.</p>
-        <div class="upgrade-options" id="upgradeOptions"></div>
-      </div>
-      <div class="ship-shop hidden" id="shipShopPanel">
+    </div>
+    <div class="upgrade-panel hidden" id="upgradePanel">
+      <h3>Choose an Upgrade</h3>
+      <p>Each wave cleared grants one permanent enhancement.</p>
+      <div class="upgrade-options" id="upgradeOptions"></div>
+    </div>
+    <div class="ship-shop hidden" id="shipShopPanel">
         <div class="ship-shop__header">
           <h3>Ship Hangar</h3>
           <button class="ship-shop__close" id="shopCloseButton">×</button>
