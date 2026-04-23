@@ -69,12 +69,11 @@ const abilityIcons = document.getElementById("abilityIcons");
 const mainHub = document.getElementById("mainHub");
 const endlessButton = document.getElementById("endlessButton");
 const campaignButton = document.getElementById("campaignButton");
-const shipSelectionButton = document.getElementById("shipSelectionButton");
-const shopButtonHub = document.getElementById("shopButtonHub");
+const shopButtonMain = document.getElementById("shopButtonMain");
+const endlessShipScroll = document.getElementById("endlessShipScroll");
+const endlessShipNext = document.getElementById("endlessShipNext");
 const instructionsButton = document.getElementById("instructionsButton");
 const backToHubButton = document.getElementById("backToHubButton");
-const shipSelectionPanel = document.getElementById("shipSelectionPanel");
-const backToHubFromShips = document.getElementById("backToHubFromShips");
 const instructionsPanel = document.getElementById("instructionsPanel");
 const backFromInstructions = document.getElementById("backFromInstructions");
 const campaignPanel = document.getElementById("campaignPanel");
@@ -295,8 +294,8 @@ const shipLoadouts = {
     shieldRegenMultiplier: 1.15,
     abilities: [
       { key: "1", name: "Omni Burst", cost: 100, type: "burst" },
-      { key: "2", name: "Rapid Volley", cost: 40, type: "rapidVolley" },
-      { key: "3", name: "Energy Surge", cost: 60, type: "energySurge" },
+      { key: "2", name: "Kinetic Spray", cost: 40, type: "rapidVolley" },
+      { key: "3", name: "Flux Lances", cost: 60, type: "energySurge" },
     ],
     price: 0,
     unlocked: true,
@@ -315,9 +314,9 @@ const shipLoadouts = {
     energyRegenMultiplier: 0.34,
     shieldRegenMultiplier: 1.05,
     abilities: [
-      { key: "1", name: "Rapid Volley", cost: 40, type: "rapidVolley" },
+      { key: "1", name: "Feather Salvo", cost: 40, type: "rapidVolley" },
       { key: "2", name: "Blink", cost: 80, type: "blink" },
-      { key: "3", name: "Energy Surge", cost: 60, type: "energySurge" },
+      { key: "3", name: "Capacitor Bloom", cost: 60, type: "energySurge" },
     ],
     price: 900,
     unlocked: false,
@@ -357,9 +356,9 @@ const shipLoadouts = {
     energyRegenMultiplier: 0.5,
     shieldRegenMultiplier: 2.5,
     abilities: [
-      { key: "1", name: "Shockwave", cost: 100, type: "shockwave" },
-      { key: "2", name: "Shield Overcharge", cost: 50, type: "shieldOvercharge" },
-      { key: "3", name: "Fortify", cost: 70, type: "fortify" },
+      { key: "1", name: "Bastion Pulse", cost: 100, type: "shockwave" },
+      { key: "2", name: "Aegis Reservoir", cost: 50, type: "shieldOvercharge" },
+      { key: "3", name: "Bulwark Brace", cost: 70, type: "fortify" },
     ],
     price: 4800,
     unlocked: false,
@@ -378,9 +377,9 @@ const shipLoadouts = {
     energyRegenMultiplier: 0.95,
     shieldRegenMultiplier: 2.2,
     abilities: [
-      { key: "1", name: "Lightning Storm", cost: 100, type: "lightningStorm" },
-      { key: "2", name: "Combat Drone", cost: 60, type: "combatDrone" },
-      { key: "3", name: "Overload", cost: 70, type: "overload" },
+      { key: "1", name: "Crown Lightning", cost: 100, type: "lightningStorm" },
+      { key: "2", name: "Storm Shell Drones", cost: 60, type: "combatDrone" },
+      { key: "3", name: "Arc Induction", cost: 70, type: "overload" },
     ],
     price: 7600,
     unlocked: false,
@@ -420,7 +419,7 @@ const shipLoadouts = {
     energyRegenMultiplier: 1.9,
     shieldRegenMultiplier: 3.5,
     abilities: [
-      { key: "1", name: "Black Hole", cost: 120, type: "blackHole" },
+      { key: "1", name: "Void Snare", cost: 120, type: "blackHole" },
       { key: "2", name: "Shadow Step", cost: 40, type: "shadowStep" },
       { key: "3", name: "Ethereal", cost: 60, type: "ethereal" },
     ],
@@ -442,8 +441,8 @@ const shipLoadouts = {
     shieldRegenMultiplier: 1.7,
     abilities: [
       { key: "1", name: "Chain Bolt", cost: 55, type: "chainBolt" },
-      { key: "2", name: "Rapid Volley", cost: 40, type: "rapidVolley" },
-      { key: "3", name: "Energy Surge", cost: 60, type: "energySurge" },
+      { key: "2", name: "Flank Burst", cost: 40, type: "rapidVolley" },
+      { key: "3", name: "Drive Surge", cost: 60, type: "energySurge" },
     ],
     price: 2600,
     unlocked: false,
@@ -476,16 +475,16 @@ const shipLoadouts = {
     speed: 318,
     maxHp: 150,
     maxShield: 58,
-    maxEnergy: 116,
+    maxEnergy: 132,
     baseCooldown: 0.36,
     damageMultiplier: 1.38,
     shotSpeedMultiplier: 1.24,
     energyRegenMultiplier: 1.35,
     shieldRegenMultiplier: 2.8,
     abilities: [
-      { key: "1", name: "Abyssal Supernova", cost: 120, type: "supernova" },
-      { key: "2", name: "Bluefall Barrage", cost: 90, type: "starfall" },
-      { key: "3", name: "Orbital Tides", cost: 75, type: "combatDrone" },
+      { key: "1", name: "Azure Cataclysm", cost: 120, type: "azureCataclysm" },
+      { key: "2", name: "Bluefall Barrage", cost: 90, type: "bluefallBarrage" },
+      { key: "3", name: "Orbital Tides", cost: 75, type: "novaSwarmDrones" },
     ],
     price: 56000,
     unlocked: false,
@@ -546,9 +545,9 @@ const shipLoadouts = {
     energyRegenMultiplier: 0.42,
     shieldRegenMultiplier: 2.6,
     abilities: [
-      { key: "1", name: "Shield Overcharge", cost: 50, type: "shieldOvercharge" },
-      { key: "2", name: "Fortify", cost: 70, type: "fortify" },
-      { key: "3", name: "Shockwave", cost: 100, type: "shockwave" },
+      { key: "1", name: "Polarize Field", cost: 50, type: "shieldOvercharge" },
+      { key: "2", name: "Rampart Lock", cost: 70, type: "fortify" },
+      { key: "3", name: "Seismic Clap", cost: 100, type: "shockwave" },
     ],
     price: 4200,
     unlocked: false,
@@ -567,9 +566,9 @@ const shipLoadouts = {
     energyRegenMultiplier: 1.45,
     shieldRegenMultiplier: 2.9,
     abilities: [
-      { key: "1", name: "Overload", cost: 70, type: "overload" },
-      { key: "2", name: "Energy Surge", cost: 60, type: "energySurge" },
-      { key: "3", name: "Starfall", cost: 75, type: "starfall" },
+      { key: "1", name: "Core Flare", cost: 70, type: "overload" },
+      { key: "2", name: "Thermal Bloom", cost: 60, type: "energySurge" },
+      { key: "3", name: "Pyroclast Rain", cost: 75, type: "starfall" },
     ],
     price: 62000,
     unlocked: false,
@@ -588,9 +587,9 @@ const shipLoadouts = {
     energyRegenMultiplier: 1.8,
     shieldRegenMultiplier: 3.1,
     abilities: [
-      { key: "1", name: "Lightning Storm", cost: 100, type: "lightningStorm" },
+      { key: "1", name: "Borealis Threads", cost: 100, type: "lightningStorm" },
       { key: "2", name: "Chain Bolt", cost: 55, type: "chainBolt" },
-      { key: "3", name: "Phase Shift", cost: 65, type: "phaseShift" },
+      { key: "3", name: "Aurora Slip", cost: 65, type: "phaseShift" },
     ],
     price: 32000,
     unlocked: false,
@@ -609,8 +608,8 @@ const shipLoadouts = {
     energyRegenMultiplier: 3.2,
     shieldRegenMultiplier: 6.4,
     abilities: [
-      { key: "1", name: "Event Horizon", cost: 120, type: "blackHole" },
-      { key: "2", name: "Stellar Cascade", cost: 75, type: "starfall" },
+      { key: "1", name: "Keelbreaker Singularity", cost: 120, type: "blackHole" },
+      { key: "2", name: "Keelbreaker Cascade", cost: 75, type: "starfall" },
       { key: "3", name: "Aether Warp", cost: 60, type: "ethereal" },
     ],
     price: 120000,
@@ -619,16 +618,16 @@ const shipLoadouts = {
 };
 
 const ADVANCED_SHIP_LIBRARY = [
-  { id: "halberd", name: "Halberd", tier: "rare", speed: 268, maxHp: 128, maxShield: 46, maxEnergy: 98, baseCooldown: 0.49, damageMultiplier: 1.06, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 2.1, abilities: [{ key: "1", name: "Shockwave", cost: 100, type: "shockwave" }, { key: "2", name: "Chain Bolt", cost: 55, type: "chainBolt" }, { key: "3", name: "Fortify", cost: 70, type: "fortify" }], price: 9800, unlocked: false },
-  { id: "lancer", name: "Lancer", tier: "uncommon", speed: 292, maxHp: 102, maxShield: 32, maxEnergy: 92, baseCooldown: 0.52, damageMultiplier: 0.9, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 1.8, abilities: [{ key: "1", name: "Rapid Volley", cost: 40, type: "rapidVolley" }, { key: "2", name: "Blink", cost: 80, type: "blink" }, { key: "3", name: "Chain Bolt", cost: 55, type: "chainBolt" }], price: 5400, unlocked: false },
+  { id: "halberd", name: "Halberd", tier: "rare", speed: 268, maxHp: 128, maxShield: 46, maxEnergy: 98, baseCooldown: 0.49, damageMultiplier: 1.06, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 2.1, abilities: [{ key: "1", name: "Halberd Shock", cost: 100, type: "shockwave" }, { key: "2", name: "Chain Bolt", cost: 55, type: "chainBolt" }, { key: "3", name: "Polearm Brace", cost: 70, type: "fortify" }], price: 9800, unlocked: false },
+  { id: "lancer", name: "Lancer", tier: "uncommon", speed: 292, maxHp: 102, maxShield: 32, maxEnergy: 92, baseCooldown: 0.52, damageMultiplier: 0.9, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 1.8, abilities: [{ key: "1", name: "Lance Volley", cost: 40, type: "rapidVolley" }, { key: "2", name: "Blink", cost: 80, type: "blink" }, { key: "3", name: "Chain Bolt", cost: 55, type: "chainBolt" }], price: 5400, unlocked: false },
   { id: "raven", name: "Raven", tier: "rare", speed: 312, maxHp: 112, maxShield: 38, maxEnergy: 104, baseCooldown: 0.44, damageMultiplier: 1.08, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 2.0, abilities: [{ key: "1", name: "Ghostfire", cost: 45, type: "ghostfire" }, { key: "2", name: "Death Mark", cost: 90, type: "deathMark" }, { key: "3", name: "Shadow Step", cost: 40, type: "shadowStep" }], price: 12600, unlocked: false },
-  { id: "warden", name: "Warden", tier: "rare", speed: 242, maxHp: 180, maxShield: 76, maxEnergy: 102, baseCooldown: 0.57, damageMultiplier: 0.94, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3.0, abilities: [{ key: "1", name: "Energy Barrier", cost: 70, type: "energyBarrier" }, { key: "2", name: "Shield Overcharge", cost: 50, type: "shieldOvercharge" }, { key: "3", name: "Shockwave", cost: 100, type: "shockwave" }], price: 16000, unlocked: false },
-  { id: "helios", name: "Helios", tier: "legendary", speed: 322, maxHp: 192, maxShield: 64, maxEnergy: 140, baseCooldown: 0.33, damageMultiplier: 1.44, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 2.9, abilities: [{ key: "1", name: "Abyssal Supernova", cost: 120, type: "supernova" }, { key: "2", name: "Starfall", cost: 75, type: "starfall" }, { key: "3", name: "Overload", cost: 70, type: "overload" }], price: 72000, unlocked: false },
-  { id: "eclipse", name: "Eclipse", tier: "mythic", speed: 362, maxHp: 132, maxShield: 52, maxEnergy: 168, baseCooldown: 0.29, damageMultiplier: 1.36, shotSpeedMultiplier: 1.5, energyRegenMultiplier: 2.22, shieldRegenMultiplier: 3.8, abilities: [{ key: "1", name: "Event Horizon", cost: 120, type: "blackHole" }, { key: "2", name: "Void Rift", cost: 130, type: "voidRift" }, { key: "3", name: "Aether Warp", cost: 60, type: "ethereal" }], price: 88000, unlocked: false },
-  { id: "oracle", name: "Oracle", tier: "legendary", speed: 305, maxHp: 158, maxShield: 70, maxEnergy: 154, baseCooldown: 0.35, damageMultiplier: 1.28, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 3.4, abilities: [{ key: "1", name: "Phase Shift", cost: 65, type: "phaseShift" }, { key: "2", name: "Lightning Storm", cost: 100, type: "lightningStorm" }, { key: "3", name: "Combat Drone", cost: 60, type: "combatDrone" }], price: 69000, unlocked: false },
-  { id: "seraph", name: "Seraph", tier: "exotic", speed: 390, maxHp: 210, maxShield: 102, maxEnergy: 190, baseCooldown: 0.22, damageMultiplier: 1.82, shotSpeedMultiplier: 1.64, energyRegenMultiplier: 3.0, shieldRegenMultiplier: 6.0, abilities: [{ key: "1", name: "Black Hole", cost: 120, type: "blackHole" }, { key: "2", name: "Abyssal Supernova", cost: 120, type: "supernova" }, { key: "3", name: "Dimensional Slash", cost: 85, type: "dimensionalSlash" }], price: 135000, unlocked: false },
-  { id: "myrmidon", name: "Myrmidon", tier: "uncommon", speed: 276, maxHp: 126, maxShield: 40, maxEnergy: 96, baseCooldown: 0.54, damageMultiplier: 0.92, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 1.9, abilities: [{ key: "1", name: "Rapid Volley", cost: 40, type: "rapidVolley" }, { key: "2", name: "Energy Surge", cost: 60, type: "energySurge" }, { key: "3", name: "Fortify", cost: 70, type: "fortify" }], price: 6100, unlocked: false },
-  { id: "grimstar", name: "Grimstar", tier: "legendary", speed: 334, maxHp: 166, maxShield: 58, maxEnergy: 148, baseCooldown: 0.31, damageMultiplier: 1.41, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 3.2, abilities: [{ key: "1", name: "Death Mark", cost: 90, type: "deathMark" }, { key: "2", name: "Soul Harvest", cost: 65, type: "soulHarvest" }, { key: "3", name: "Starfall", cost: 75, type: "starfall" }], price: 76000, unlocked: false }
+  { id: "warden", name: "Warden", tier: "rare", speed: 242, maxHp: 180, maxShield: 76, maxEnergy: 102, baseCooldown: 0.57, damageMultiplier: 0.94, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3.0, abilities: [{ key: "1", name: "Energy Barrier", cost: 70, type: "energyBarrier" }, { key: "2", name: "Bastion Reinforce", cost: 50, type: "shieldOvercharge" }, { key: "3", name: "Aftershock", cost: 100, type: "shockwave" }], price: 16000, unlocked: false },
+  { id: "helios", name: "Helios", tier: "legendary", speed: 322, maxHp: 192, maxShield: 64, maxEnergy: 140, baseCooldown: 0.33, damageMultiplier: 1.44, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 2.9, abilities: [{ key: "1", name: "Solar Collapse", cost: 120, type: "supernova" }, { key: "2", name: "Coronal Deluge", cost: 75, type: "starfall" }, { key: "3", name: "Photosphere Overdrive", cost: 70, type: "overload" }], price: 72000, unlocked: false },
+  { id: "eclipse", name: "Eclipse", tier: "mythic", speed: 362, maxHp: 132, maxShield: 52, maxEnergy: 168, baseCooldown: 0.29, damageMultiplier: 1.36, shotSpeedMultiplier: 1.5, energyRegenMultiplier: 2.22, shieldRegenMultiplier: 3.8, abilities: [{ key: "1", name: "Penumbra Core", cost: 120, type: "blackHole" }, { key: "2", name: "Void Rift", cost: 130, type: "voidRift" }, { key: "3", name: "Aether Warp", cost: 60, type: "ethereal" }], price: 88000, unlocked: false },
+  { id: "oracle", name: "Oracle", tier: "legendary", speed: 305, maxHp: 158, maxShield: 70, maxEnergy: 154, baseCooldown: 0.35, damageMultiplier: 1.28, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 3.4, abilities: [{ key: "1", name: "Oracular Blink", cost: 65, type: "phaseShift" }, { key: "2", name: "Probability Arcs", cost: 100, type: "lightningStorm" }, { key: "3", name: "Sentinel Knives", cost: 60, type: "combatDrone" }], price: 69000, unlocked: false },
+  { id: "seraph", name: "Seraph", tier: "exotic", speed: 390, maxHp: 210, maxShield: 102, maxEnergy: 190, baseCooldown: 0.22, damageMultiplier: 1.82, shotSpeedMultiplier: 1.64, energyRegenMultiplier: 3.0, shieldRegenMultiplier: 6.0, abilities: [{ key: "1", name: "Umbral Singularity", cost: 120, type: "blackHole" }, { key: "2", name: "Stellar Ignition", cost: 120, type: "supernova" }, { key: "3", name: "Dimensional Slash", cost: 85, type: "dimensionalSlash" }], price: 135000, unlocked: false },
+  { id: "myrmidon", name: "Myrmidon", tier: "uncommon", speed: 276, maxHp: 126, maxShield: 40, maxEnergy: 96, baseCooldown: 0.54, damageMultiplier: 0.92, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 1.9, abilities: [{ key: "1", name: "Kickback Salvo", cost: 40, type: "rapidVolley" }, { key: "2", name: "Reactor Flush", cost: 60, type: "energySurge" }, { key: "3", name: "Phalanx Brace", cost: 70, type: "fortify" }], price: 6100, unlocked: false },
+  { id: "grimstar", name: "Grimstar", tier: "legendary", speed: 334, maxHp: 166, maxShield: 58, maxEnergy: 148, baseCooldown: 0.31, damageMultiplier: 1.41, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 3.2, abilities: [{ key: "1", name: "Death Mark", cost: 90, type: "deathMark" }, { key: "2", name: "Soul Harvest", cost: 65, type: "soulHarvest" }, { key: "3", name: "Obituary Meteors", cost: 75, type: "starfall" }], price: 76000, unlocked: false }
 ];
 
 const ADVANCED_PATTERN_LIBRARY = [
@@ -807,6 +806,12 @@ for (const ship of ADVANCED_SHIP_LIBRARY) {
   if (!shipLoadouts[ship.id]) {
     shipLoadouts[ship.id] = ship;
   }
+}
+
+for (const ship of Object.values(shipLoadouts)) {
+  if (!ship.abilities) continue;
+  const maxCost = ship.abilities.reduce((m, a) => Math.max(m, a.cost || 0), 0);
+  if ((ship.maxEnergy || 0) < maxCost) ship.maxEnergy = maxCost + 12;
 }
 
 const upgradePool = [
@@ -3188,12 +3193,11 @@ class Player {
       return;
     }
     if (this.shipId === "nova") {
-      
-      for (const offset of [-0.12, 0, 0.12]) {
-        const star = new Bullet(this.x, this.y, angle + offset, 360 * this.shotSpeedMultiplier, true, 7, "#ffd166", 12 * this.damageMultiplier);
+      for (const offset of [-0.1, 0, 0.1]) {
+        const star = new Bullet(this.x, this.y, angle + offset, 360 * this.shotSpeedMultiplier, true, 6.2, "#6ef8ff", 11 * this.damageMultiplier);
         star.explosive = true;
-        star.burnDamage = star.damage * 0.2;
-        star.novaMini = true;
+        star.burnDamage = star.damage * 0.18;
+        star.novaAzureMini = true;
         bullets.push(star);
       }
       this.cooldown = this.baseCooldown * 0.95;
@@ -4209,14 +4213,38 @@ class NovaAnomaly {
     this.pullEnabled = config.pullEnabled !== false;
     this.explodeAtEnd = config.explodeAtEnd || false;
     this.explosionDamage = config.explosionDamage || 0;
+    this.explosionKnockback = config.explosionKnockback || 0;
+    this.knockbackRadius = config.knockbackRadius || this.maxRadius * 1.35;
     this.exploded = false;
     this.color = config.color || "#57b7ff";
     this.stunWhilePulled = config.stunWhilePulled !== false;
+    this.azureVortex = !!config.azureVortex;
+    this.streamBudget = 0;
+    this.streamColors = config.streamColors || ["#00ffff", "#4ddbff", "#a8ffff", "#00b8d4"];
   }
   update(dt) {
     this.life -= dt;
     const t = 1 - Math.max(this.life / this.maxLife, 0);
     this.radius = this.maxRadius * (0.3 + 0.7 * t);
+    if (this.azureVortex && this.life > this.maxLife * 0.18) {
+      this.streamBudget += dt * 320;
+      while (this.streamBudget >= 1) {
+        this.streamBudget -= 1;
+        const ang = Math.random() * Math.PI * 2;
+        const distOut = this.radius * (0.35 + Math.random() * 0.9);
+        const px = this.x + Math.cos(ang) * distOut;
+        const py = this.y + Math.sin(ang) * distOut;
+        const c = this.streamColors[(Math.random() * this.streamColors.length) | 0];
+        const p = new Particle(px, py, c);
+        const inward = Math.atan2(this.y - py, this.x - px);
+        const sp = rng(90, 240);
+        p.vx = Math.cos(inward) * sp;
+        p.vy = Math.sin(inward) * sp;
+        p.life = rng(0.12, 0.38);
+        p.size = rng(1.4, 3.8);
+        state.particles.push(p);
+      }
+    }
     for (let i = state.enemies.length - 1; i >= 0; i--) {
       const enemy = state.enemies[i];
       const d = dist(this.x, this.y, enemy.x, enemy.y);
@@ -4235,6 +4263,7 @@ class NovaAnomaly {
     }
     if (this.life <= 0 && this.explodeAtEnd && !this.exploded) {
       this.exploded = true;
+      const kbR = this.knockbackRadius;
       for (let i = state.enemies.length - 1; i >= 0; i--) {
         const enemy = state.enemies[i];
         const d = dist(this.x, this.y, enemy.x, enemy.y);
@@ -4242,14 +4271,24 @@ class NovaAnomaly {
           enemy.hp -= this.explosionDamage;
           if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
         }
+        if (this.explosionKnockback > 0 && d <= kbR + enemy.size && enemy.hp > 0) {
+          const a = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+          const falloff = 1 - Math.min(1, d / Math.max(kbR, 1));
+          const kb = this.explosionKnockback * falloff;
+          enemy.x += Math.cos(a) * kb;
+          enemy.y += Math.sin(a) * kb;
+        }
       }
-      for (let i = 0; i < 220; i++) {
-        const a = (i / 220) * Math.PI * 2;
-        const p = new Particle(this.x + Math.cos(a) * rng(20, this.maxRadius * 1.2), this.y + Math.sin(a) * rng(20, this.maxRadius * 1.2), "#8ad7ff");
-        p.vx = Math.cos(a) * rng(100, 260);
-        p.vy = Math.sin(a) * rng(100, 260);
-        p.life = rng(0.25, 0.6);
-        p.size = rng(3, 6);
+      const burstTint = this.azureVortex ? "#b6ffff" : "#8ad7ff";
+      const count = this.azureVortex ? 420 : 220;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        const dist = rng(20, this.maxRadius * (this.azureVortex ? 1.65 : 1.2));
+        const p = new Particle(this.x + Math.cos(a) * dist, this.y + Math.sin(a) * dist, this.azureVortex && i % 2 ? "#00ffff" : burstTint);
+        p.vx = Math.cos(a) * rng(140, 420);
+        p.vy = Math.sin(a) * rng(140, 420);
+        p.life = rng(0.28, 0.72);
+        p.size = rng(2.2, 6.2);
         state.particles.push(p);
       }
     }
@@ -4257,15 +4296,33 @@ class NovaAnomaly {
   draw(ctx) {
     const alpha = Math.max(this.life / this.maxLife, 0);
     ctx.save();
-    ctx.globalAlpha = alpha * 0.7;
+    if (this.azureVortex) {
+      ctx.globalAlpha = alpha * 0.92;
+      ctx.shadowBlur = 38;
+      ctx.shadowColor = "#00ffff";
+    } else {
+      ctx.globalAlpha = alpha * 0.7;
+    }
     const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
-    g.addColorStop(0, this.color + "cc");
-    g.addColorStop(0.6, this.color + "55");
+    g.addColorStop(0, this.color + "ee");
+    g.addColorStop(0.45, this.color + "99");
+    g.addColorStop(0.78, this.color + "33");
     g.addColorStop(1, this.color + "00");
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
+    if (this.azureVortex) {
+      ctx.globalAlpha = alpha * 0.55;
+      ctx.strokeStyle = "rgba(180,255,255,0.65)";
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius * 0.88, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius * 0.52, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
@@ -4282,22 +4339,32 @@ class NovaOrbiter {
     this.maxLife = 9;
     this.cooldown = 0;
     this.phase = Math.random() * Math.PI * 2;
+    this.tightOrbit = false;
+    this.oracleDrone = false;
   }
   update(dt) {
     this.life -= dt;
     this.cooldown = Math.max(0, this.cooldown - dt);
-    this.angle += dt * (1.7 + Math.sin(performance.now() / 600 + this.phase) * 0.8);
-    this.radius += Math.sin(performance.now() / 450 + this.phase) * this.radiusSpeed * dt;
-    this.radius = clamp(this.radius, 35, 150);
-    this.ellipse += Math.sin(performance.now() / 700 + this.phase) * 0.35 * dt;
-    this.ellipse = clamp(this.ellipse, 0.4, 1.65);
-    this.x = state.player.x + Math.cos(this.angle) * this.radius;
-    this.y = state.player.y + Math.sin(this.angle) * this.radius * this.ellipse;
+    if (this.tightOrbit) {
+      this.angle += dt * 2.55;
+      const baseR = 68 + Math.sin(this.angle * 2.4 + this.phase) * 7;
+      this.x = state.player.x + Math.cos(this.angle) * baseR;
+      this.y = state.player.y + Math.sin(this.angle) * baseR * 0.96;
+    } else {
+      this.angle += dt * (1.7 + Math.sin(performance.now() / 600 + this.phase) * 0.8);
+      this.radius += Math.sin(performance.now() / 450 + this.phase) * this.radiusSpeed * dt;
+      this.radius = clamp(this.radius, 35, 150);
+      this.ellipse += Math.sin(performance.now() / 700 + this.phase) * 0.35 * dt;
+      this.ellipse = clamp(this.ellipse, 0.4, 1.65);
+      this.x = state.player.x + Math.cos(this.angle) * this.radius;
+      this.y = state.player.y + Math.sin(this.angle) * this.radius * this.ellipse;
+    }
     for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
       const b = state.enemyBullets[i];
       if (dist(b.x, b.y, this.x, this.y) < b.size + 10) {
         state.enemyBullets.splice(i, 1);
-        for (let p = 0; p < 6; p++) state.particles.push(new Particle(this.x, this.y, "#5ec6ff"));
+        const pc = this.tightOrbit ? "#6ef8ff" : "#5ec6ff";
+        for (let p = 0; p < 6; p++) state.particles.push(new Particle(this.x, this.y, pc));
       }
     }
     for (let i = state.enemies.length - 1; i >= 0; i--) {
@@ -4319,13 +4386,105 @@ class NovaOrbiter {
     ctx.save();
     ctx.globalAlpha = alpha;
     const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, 12);
-    g.addColorStop(0, "#e2f6ff");
-    g.addColorStop(0.55, "#5ec6ff");
-    g.addColorStop(1, "rgba(94,198,255,0)");
+    if (this.oracleDrone) {
+      g.addColorStop(0, "#f5e6ff");
+      g.addColorStop(0.55, "#b86fff");
+      g.addColorStop(1, "rgba(120,60,200,0)");
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = "#d4a8ff";
+    } else if (this.tightOrbit) {
+      g.addColorStop(0, "#f0ffff");
+      g.addColorStop(0.5, "#3defff");
+      g.addColorStop(1, "rgba(0,230,255,0)");
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = "#00ffff";
+    } else {
+      g.addColorStop(0, "#e2f6ff");
+      g.addColorStop(0.55, "#5ec6ff");
+      g.addColorStop(1, "rgba(94,198,255,0)");
+    }
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(this.x, this.y, 12, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+}
+
+class BluefallPortal {
+  constructor(x, y, delay) {
+    this.x = x;
+    this.y = y;
+    this.delay = delay;
+    this.age = 0;
+    this.phase = "wait";
+    this.chargeT = 0;
+    this.shotsLeft = 5;
+    this.nextShotIn = 0;
+    this.spin = Math.random() * Math.PI * 2;
+  }
+  update(dt) {
+    this.age += dt;
+    if (this.phase === "wait") {
+      if (this.age >= this.delay) {
+        this.phase = "charge";
+        this.chargeT = 0;
+      }
+      return false;
+    }
+    if (this.phase === "charge") {
+      this.chargeT += dt;
+      if (this.chargeT >= 1) {
+        this.phase = "fire";
+        this.nextShotIn = 0;
+      }
+      return false;
+    }
+    if (this.phase === "fire") {
+      this.nextShotIn -= dt;
+      if (this.shotsLeft > 0 && this.nextShotIn <= 0) {
+        const base = Math.PI / 2 + rng(-0.42, 0.42);
+        const orb = new Bullet(
+          this.x,
+          this.y,
+          base + rng(-0.16, 0.16),
+          rng(210, 292) * state.player.shotSpeedMultiplier,
+          true,
+          5,
+          "#7aebff",
+          11 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
+        );
+        orb.life = rng(2.4, 3.4);
+        orb.novaBurst = true;
+        orb.novaNoPull = true;
+        orb.novaBurstRadius = 96;
+        orb.novaBurstDamage = 82 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+        state.bullets.push(orb);
+        this.shotsLeft -= 1;
+        this.nextShotIn = this.shotsLeft > 0 ? rng(0.038, 0.13) : 999;
+      }
+      if (this.shotsLeft <= 0) return true;
+      return false;
+    }
+    return true;
+  }
+  draw(ctx) {
+    if (this.phase === "wait") return;
+    const alpha = this.phase === "charge" ? Math.min(this.chargeT / 1, 1) : 1;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    this.spin += 0.07;
+    ctx.rotate(this.spin);
+    ctx.globalAlpha = 0.35 + alpha * 0.5;
+    ctx.strokeStyle = `rgba(120,240,255,${0.4 + alpha * 0.45})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 22 + alpha * 10, 14 + alpha * 6, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 8 + alpha * 5, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(200,255,255,${0.55 + alpha * 0.35})`;
+    ctx.stroke();
     ctx.restore();
   }
 }
@@ -4340,6 +4499,7 @@ const state = {
   visualBeams: [],
   novaAnomalies: [],
   novaOrbiters: [],
+  bluefallPortals: [],
   powerUps: [],
   drones: [],
   barriers: [],
@@ -4499,6 +4659,7 @@ const openUpgradePanel = () => {
   state.timeDilationFields = [];
   state.novaAnomalies = [];
   state.novaOrbiters = [];
+  state.bluefallPortals = [];
   
   
   state.player.x = config.width / 2;
@@ -4670,34 +4831,47 @@ const abilityHandlers = {
   },
   rapidVolley: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#ffd166", 120, 60);
-    
+    const rvCol = {
+      sparrow: "#7dffb3",
+      vanguard: "#ffd48a",
+      glacier: "#b8ecff",
+      myrmidon: "#ffb38a",
+      lancer: "#ffe2a1",
+      striker: "#ffd166",
+    }[state.player.shipId] || "#ffd166";
+    abilityParticleBurst(rvCol, 120, 60);
     state.player.rapidVolleyActive = true;
-    state.player.rapidVolleyTimer = 0.75; 
-    
+    state.player.rapidVolleyTimer = 0.75;
     state.player.shoot(state.bullets);
   },
   energySurge: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#74ffce", 100, 50);
-    
-    const orbCount = 64; 
-    const baseSpeed = 300;
+    const sid = state.player.shipId;
+    const pal = {
+      striker: { c: "#74ffce", mul: 1 },
+      sparrow: { c: "#ff9de2", mul: 1.02 },
+      vanguard: { c: "#9fd4ff", mul: 1.05 },
+      inferno: { c: "#ff7a4a", mul: 1.08 },
+      myrmidon: { c: "#ffd27a", mul: 1 },
+    }[sid] || { c: "#74ffce", mul: 1 };
+    abilityParticleBurst(pal.c, 100, 50);
+    const orbCount = sid === "inferno" ? 72 : 64;
+    const baseSpeed = sid === "vanguard" ? 320 : 300;
     for (let i = 0; i < orbCount; i++) {
-      const spiralAngle = (i / orbCount) * Math.PI * 4; 
-      const radius = 30 + (i / orbCount) * 20; 
+      const spiralAngle = (i / orbCount) * Math.PI * 4;
+      const radius = 30 + (i / orbCount) * (sid === "sparrow" ? 26 : 20);
       const startX = state.player.x + Math.cos(spiralAngle) * radius;
       const startY = state.player.y + Math.sin(spiralAngle) * radius;
-      const direction = spiralAngle + Math.PI / 2; 
+      const direction = spiralAngle + Math.PI / 2;
       state.bullets.push(
         new Bullet(
           startX,
           startY,
           direction,
-          baseSpeed * state.player.shotSpeedMultiplier,
+          baseSpeed * state.player.shotSpeedMultiplier * pal.mul,
           true,
           5,
-          "#74ffce",
+          pal.c,
           12 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
         )
       );
@@ -4705,24 +4879,25 @@ const abilityHandlers = {
   },
   shockwave: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#ffe29b", 200, 100);
+    const sid = state.player.shipId;
+    const skin = {
+      aegis: { p: "#ffe29b", ring: "#ffd27a" },
+      bulwark: { p: "#d4a574", ring: "#c49a6c" },
+      warden: { p: "#9ecfff", ring: "#7eb8f4" },
+      halberd: { p: "#ffcf8a", ring: "#f5b85c" },
+    }[sid] || { p: "#ffe29b", ring: "#ffe29b" };
+    abilityParticleBurst(skin.p, 200, 100);
     const radius = 240;
     const baseDamage = 140 + state.wave * 3;
-    
-    
-    
-    
-    const circle = new ExpandingCircle(state.player.x, state.player.y, radius, "#ffe29b", 1.5, baseDamage, null, true);
+    const circle = new ExpandingCircle(state.player.x, state.player.y, radius, skin.ring, 1.5, baseDamage, null, true);
     state.expandingCircles.push(circle);
-    
-    
     for (let ring = 0; ring < 3; ring++) {
       const ringRadius = radius * (ring + 1) / 3;
       for (let j = 0; j < 24; j++) {
         const angle = (j / 24) * Math.PI * 2;
         const x = state.player.x + Math.cos(angle) * ringRadius;
         const y = state.player.y + Math.sin(angle) * ringRadius;
-        const p = new Particle(x, y, "#ffe29b");
+        const p = new Particle(x, y, skin.p);
         p.vx = Math.cos(angle) * 200;
         p.vy = Math.sin(angle) * 200;
         p.life = 0.4;
@@ -4732,24 +4907,22 @@ const abilityHandlers = {
   },
   shieldOvercharge: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#90ff90", 150, 70);
-    
-    
+    const col = { aegis: "#7dffc8", warden: "#a6e3ff", bulwark: "#c8d8e8" }[state.player.shipId] || "#90ff90";
+    abilityParticleBurst(col, 150, 70);
     state.timeDilationFields = state.timeDilationFields || [];
     state.timeDilationFields.push(new TimeDilationField(state.player.x, state.player.y));
   },
   fortify: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#ffe29b", 180, 80);
-    
+    const col = { aegis: "#ffe8b0", bulwark: "#c4b28a", halberd: "#e8d4a8", myrmidon: "#f0d060" }[state.player.shipId] || "#ffe29b";
+    abilityParticleBurst(col, 180, 80);
     state.player.fortifyActive = true;
-    state.player.fortifyTimer = 10; 
-    
+    state.player.fortifyTimer = 10;
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     for (let i = 0; i < 8; i++) {
       const spread = (i - 4) * 0.2;
       state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 400 * state.player.shotSpeedMultiplier, true, 4, "#ffe29b", 5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
+        new Bullet(state.player.x, state.player.y, angle + spread, 400 * state.player.shotSpeedMultiplier, true, 4, col, 5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
       );
     }
   },
@@ -4792,33 +4965,36 @@ const abilityHandlers = {
   },
   phaseShift: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
+    const col = { oracle: "#d4b8ff", aurora: "#7dfff0", phantom: "#9b7fff" }[sid] || "#9b7fff";
     const oldX = state.player.x;
     const oldY = state.player.y;
-    abilityParticleBurst("#9b7fff", 120, 60);
+    abilityParticleBurst(col, 120, 60);
     state.player.x = clamp(state.player.x + rng(-200, 200), 20, config.width - 20);
     state.player.y = clamp(state.player.y + rng(-200, 200), 20, config.height - 20);
-    abilityParticleBurst("#9b7fff", 120, 60);
-    
+    abilityParticleBurst(col, 120, 60);
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     for (let i = 0; i < 6; i++) {
       const spread = (i - 3) * 0.15;
       state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 450 * state.player.shotSpeedMultiplier, true, 4, "#9b7fff", 6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
+        new Bullet(state.player.x, state.player.y, angle + spread, 450 * state.player.shotSpeedMultiplier, true, 4, col, 6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
       );
     }
   },
   lightningStorm: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#ffff00", 150, 70);
-    
-    
-    const boltCount = Math.min(12, state.enemies.length + 5); 
-    const hitEnemies = new Set(); 
-    
+    const sid = state.player.shipId;
+    const prof = {
+      tempest: { burst: "#fff44d", c0: "#ffffff", c1: "#ffff00", c2: "#ffaa00", hit: "#ffff00", top: 0, bolts: 12 },
+      oracle: { burst: "#e0c8ff", c0: "#ffffff", c1: "#d4a8ff", c2: "#b070ff", hit: "#e6c6ff", top: 42, bolts: 14 },
+      aurora: { burst: "#8ffff0", c0: "#e8ffff", c1: "#66ffe6", c2: "#3dd4ff", hit: "#7dfff4", top: 12, bolts: 11 },
+    }[sid] || { burst: "#ffff00", c0: "#ffffff", c1: "#ffff00", c2: "#ffaa00", hit: "#ffff00", top: 0, bolts: 12 };
+    abilityParticleBurst(prof.burst, 150, 70);
+    const boltCount = Math.min(prof.bolts, state.enemies.length + 5);
+    const hitEnemies = new Set();
     for (let bolt = 0; bolt < boltCount; bolt++) {
-      
       const spawnX = rng(50, config.width - 50);
-      const spawnY = 0;
+      const spawnY = prof.top;
       
       
       let target = null;
@@ -4846,19 +5022,17 @@ const abilityHandlers = {
           const offset = Math.sin(t * 25 + layer) * rng(10, 25);
           const x = baseX + Math.cos(t * Math.PI * 5) * offset;
           const y = baseY;
-          const p = new Particle(x, y, layer === 0 ? "#ffffff" : layer === 1 ? "#ffff00" : "#ffaa00");
+          const p = new Particle(x, y, layer === 0 ? prof.c0 : layer === 1 ? prof.c1 : prof.c2);
           p.life = 0.4;
           p.size = rng(3, 5);
           state.particles.push(p);
         }
       }
-      
-      
       if (target) {
         hitEnemies.add(target.index);
         target.enemy.hp -= 120 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
         for (let j = 0; j < 30; j++) {
-          state.particles.push(new Particle(target.enemy.x, target.enemy.y, "#ffff00"));
+          state.particles.push(new Particle(target.enemy.x, target.enemy.y, prof.hit));
         }
         if (target.enemy.hp <= 0) {
           onEnemyDestroyed(target.enemy, target.index);
@@ -4868,6 +5042,15 @@ const abilityHandlers = {
   },
   combatDrone: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    if (state.player.shipId === "oracle") {
+      abilityParticleBurst("#d4a8ff", 210, 95);
+      for (let i = 0; i < 14; i++) {
+        const orb = new NovaOrbiter((i / 14) * Math.PI * 2, rng(38, 132));
+        orb.oracleDrone = true;
+        state.novaOrbiters.push(orb);
+      }
+      return;
+    }
     abilityParticleBurst("#5ec6ff", 200, 90);
     for (let i = 0; i < 12; i++) {
       const orb = new NovaOrbiter((i / 12) * Math.PI * 2, rng(40, 145));
@@ -4903,14 +5086,23 @@ const abilityHandlers = {
   },
   overload: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#ffff00", 200, 90);
-    
+    const sid = state.player.shipId;
+    if (sid === "inferno") {
+      abilityParticleBurst("#ff6b35", 200, 90);
+      const circle = new ExpandingCircle(state.player.x, state.player.y, 210, "#ff4500", 1.15, 88 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, null, true);
+      state.expandingCircles.push(circle);
+      return;
+    }
+    if (sid === "helios") {
+      abilityParticleBurst("#fff8dc", 200, 90);
+      const circle = new ExpandingCircle(state.player.x, state.player.y, 205, "#ffec80", 1.25, 85 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, null, true);
+      state.expandingCircles.push(circle);
+      return;
+    }
+    abilityParticleBurst("#e8ff44", 200, 90);
     const radius = 200;
     const baseDamage = 80 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-    
-    
-    
-    const circle = new ExpandingCircle(state.player.x, state.player.y, radius, "#ffff00", 1.2, baseDamage, null, true);
+    const circle = new ExpandingCircle(state.player.x, state.player.y, radius, "#d4ff33", 1.2, baseDamage, null, true);
     state.expandingCircles.push(circle);
   },
   siegeCannon: (cost) => {
@@ -4995,24 +5187,27 @@ const abilityHandlers = {
   },
   blackHole: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    const distance = 150;
+    const distance = sid === "aphelion" ? 175 : 150;
     const holeX = state.player.x + Math.cos(angle) * distance;
     const holeY = state.player.y + Math.sin(angle) * distance;
-    
+    const c1 =
+      sid === "aphelion" ? "#6ad4ff" : sid === "eclipse" ? "#b47cff" : sid === "seraph" ? "#ff6a9a" : "#9b7fff";
+    const c2 =
+      sid === "aphelion" ? "#3a6b9a" : sid === "eclipse" ? "#4a2080" : sid === "seraph" ? "#6a2040" : "#cfb7ff";
     for (let i = 0; i < 50; i++) {
       const t = i / 50;
       const x = state.player.x + (holeX - state.player.x) * t;
       const y = state.player.y + (holeY - state.player.y) * t;
-      const p = new Particle(x, y, "#9b7fff");
+      const p = new Particle(x, y, c1);
       p.vx = Math.cos(angle) * rng(-50, 50);
       p.vy = Math.sin(angle) * rng(-50, 50);
       state.particles.push(p);
     }
     state.blackHoles.push(new BlackHole(holeX, holeY));
-    
-    emitSpiralInwardParticles(holeX, holeY, "#9b7fff", 5, 46, 145, 1.15, 0.58);
-    emitSpiralInwardParticles(holeX, holeY, "#cfb7ff", 3, 38, 110, -1, 0.46);
+    emitSpiralInwardParticles(holeX, holeY, c1, 5, 46, 145, 1.15, 0.58);
+    emitSpiralInwardParticles(holeX, holeY, c2, 3, 38, 110, -1, 0.46);
   },
   shadowStep: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
@@ -5090,38 +5285,114 @@ const abilityHandlers = {
   },
   supernova: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    emitNovaShellParticles(state.player.x, state.player.y, "#5ec6ff", "#d4f7ff", 7, 72);
+    const sid = state.player.shipId;
+    if (sid === "seraph") {
+      emitNovaShellParticles(state.player.x, state.player.y, "#ff62d8", "#ffd0ff", 8, 80);
+      state.novaAnomalies.push(
+        new NovaAnomaly(state.player.x, state.player.y, {
+          maxRadius: 255,
+          duration: 2.05,
+          pullStrength: 300,
+          damagePerSecond: 78 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          pullEnabled: true,
+          explodeAtEnd: true,
+          explosionDamage: 235 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          explosionKnockback: 210,
+          knockbackRadius: 300,
+          color: "#ff49c4",
+          stunWhilePulled: true,
+        })
+      );
+      return;
+    }
+    emitNovaShellParticles(state.player.x, state.player.y, "#ffb347", "#fff6d9", 8, 76);
     state.novaAnomalies.push(
       new NovaAnomaly(state.player.x, state.player.y, {
-        maxRadius: 240,
-        duration: 2.4,
-        pullStrength: 280,
-        damagePerSecond: 72 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+        maxRadius: 250,
+        duration: 2.55,
+        pullStrength: 265,
+        damagePerSecond: 74 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
         pullEnabled: true,
         explodeAtEnd: true,
-        explosionDamage: 220 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        color: "#5ec6ff",
+        explosionDamage: 228 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+        explosionKnockback: 180,
+        knockbackRadius: 290,
+        color: "#ff9a3c",
         stunWhilePulled: true,
       })
     );
   },
+  azureCataclysm: (cost) => {
+    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    emitNovaShellParticles(state.player.x, state.player.y, "#00f5ff", "#e0ffff", 11, 96);
+    state.novaAnomalies.push(
+      new NovaAnomaly(state.player.x, state.player.y, {
+        maxRadius: 285,
+        duration: 2.92,
+        pullStrength: 305,
+        damagePerSecond: 80 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+        pullEnabled: true,
+        explodeAtEnd: true,
+        explosionDamage: 248 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+        explosionKnockback: 495,
+        knockbackRadius: 415,
+        color: "#00e5ff",
+        azureVortex: true,
+        streamColors: ["#00ffff", "#4ddbff", "#b6ffff", "#00b8d4"],
+        stunWhilePulled: true,
+      })
+    );
+  },
+  bluefallBarrage: (cost) => {
+    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    abilityParticleBurst("#7aebff", 160, 85);
+    const topY = 96;
+    for (let p = 0; p < 5; p++) {
+      const x = rng(110, config.width - 110);
+      state.bluefallPortals.push(new BluefallPortal(x, topY, p * 0.52));
+    }
+  },
+  novaSwarmDrones: (cost) => {
+    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    abilityParticleBurst("#6ef8ff", 200, 95);
+    for (let i = 0; i < 16; i++) {
+      const orb = new NovaOrbiter((i / 16) * Math.PI * 2, 68);
+      orb.tightOrbit = true;
+      state.novaOrbiters.push(orb);
+    }
+  },
   starfall: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#8ad7ff", 140, 80);
-    
-    const starCount = 44;
-    for (let i = 0; i < starCount; i++) {
+    const sid = state.player.shipId;
+    const profiles = {
+      helios: { burst: "#ffdca8", color: "#ffcc66", count: 48, yMin: 20, yMax: 220, spread: 50 },
+      inferno: { burst: "#ff9a4d", color: "#ff5c2e", count: 58, yMin: 30, yMax: 280, spread: 62 },
+      aphelion: { burst: "#b8fff4", color: "#7cf0ff", count: 52, yMin: 15, yMax: 200, spread: 36 },
+      grimstar: { burst: "#c9a6ff", color: "#8b62ff", count: 50, yMin: 25, yMax: 250, spread: 55 },
+    };
+    const def = profiles[sid] || profiles.helios;
+    abilityParticleBurst(def.burst, 150, 80);
+    for (let i = 0; i < def.count; i++) {
       const spawnX = rng(35, config.width - 35);
-      const spawnY = -rng(20, 220);
-      const targetX = spawnX + rng(-50, 50);
+      const spawnY = -rng(def.yMin, def.yMax);
+      const targetX = spawnX + rng(-def.spread, def.spread);
       const targetY = rng(120, config.height - 80);
       const a = Math.atan2(targetY - spawnY, targetX - spawnX);
-      const orb = new Bullet(spawnX, spawnY, a, rng(160, 250) * state.player.shotSpeedMultiplier, true, 5, "#8ad7ff", 9 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+      const orb = new Bullet(
+        spawnX,
+        spawnY,
+        a,
+        rng(165, 265) * state.player.shotSpeedMultiplier,
+        true,
+        5,
+        def.color,
+        9.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
+      );
       orb.life = rng(2.2, 3.2);
       orb.novaBurst = true;
       orb.novaNoPull = true;
-      orb.novaBurstRadius = 92;
-      orb.novaBurstDamage = 78 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      orb.novaBurstRadius = sid === "grimstar" ? 88 : sid === "inferno" ? 98 : 92;
+      orb.novaBurstDamage = (sid === "inferno" ? 86 : 78) * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
       state.bullets.push(orb);
     }
   },
@@ -5236,6 +5507,7 @@ const spawnWave = () => {
   state.timeDilationFields = [];
   state.novaAnomalies = [];
   state.novaOrbiters = [];
+  state.bluefallPortals = [];
   state.boss = null;
   state.waveAnnouncementTimer = 2.5;
   state.awaitingUpgrade = false;
@@ -5445,6 +5717,7 @@ const startTutorial = () => {
   state.timeDilationFields = [];
   state.novaAnomalies = [];
   state.novaOrbiters = [];
+  state.bluefallPortals = [];
   state.wave = 1;
   state.score = 0;
   state.quantumCoresEarnedThisRun = 0;
@@ -5471,7 +5744,6 @@ const startTutorial = () => {
   updateHud();
   if (mainHub) mainHub.classList.add("hidden");
   instructionsEl.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.add("hidden");
   if (achievementsPanel) achievementsPanel.classList.add("hidden");
@@ -5608,7 +5880,6 @@ const endTutorial = () => {
   if (tutorialNextStepButton) tutorialNextStepButton.classList.add("hidden");
   if (mainHub) mainHub.classList.remove("hidden");
   instructionsEl.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.add("hidden");
   if (achievementsPanel) achievementsPanel.classList.add("hidden");
@@ -5651,6 +5922,7 @@ const resetGame = () => {
   state.timeDilationFields = [];
   state.novaAnomalies = [];
   state.novaOrbiters = [];
+  state.bluefallPortals = [];
   state.wave = 1;
   state.score = 0;
   state.quantumCoresEarnedThisRun = 0;
@@ -5697,6 +5969,9 @@ const getAbilityIcon = (abilityType) => {
     deathMark: "💀",
     soulHarvest: "⚰️",
     supernova: "⭐",
+    azureCataclysm: "🌊",
+    bluefallBarrage: "🌀",
+    novaSwarmDrones: "✦",
     starfall: "✨",
     voidRift: "🌀",
     dimensionalSlash: "⚔️",
@@ -5767,7 +6042,6 @@ const updateHud = () => {
     const isStartScreenVisible =
       (instructionsEl && !instructionsEl.classList.contains("hidden")) ||
       (mainHub && !mainHub.classList.contains("hidden")) ||
-      (shipSelectionPanel && !shipSelectionPanel.classList.contains("hidden")) ||
       (instructionsPanel && !instructionsPanel.classList.contains("hidden")) ||
       (campaignPanel && !campaignPanel.classList.contains("hidden"));
     if (quantumCoresDisplay) {
@@ -5837,7 +6111,25 @@ const handleCollisions = (dt) => {
           enemy.x += Math.cos(impactAngle) * bullet.knockback * 0.15;
           enemy.y += Math.sin(impactAngle) * bullet.knockback * 0.15;
         }
-        if (bullet.novaMini) {
+        if (bullet.novaAzureMini) {
+          state.novaAnomalies.push(
+            new NovaAnomaly(bullet.x, bullet.y, {
+              maxRadius: 76,
+              duration: 0.88,
+              pullStrength: 195,
+              damagePerSecond: 36 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+              pullEnabled: true,
+              explodeAtEnd: true,
+              explosionDamage: 48 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+              explosionKnockback: 115,
+              knockbackRadius: 125,
+              color: "#56f0ff",
+              azureVortex: true,
+              streamColors: ["#00ffff", "#7aebff", "#b6ffff"],
+              stunWhilePulled: true,
+            })
+          );
+        } else if (bullet.novaMini) {
           state.novaAnomalies.push(
             new NovaAnomaly(bullet.x, bullet.y, {
               maxRadius: 90,
@@ -6231,6 +6523,7 @@ const updateEntities = (dt) => {
     orb.update(dt);
     return orb.life > 0;
   });
+  state.bluefallPortals = state.bluefallPortals.filter((portal) => !portal.update(dt));
   state.visualBeams = state.visualBeams.filter((beam) => {
     beam.life -= dt;
     beam.phase += dt * 10;
@@ -6277,6 +6570,7 @@ const drawEntities = () => {
   state.powerUps.forEach((p) => p.draw(ctx));
   state.enemies.forEach((enemy) => enemy.draw(ctx));
   state.blackHoles.forEach((hole) => hole.draw(ctx));
+  state.bluefallPortals.forEach((portal) => portal.draw(ctx));
   state.novaAnomalies.forEach((anomaly) => anomaly.draw(ctx));
   state.barriers.forEach((barrier) => barrier.draw(ctx));
   state.expandingCircles.forEach((circle) => circle.draw(ctx));
@@ -6523,7 +6817,6 @@ if (tutorialNextStepButton) {
 const showHub = () => {
   if (mainHub) mainHub.classList.remove("hidden");
   if (instructionsEl) instructionsEl.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.add("hidden");
 };
@@ -6532,17 +6825,8 @@ const showEndlessSetup = () => {
   state.mode = "endless";
   if (mainHub) mainHub.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (instructionsEl) instructionsEl.classList.remove("hidden");
-};
-
-const showShipSelectionScreen = () => {
-  if (mainHub) mainHub.classList.add("hidden");
-  if (instructionsEl) instructionsEl.classList.add("hidden");
-  if (campaignPanel) campaignPanel.classList.add("hidden");
-  if (instructionsPanel) instructionsPanel.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.remove("hidden");
   updateShipSelection();
 };
 
@@ -6550,7 +6834,6 @@ const showInstructionsScreen = () => {
   if (mainHub) mainHub.classList.add("hidden");
   if (instructionsEl) instructionsEl.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.remove("hidden");
 };
 
@@ -6578,7 +6861,6 @@ const renderCampaignLevelGrid = () => {
 const showCampaignScreen = () => {
   if (mainHub) mainHub.classList.add("hidden");
   if (instructionsEl) instructionsEl.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.remove("hidden");
   renderCampaignLevelGrid();
@@ -6588,15 +6870,8 @@ if (settingsButtonHub) settingsButtonHub.addEventListener("click", () => openSet
 if (endlessButton) endlessButton.addEventListener("click", showEndlessSetup);
 if (campaignButton) campaignButton.addEventListener("click", showCampaignScreen);
 if (instructionsButton) instructionsButton.addEventListener("click", showInstructionsScreen);
-if (shipSelectionButton) shipSelectionButton.addEventListener("click", showShipSelectionScreen);
-if (shopButtonHub) {
-  shopButtonHub.addEventListener("click", () => {
-    showEndlessSetup();
-    openShipShop();
-  });
-}
+if (shopButtonMain) shopButtonMain.addEventListener("click", () => openShipShop());
 if (backToHubButton) backToHubButton.addEventListener("click", showHub);
-if (backToHubFromShips) backToHubFromShips.addEventListener("click", showHub);
 if (backFromInstructions) backFromInstructions.addEventListener("click", showHub);
 if (campaignCloseButton) campaignCloseButton.addEventListener("click", showHub);
 if (campaignBackButton) campaignBackButton.addEventListener("click", showHub);
@@ -6649,7 +6924,6 @@ startButton.addEventListener("click", () => {
     }
   }
   instructionsEl.classList.add("hidden");
-  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (mainHub) mainHub.classList.add("hidden");
   gameOverEl.classList.add("hidden");
@@ -6709,6 +6983,7 @@ restartButton.addEventListener("click", () => {
   state.timeDilationFields = [];
   state.novaAnomalies = [];
   state.novaOrbiters = [];
+  state.bluefallPortals = [];
   state.boss = null;
 });
 
@@ -6808,24 +7083,17 @@ const openShipShop = () => {
 };
 
 const updateShipSelection = () => {
-  
-  const selectGroups = document.querySelectorAll('.select-group');
-  let shipContainer = null;
-  for (const group of selectGroups) {
-    if (group.querySelector('input[name="ship"]')) {
-      shipContainer = group.querySelector('.option-cards');
-      break;
-    }
-  }
+  const shipContainer = document.getElementById("endlessShipCards");
   if (!shipContainer) return;
-  
-  
   shipContainer.innerHTML = "";
   
   const allShipIds = Object.keys(shipLoadouts).sort((a, b) => {
     const shipA = shipLoadouts[a];
     const shipB = shipLoadouts[b];
     if (!shipA || !shipB) return 0;
+    const ownedA = state.unlockedShips.includes(a);
+    const ownedB = state.unlockedShips.includes(b);
+    if (ownedA !== ownedB) return ownedA ? -1 : 1;
     return (shipA.price || 0) - (shipB.price || 0);
   });
   
@@ -6884,8 +7152,30 @@ const updateShipSelection = () => {
     
     shipContainer.appendChild(label);
   });
+  const picked = shipContainer.querySelector('input[name="ship"]:checked');
+  if (!picked) {
+    const first = shipContainer.querySelector('input[name="ship"]:not([disabled])');
+    if (first) {
+      first.checked = true;
+      state.shipKey = first.value;
+    }
+  }
 };
 
+if (endlessShipScroll && endlessShipNext) {
+  endlessShipNext.addEventListener("click", () => {
+    endlessShipScroll.scrollBy({ left: 260, behavior: "smooth" });
+  });
+  endlessShipScroll.addEventListener(
+    "wheel",
+    (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      endlessShipScroll.scrollLeft += e.deltaY;
+    },
+    { passive: false }
+  );
+}
 
 let listeningToKey = null; 
 let wasPausedBeforeSettings = false; 

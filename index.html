@@ -49,13 +49,12 @@
           <button id="campaignButton" class="start-main-btn">Campaign</button>
           <button id="endlessButton" class="start-main-btn">Endless</button>
           <button id="tutorialButton" class="start-main-btn">Tutorial</button>
-          <button id="shipSelectionButton" class="start-main-btn">Ship Selection</button>
+          <button id="shopButtonMain" class="start-main-btn" type="button">Shop</button>
         </div>
         <div class="start-hub__right-rail">
           <button id="settingsButtonHub" class="rail-icon-btn" title="Settings"><span class="rail-icon">&#9881;</span><span class="rail-label">Settings</span></button>
           <button id="instructionsButton" class="rail-icon-btn" title="Instructions"><span class="rail-icon">&#9432;</span><span class="rail-label">Instructions</span></button>
           <button id="achievementsButton" class="rail-icon-btn" title="Achievements"><span class="rail-icon">&#9733;</span><span class="rail-label">Achievements</span></button>
-          <button id="shopButtonHub" class="rail-icon-btn" title="Shop"><span class="rail-icon">$</span><span class="rail-label">Shop</span></button>
         </div>
         <div class="start-hub__footer-link">
           <button type="button" id="termsButton" class="terms-link">Privacy Policy / Terms</button>
@@ -89,37 +88,19 @@
             </label>
           </div>
         </div>
-        <div class="fullscreen-panel__footer-actions">
-          <button id="startButton">Start Endless</button>
-          <button id="backToHubButton">Back</button>
-        </div>
-      </div>
-      <div class="instructions hidden fullscreen-panel" id="shipSelectionPanel">
-        <div class="fullscreen-panel__header">
-          <h2>Ship Selection</h2>
-        </div>
-        <div class="select-group">
-          <h3>Ship Loadout</h3>
-          <div class="option-cards" id="shipSelectionCards">
-            <label class="option-card">
-              <input type="radio" name="ship" value="striker" checked />
-              <strong>Striker</strong>
-              <span>Balanced stats ? Omni Burst radial barrage.</span>
-            </label>
-            <label class="option-card">
-              <input type="radio" name="ship" value="phantom" />
-              <strong>Phantom</strong>
-              <span>High thrust ? Blink dash with ghostfire trail.</span>
-            </label>
-            <label class="option-card">
-              <input type="radio" name="ship" value="aegis" />
-              <strong>Aegis</strong>
-              <span>Tanked hull/shield ? Shockwave fortifies and burns foes.</span>
-            </label>
+        <div class="select-group endless-ship-picker">
+          <h3>Ship</h3>
+          <p class="endless-ship-picker__hint">Scroll vertically on the strip or use the arrow to browse ships.</p>
+          <div class="endless-ship-rail">
+            <div class="endless-ship-scroll" id="endlessShipScroll">
+              <div class="option-cards endless-ship-cards" id="endlessShipCards"></div>
+            </div>
+            <button type="button" class="endless-ship-arrow" id="endlessShipNext" aria-label="Scroll ships right">&rsaquo;</button>
           </div>
         </div>
         <div class="fullscreen-panel__footer-actions">
-          <button id="backToHubFromShips">Back</button>
+          <button id="startButton">Start Endless</button>
+          <button id="backToHubButton">Back</button>
         </div>
       </div>
       <div class="instructions hidden fullscreen-panel" id="instructionsPanel">
@@ -141,7 +122,7 @@
           <p>Collect drops to recover HP, shield, and momentum.</p>
           <p>Use movement bursts to avoid projectile patterns.</p>
           <p>Higher campaign levels scale enemy pressure heavily.</p>
-          <p>Unlock ships in the shop with Quantum Cores.</p>
+          <p>Unlock ships in the shop with Quantum Cores, then pick one on the Endless setup screen.</p>
           <p>Use different ships for different tactical matchups.</p>
           <p>Position below dangerous boss telegraphs when possible.</p>
           <p>Don?t overcommit energy if a boss phase is incoming.</p>

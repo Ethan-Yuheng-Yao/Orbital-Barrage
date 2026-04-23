@@ -5,7 +5,7 @@ The game includes multiple progression modes, a large ship roster, achievements,
 
 ## Core Features
 
-- **Hub Menu Flow**: Start from a central menu with Campaign, Endless, Ship Selection, Shop, Instructions, Settings, and Achievements access.
+- **Hub Menu Flow**: Start from a central menu with Campaign, Endless, Tutorial, Shop, Instructions, Settings, and Achievements access. Choose your ship from the horizontal strip on the Endless setup screen.
 - **Endless Mode**: Choose Recruit, Veteran, or Nightmare and push for high waves/scores.
 - **Campaign Mode**: Structured level progression with locked levels, scaling difficulty, and boss-focused milestones.
 - **Large Ship Roster**: Many ships across tiers with unique base stats and ability combinations.
