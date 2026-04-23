@@ -1,49 +1,51 @@
-# 2D Space Shooter Game
+# Orbital Barrage
 
-A complex 2D space shooter game built with HTML5 Canvas and JavaScript. Features multiple ship types, abilities, upgrades, difficulty modes, and a currency system.
+Orbital Barrage is a neon-themed 2D space shooter built with HTML5 Canvas, Vanilla JavaScript, and CSS.  
+The game includes multiple progression modes, a large ship roster, achievements, unlockable ships, and dynamic ability-based combat.
 
-## Features
+## Core Features
 
-- **Multiple Ship Types**: Choose from 6 different ships, each with unique stats and 3 special abilities
-- **Ability System**: Each ship has 3 abilities that cost different amounts of energy
-- **Upgrade System**: Progressively upgrade your ship's stats between waves
-- **Difficulty Modes**: Recruit, Veteran, and Nightmare difficulties
-- **Currency System**: Earn Quantum Cores to unlock new ships
-- **Boss Battles**: Unique boss types with different attack patterns
-- **Enemy Variety**: Multiple enemy types with distinct behaviors and graphics
-- **Visual Effects**: Neon-style graphics with particle effects and glowing visuals
+- **Hub Menu Flow**: Start from a central menu with Campaign, Endless, Ship Selection, Shop, Instructions, Settings, and Achievements access.
+- **Endless Mode**: Choose Recruit, Veteran, or Nightmare and push for high waves/scores.
+- **Campaign Mode**: Structured level progression with locked levels, scaling difficulty, and boss-focused milestones.
+- **Large Ship Roster**: Many ships across tiers with unique base stats and ability combinations.
+- **Ability System**: Each ship has 3 active abilities with energy costs.
+- **Wave Upgrades**: Select permanent run upgrades between waves.
+- **Boss Encounters**: Distinct boss variants with different movement and attack patterns.
+- **Currency + Unlocks**: Earn Quantum Cores, purchase ships, and persist unlock progress in local storage.
+- **Achievements**: Track and unlock progression/combat milestones.
+- **Audio Support**: Procedural SFX plus looping MP3 background music support.
 
 ## Controls
 
-- **WASD** or **Arrow Keys**: Move
-- **Mouse**: Aim and shoot (automatic firing)
-- **1, 2, 3**: Activate ship abilities
-- **P**: Pause
+- **WASD** / **Arrow Keys**: Move
+- **Mouse**: Aim
+- **Left Mouse**: Fire primary weapon
+- **1 / 2 / 3** (or custom binds): Abilities
+- **P**: Pause / settings access
 
-## Ships
+## Audio File Setup
 
-1. **Striker** (Free) - Balanced fighter
-2. **Aegis** (500 Cores) - Tank with defensive abilities
-3. **Phantom** (750 Cores) - Fast interceptor with mobility
-4. **Tempest** (1,200 Cores) - Lightning-based attacks
-5. **Titan** (1,500 Cores) - Heavy siege ship
-6. **Specter** (1,800 Cores) - Void-based abilities
+Background music is loaded from:
 
-## How to Play
+- `audio/BackgroundAudio.mp3`
 
-1. Open `index.html` in a web browser
-2. Select your difficulty and ship
-3. Survive waves of enemies and defeat bosses
-4. Earn Quantum Cores to unlock new ships
-5. Upgrade your ship between waves
+Make sure the file exists at that exact path if you want MP3 BGM playback.
 
-## Technologies
+## Running the Game
+
+1. Open `index.html` in a modern browser.
+2. Use the hub menu to choose mode/options.
+3. Play, unlock ships, and progress campaign/endless milestones.
+
+## Project Stack
 
 - HTML5 Canvas
 - Vanilla JavaScript
 - CSS3
 
-## License
+## Notes
 
-This project is open source and available for public use.
+- Progress (high score, ship unlocks, quantum cores, achievements, bindings) is stored in browser local storage.
+- This is a browser game project; no build step is required for basic local play.
 
