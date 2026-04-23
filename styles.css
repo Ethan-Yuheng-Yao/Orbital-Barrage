@@ -1405,7 +1405,7 @@ button:hover {
 
 .tutorial-text-top {
   position: fixed;
-  top: 20px;
+  top: 140px;
   left: 50%;
   transform: translateX(-50%);
   padding: 12px 24px;
@@ -1414,10 +1414,19 @@ button:hover {
   border-radius: 12px;
   backdrop-filter: blur(18px);
   z-index: 2001;
-  pointer-events: none;
+  pointer-events: auto;
   max-width: 90%;
   text-align: center;
   box-shadow: 0 10px 30px rgba(2, 6, 24, 0.7);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tutorial-text-top.completed {
+  background: rgba(18, 70, 30, 0.92);
+  border-color: rgba(120, 255, 170, 0.75);
+  box-shadow: 0 10px 30px rgba(18, 70, 30, 0.55);
 }
 
 .tutorial-text-top span {
@@ -1425,6 +1434,21 @@ button:hover {
   font-size: 1rem;
   line-height: 1.5;
   font-weight: 500;
+}
+
+.tutorial-next-step {
+  margin: 0;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 255, 170, 0.75);
+  background: rgba(20, 85, 36, 0.9);
+  color: #d9ffe9;
+  font-size: 1rem;
+  line-height: 1;
+  box-shadow: 0 0 12px rgba(120, 255, 170, 0.35);
+  pointer-events: auto;
 }
 
 .codex-panel,

@@ -48,6 +48,7 @@ const tutorialButton = document.getElementById("tutorialButton");
 const tutorialOverlay = document.getElementById("tutorialOverlay");
 const tutorialTextTop = document.getElementById("tutorialTextTop");
 const tutorialTextTopContent = document.getElementById("tutorialTextTopContent");
+const tutorialNextStepButton = document.getElementById("tutorialNextStepButton");
 const tutorialSkipButton = document.getElementById("tutorialSkipButton");
 const quantumCoresDisplay = document.getElementById("quantumCoresDisplay");
 const quantumCoresDisplayValue = document.getElementById("quantumCoresDisplayValue");
@@ -5370,6 +5371,7 @@ const tutorialSteps = [
     title: "Welcome to Orbital Barrage!",
     text: "This tutorial will teach you the basics. Let's start with movement.",
     checkComplete: () => true,
+    waitForManualAdvance: true,
   },
   {
     title: "Movement",
@@ -5380,16 +5382,28 @@ const tutorialSteps = [
     title: "Aiming and Shooting",
     text: "Aim with your <kbd>Mouse</kbd> and your ship will automatically fire bullets. Try moving your mouse around to aim!",
     checkComplete: () => state.tutorialProgress.shot,
+    waitForManualAdvance: true,
   },
   {
-    title: "Abilities",
-    text: "Your ship has 3 special abilities. The keys are customizable in settings, but default to <kbd>1</kbd>, <kbd>2</kbd>, and <kbd>3</kbd>. Each costs energy. Try using all three abilities!",
-    checkComplete: () => state.tutorialProgress.usedAbility1 && state.tutorialProgress.usedAbility2 && state.tutorialProgress.usedAbility3,
+    title: "Ability 1",
+    text: "Use your first ability (default <kbd>1</kbd>).",
+    checkComplete: () => state.tutorialProgress.usedAbility1,
+  },
+  {
+    title: "Ability 2",
+    text: "Use your second ability (default <kbd>2</kbd>).",
+    checkComplete: () => state.tutorialProgress.usedAbility2,
+  },
+  {
+    title: "Ability 3",
+    text: "Use your third ability (default <kbd>3</kbd>).",
+    checkComplete: () => state.tutorialProgress.usedAbility3,
   },
   {
     title: "HUD Elements",
     text: "Watch your <strong>HP</strong> (health), <strong>Shield</strong> (regenerates), and <strong>Energy</strong> (for abilities). The ability icons on the left show when abilities are ready.",
     checkComplete: () => true,
+    waitForManualAdvance: true,
   },
   {
     title: "Test Wave",
@@ -5446,11 +5460,24 @@ const startTutorial = () => {
   
   tutorialSteps.forEach(step => {
     step.completed = false;
+    step.pendingComplete = false;
+    if (step.completionTimer) {
+      clearTimeout(step.completionTimer);
+      step.completionTimer = null;
+    }
   });
   
   spawnStars();
   updateHud();
+  if (mainHub) mainHub.classList.add("hidden");
   instructionsEl.classList.add("hidden");
+  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
+  if (instructionsPanel) instructionsPanel.classList.add("hidden");
+  if (campaignPanel) campaignPanel.classList.add("hidden");
+  if (achievementsPanel) achievementsPanel.classList.add("hidden");
+  if (shipShopPanel) shipShopPanel.classList.add("hidden");
+  if (settingsPanel) settingsPanel.classList.add("hidden");
+  if (termsPanel) termsPanel.classList.add("hidden");
   tutorialOverlay.classList.remove("hidden");
   bossBar.classList.add("hidden");
   bossBar.style.display = "none";
@@ -5468,27 +5495,25 @@ const checkTutorialStepCompletion = () => {
   
   const step = tutorialSteps[state.tutorialStep];
   if (!step) return;
-  
-  
-  const stepElapsedTime = (performance.now() - state.tutorialStepStartTime) / 1000; 
-  const minStepDuration = 3; 
-  
-  
-  if (step.checkComplete() && !step.completed) {
-    
-    step.completed = true;
-    
-    
-    const remainingTime = Math.max(0, minStepDuration - stepElapsedTime);
-    
-    
-    setTimeout(() => {
-      if (state.tutorialMode && !state.tutorialTestWave) {
-        advanceTutorialStep();
+
+  if (step.checkComplete() && !step.completed && !step.pendingComplete) {
+    step.pendingComplete = true;
+    step.completionTimer = setTimeout(() => {
+      if (!state.tutorialMode || state.tutorialTestWave || tutorialSteps[state.tutorialStep] !== step) {
+        return;
       }
-    }, remainingTime * 1000);
-  } else if (!step.completed) {
-    
+      step.pendingComplete = false;
+      step.completed = true;
+      updateTutorialDisplay();
+      if (!step.waitForManualAdvance) {
+        setTimeout(() => {
+          if (state.tutorialMode && !state.tutorialTestWave && tutorialSteps[state.tutorialStep] === step) {
+            advanceTutorialStep();
+          }
+        }, 250);
+      }
+    }, 1000);
+  } else {
     updateTutorialDisplay();
   }
 };
@@ -5501,6 +5526,11 @@ const advanceTutorialStep = () => {
     
     if (tutorialSteps[state.tutorialStep]) {
       tutorialSteps[state.tutorialStep].completed = false;
+      tutorialSteps[state.tutorialStep].pendingComplete = false;
+      if (tutorialSteps[state.tutorialStep].completionTimer) {
+        clearTimeout(tutorialSteps[state.tutorialStep].completionTimer);
+        tutorialSteps[state.tutorialStep].completionTimer = null;
+      }
     }
     updateTutorialDisplay();
     
@@ -5543,7 +5573,15 @@ const updateTutorialDisplay = () => {
     text = text.replace(/<strong>([^<]*)<\/strong>/g, '$1');
     
     text = text.replace(/<[^>]*>/g, '');
-    tutorialTextTopContent.textContent = `${step.title}: ${text}`;
+    const completePrefix = step.completed ? "✓ " : "";
+    tutorialTextTopContent.textContent = `${completePrefix}${step.title}: ${text}`;
+  }
+  if (tutorialNextStepButton) {
+    const showNext = !!step.completed && !!step.waitForManualAdvance;
+    tutorialNextStepButton.classList.toggle("hidden", !showNext);
+  }
+  if (tutorialTextTop) {
+    tutorialTextTop.classList.toggle("completed", !!step.completed);
   }
 };
 
@@ -5567,7 +5605,13 @@ const endTutorial = () => {
   state.tutorialMode = false;
   state.tutorialTestWave = false;
   if (tutorialOverlay) tutorialOverlay.classList.add("hidden");
-  instructionsEl.classList.remove("hidden");
+  if (tutorialNextStepButton) tutorialNextStepButton.classList.add("hidden");
+  if (mainHub) mainHub.classList.remove("hidden");
+  instructionsEl.classList.add("hidden");
+  if (shipSelectionPanel) shipSelectionPanel.classList.add("hidden");
+  if (instructionsPanel) instructionsPanel.classList.add("hidden");
+  if (campaignPanel) campaignPanel.classList.add("hidden");
+  if (achievementsPanel) achievementsPanel.classList.add("hidden");
   state.running = false;
   if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
   if (abilityIcons) abilityIcons.classList.add("hidden");
@@ -6465,6 +6509,14 @@ if (tutorialButton) {
 if (tutorialSkipButton) {
   tutorialSkipButton.addEventListener("click", () => {
     endTutorial();
+  });
+}
+if (tutorialNextStepButton) {
+  tutorialNextStepButton.addEventListener("click", () => {
+    if (!state.tutorialMode || state.tutorialTestWave) return;
+    const step = tutorialSteps[state.tutorialStep];
+    if (!step || !step.completed || !step.waitForManualAdvance) return;
+    advanceTutorialStep();
   });
 }
 
