@@ -65,27 +65,69 @@
           <h2>Endless Mode</h2>
           <button id="settingsButton" class="fullscreen-panel__icon-btn" title="Settings">&#9881;</button>
         </div>
-        <div class="select-group">
+        <div class="select-group endless-difficulty-picker">
           <h3>Difficulty</h3>
-          <div class="option-cards">
-            <label class="option-card option-card--easy">
-              <input type="radio" name="difficulty" value="recruit" checked />
-              <strong>Recruit</strong>
-              <span>55% enemy HP ? 72% speed ? 52% count ? 25% more drops</span>
-              <span style="color: #5cff7d; font-size: 0.8rem;">Easier for learning</span>
-            </label>
-            <label class="option-card option-card--medium">
-              <input type="radio" name="difficulty" value="veteran" />
-              <strong>Veteran</strong>
-              <span>80% enemy HP ? 88% speed ? 80% count ? Standard drops</span>
-              <span style="color: #ffc857; font-size: 0.8rem;">Balanced challenge</span>
-            </label>
-            <label class="option-card option-card--hard">
-              <input type="radio" name="difficulty" value="nightmare" />
-              <strong>Nightmare</strong>
-              <span>150% enemy HP ? 125% speed ? 140% count ? 25% fewer drops</span>
-              <span style="color: #ff6b6b; font-size: 0.8rem;">Extreme difficulty</span>
-            </label>
+          <p class="endless-difficulty-picker__hint">Scroll horizontally to preview threat tiers.</p>
+          <div class="endless-difficulty-rail">
+            <div class="endless-difficulty-scroll" id="endlessDifficultyScroll">
+              <div class="option-cards endless-difficulty-cards">
+                <label class="option-card option-card--difficulty option-card--recruit">
+                  <input type="radio" name="difficulty" value="recruit" checked />
+                  <strong>Recruit</strong>
+                  <span>Signal chatter is quiet, but never fully safe.</span>
+                  <span class="difficulty-flavor">Training run conditions.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--adept">
+                  <input type="radio" name="difficulty" value="adept" />
+                  <strong>Adept</strong>
+                  <span>Patterns sharpen and timing windows start to narrow.</span>
+                  <span class="difficulty-flavor">Pressure starts here.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--veteran">
+                  <input type="radio" name="difficulty" value="veteran" />
+                  <strong>Veteran</strong>
+                  <span>Hostiles coordinate more often than comfort allows.</span>
+                  <span class="difficulty-flavor">No free mistakes.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--elite">
+                  <input type="radio" name="difficulty" value="elite" />
+                  <strong>Elite</strong>
+                  <span>Every lane feels watched and every pause gets punished.</span>
+                  <span class="difficulty-flavor">Aggressive cadence.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--insane">
+                  <input type="radio" name="difficulty" value="insane" />
+                  <strong>Insane</strong>
+                  <span>You are expected to dodge first and breathe later.</span>
+                  <span class="difficulty-flavor">Relentless tempo.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--impossible">
+                  <input type="radio" name="difficulty" value="impossible" />
+                  <strong>Impossible</strong>
+                  <span>The sky gets crowded faster than plans survive.</span>
+                  <span class="difficulty-flavor">Merciless escalation.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--nightmare">
+                  <input type="radio" name="difficulty" value="nightmare" />
+                  <strong>Nightmare</strong>
+                  <span>Threat signatures overlap until instinct is all you have.</span>
+                  <span class="difficulty-flavor">Hostile saturation.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--abyssal">
+                  <input type="radio" name="difficulty" value="abyssal" />
+                  <strong>Abyssal</strong>
+                  <span>Light fades, warnings blur, and movement becomes survival.</span>
+                  <span class="difficulty-flavor">Dark-sector warfare.</span>
+                </label>
+                <label class="option-card option-card--difficulty option-card--oblivion">
+                  <input type="radio" name="difficulty" value="oblivion" />
+                  <strong>Oblivion</strong>
+                  <span>The battlefield stops forgiving before wave one ends.</span>
+                  <span class="difficulty-flavor">Final trial.</span>
+                </label>
+              </div>
+            </div>
+            <button type="button" class="endless-ship-arrow" id="endlessDifficultyNext" aria-label="Scroll difficulties right">&rsaquo;</button>
           </div>
         </div>
         <div class="select-group endless-ship-picker">
@@ -184,14 +226,22 @@
     </div>
     <div class="campaign-panel hidden" id="campaignPanel">
       <div class="campaign-panel__header">
-        <h3>Neon Campaign</h3>
+        <h3>Neon Campaign Constellation</h3>
         <button class="campaign-panel__close" id="campaignCloseButton">&times;</button>
       </div>
-      <p class="campaign-panel__summary">Complete levels in sequence. Every 5th level ends with a boss.</p>
-      <div class="campaign-level-grid" id="campaignLevelGrid"></div>
-      <div style="display:flex;gap:12px;justify-content:center;margin-top:10px;">
-        <button id="campaignStartButton">Start Selected Level</button>
+      <p class="campaign-panel__summary">Follow the star path. Every 5th level is a boss star.</p>
+      <div class="campaign-constellation" id="campaignConstellation"></div>
+      <div class="campaign-actions-fixed">
+        <button id="campaignStartButton" class="hidden">Play Selected Level</button>
+        <button id="campaignSwitchShipButton" class="hidden">Switch Ship</button>
         <button id="campaignBackButton">Back</button>
+      </div>
+      <div class="campaign-ship-panel hidden" id="campaignShipPanel">
+        <div class="campaign-ship-panel__header">
+          <h4>Select Ship</h4>
+          <button id="campaignShipCloseButton" type="button">&times;</button>
+        </div>
+        <div class="campaign-ship-panel__cards" id="campaignShipCards"></div>
       </div>
     </div>
     <div class="achievements-panel hidden" id="achievementsPanel">
@@ -206,10 +256,11 @@
     <div class="tutorial-overlay hidden" id="tutorialOverlay">
       <div class="tutorial-text-top" id="tutorialTextTop">
         <span id="tutorialTextTopContent"></span>
-        <button id="tutorialNextStepButton" class="tutorial-next-step hidden" type="button" aria-label="Next tutorial step">?</button>
+        <button id="tutorialNextStepButton" class="tutorial-next-step hidden" type="button" aria-label="Next tutorial step">&#8594;</button>
       </div>
       <button id="tutorialSkipButton" class="tutorial-button tutorial-button--secondary" style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 2001;">Skip Tutorial</button>
     </div>
+    <div id="achievementToastContainer" class="achievement-toast-container"></div>
     <div class="terms-panel hidden" id="termsPanel">
       <div class="terms-panel__header">
         <h3>Terms and Conditions</h3>
@@ -273,6 +324,16 @@
           <button id="advancedFxLabButton">FX Lab</button>
           <button id="advancedMapRegistryButton">Map Registry</button>
         </div>
+        <h4>Audio</h4>
+        <div class="settings-audio-row">
+          <label for="musicVolume">Music Volume</label>
+          <input id="musicVolume" type="range" min="0" max="100" value="22" />
+        </div>
+        <div class="settings-audio-row">
+          <label for="sfxVolume">SFX Volume</label>
+          <input id="sfxVolume" type="range" min="0" max="100" value="40" />
+        </div>
+        <button id="quitToMenuButton" class="settings-quit-button">Quit to Main Menu</button>
       </div>
     </div>
     <canvas id="gameCanvas" width="960" height="600"></canvas>

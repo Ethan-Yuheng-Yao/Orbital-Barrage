@@ -49,3 +49,12 @@ Make sure the file exists at that exact path if you want MP3 BGM playback.
 - Progress (high score, ship unlocks, quantum cores, achievements, bindings) is stored in browser local storage.
 - This is a browser game project; no build step is required for basic local play.
 
+## Recent Gameplay Updates
+
+- **Ship roster cleanup**: Removed several legacy ships from the active roster and selection flow.
+- **Bolt / Pebble redesigns**: Reworked ability behavior and visuals for stronger role identity.
+- **Knave refresh**: Updated basic attack behavior plus all three skills for distinct curve, burst, and lane pressure patterns.
+- **Ember overhaul**: New area and fireball-focused toolkit with persistent burn zones and rebalanced damage.
+- **Stinger overhaul**: New poison-stack identity with visible poison state, teleport burst, spiral claw pattern, and expanding poison fog.
+- **Claw overhaul**: Paw-themed attacks and utility kit with stun, target pressure paws, and defensive paw shield interactions.
+

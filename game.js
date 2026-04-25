@@ -70,6 +70,8 @@ const mainHub = document.getElementById("mainHub");
 const endlessButton = document.getElementById("endlessButton");
 const campaignButton = document.getElementById("campaignButton");
 const shopButtonMain = document.getElementById("shopButtonMain");
+const endlessDifficultyScroll = document.getElementById("endlessDifficultyScroll");
+const endlessDifficultyNext = document.getElementById("endlessDifficultyNext");
 const endlessShipScroll = document.getElementById("endlessShipScroll");
 const endlessShipNext = document.getElementById("endlessShipNext");
 const instructionsButton = document.getElementById("instructionsButton");
@@ -80,12 +82,20 @@ const campaignPanel = document.getElementById("campaignPanel");
 const campaignCloseButton = document.getElementById("campaignCloseButton");
 const campaignBackButton = document.getElementById("campaignBackButton");
 const campaignStartButton = document.getElementById("campaignStartButton");
-const campaignLevelGrid = document.getElementById("campaignLevelGrid");
+const campaignConstellation = document.getElementById("campaignConstellation");
+const campaignSwitchShipButton = document.getElementById("campaignSwitchShipButton");
+const campaignShipPanel = document.getElementById("campaignShipPanel");
+const campaignShipCards = document.getElementById("campaignShipCards");
+const campaignShipCloseButton = document.getElementById("campaignShipCloseButton");
 const achievementsButton = document.getElementById("achievementsButton");
 const achievementsPanel = document.getElementById("achievementsPanel");
 const achievementsCloseButton = document.getElementById("achievementsCloseButton");
 const achievementsSummary = document.getElementById("achievementsSummary");
 const achievementsList = document.getElementById("achievementsList");
+const achievementToastContainer = document.getElementById("achievementToastContainer");
+const musicVolume = document.getElementById("musicVolume");
+const sfxVolume = document.getElementById("sfxVolume");
+const quitToMenuButton = document.getElementById("quitToMenuButton");
 const advancedCodexButton = document.getElementById("advancedCodexButton");
 const advancedChallengeButton = document.getElementById("advancedChallengeButton");
 const advancedFxLabButton = document.getElementById("advancedFxLabButton");
@@ -107,6 +117,9 @@ const audio = {
   master: null,
   music: null,
   bgmEl: null,
+  bgmGain: null,
+  bgmBuffer: null,
+  bgmSource: null,
   unlocked: false,
   enabled: true,
   sfxVolume: 0.4,
@@ -130,10 +143,38 @@ const initAudio = () => {
   audio.music = audio.ctx.createGain();
   audio.music.gain.value = 0;
   audio.music.connect(audio.master);
-  audio.bgmEl = new Audio("./audio/BackgroundAudio.mp3");
-  audio.bgmEl.loop = true;
-  audio.bgmEl.preload = "auto";
-  audio.bgmEl.volume = audio.musicVolume;
+  audio.bgmGain = audio.ctx.createGain();
+  audio.bgmGain.gain.value = audio.musicVolume;
+  audio.bgmGain.connect(audio.master);
+  fetch("./audio/BackgroundAudio.mp3")
+    .then(r => r.arrayBuffer())
+    .then(ab => audio.ctx.decodeAudioData(ab))
+    .then(buffer => {
+      audio.bgmBuffer = buffer;
+      if (audio.unlocked) startBgmLoop();
+    })
+    .catch(() => {
+      audio.bgmEl = new Audio("./audio/BackgroundAudio.mp3");
+      audio.bgmEl.loop = true;
+      audio.bgmEl.preload = "auto";
+      audio.bgmEl.volume = audio.musicVolume;
+      if (audio.unlocked) audio.bgmEl.play().catch(() => {});
+    });
+};
+
+const startBgmLoop = () => {
+  if (!audio.bgmBuffer || !audio.ctx || !audio.bgmGain) return;
+  if (audio.bgmSource) {
+    try { audio.bgmSource.stop(0); } catch (e) {}
+    audio.bgmSource.disconnect();
+    audio.bgmSource = null;
+  }
+  const src = audio.ctx.createBufferSource();
+  src.buffer = audio.bgmBuffer;
+  src.loop = true;
+  src.connect(audio.bgmGain);
+  src.start(0);
+  audio.bgmSource = src;
 };
 
 const unlockAudio = () => {
@@ -144,7 +185,9 @@ const unlockAudio = () => {
     audio.ctx.resume();
   }
   audio.unlocked = true;
-  if (audio.bgmEl) {
+  if (audio.bgmBuffer && !audio.bgmSource) {
+    startBgmLoop();
+  } else if (audio.bgmEl && audio.bgmEl.paused) {
     audio.bgmEl.volume = audio.musicVolume;
     audio.bgmEl.play().catch(() => {});
   }
@@ -197,6 +240,11 @@ const playSfx = {
       tone(620, 0.07, "triangle", audio.sfxVolume * 0.15);
       return;
     }
+    if (shipId === "stinger") {
+      tone(520, 0.04, "sawtooth", audio.sfxVolume * 0.08);
+      tone(880, 0.03, "square", audio.sfxVolume * 0.06);
+      return;
+    }
     tone(360, 0.05, "square", audio.sfxVolume * 0.1);
   },
   ability: () => {
@@ -219,13 +267,26 @@ const playSfx = {
   },
 };
 
-const updateMusic = () => {
-  if (!audio.enabled || !audio.unlocked || !audio.ctx) return;
+const applyMusicVolume = () => {
+  const vol = clamp(audio.musicVolume, 0, 1);
+  if (audio.bgmGain && audio.ctx) {
+    const now = audio.ctx.currentTime;
+    audio.bgmGain.gain.cancelScheduledValues(now);
+    audio.bgmGain.gain.setValueAtTime(vol, now);
+  }
   if (audio.bgmEl) {
-    audio.bgmEl.volume = clamp(audio.musicVolume, 0, 1);
-    if (audio.bgmEl.paused) {
-      audio.bgmEl.play().catch(() => {});
-    }
+    audio.bgmEl.volume = vol;
+  }
+};
+
+const updateMusic = () => {
+  if (!audio.enabled) return;
+  applyMusicVolume();
+  if (!audio.unlocked || !audio.ctx) return;
+  if (audio.bgmGain && !audio.bgmSource && audio.bgmBuffer) {
+    startBgmLoop();
+  } else if (audio.bgmEl && audio.bgmEl.paused) {
+    audio.bgmEl.play().catch(() => {});
   }
   if (!audio.useProceduralMusic) {
     audio.music.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.08);
@@ -256,27 +317,143 @@ const updateMusic = () => {
 
 const difficultyModes = {
   recruit: {
-    enemyHp: 0.55,
+    enemyHp: 0.42,
+    enemySpeed: 0.62,
+    enemyCount: 0.56,
+    powerDrop: 1.38,
+    bossHpMultiplier: 0.7,
+    bossActionRate: 0.38,
+    coreMultiplier: 0.22,
+    spawnBase: 3,
+    spawnWaveMultiplier: 2.45,
+    spawnRampBonus: 0.55,
+    maxPerSegment: 8,
+    killEnergyMultiplier: 1,
+    fx: { tint: "40, 120, 70", tintAlpha: 0.06, vignette: 0.08 },
+  },
+  adept: {
+    enemyHp: 0.58,
     enemySpeed: 0.72,
-    enemyCount: 1,
-    powerDrop: 1.25,
-    bossHpMultiplier: 0.8,
+    enemyCount: 0.74,
+    powerDrop: 1.24,
+    bossHpMultiplier: 0.84,
+    bossActionRate: 0.52,
+    coreMultiplier: 0.52,
+    spawnBase: 6,
+    spawnWaveMultiplier: 3.35,
+    spawnRampBonus: 0.68,
+    maxPerSegment: 10,
+    killEnergyMultiplier: 1,
+    fx: { tint: "50, 100, 155", tintAlpha: 0.07, vignette: 0.1 },
   },
   veteran: {
-    enemyHp: 0.8,
-    enemySpeed: 0.88,
-    enemyCount: 1,
-    powerDrop: 1,
-    bossHpMultiplier: 1,
+    enemyHp: 0.7,
+    enemySpeed: 0.8,
+    enemyCount: 0.88,
+    powerDrop: 1.08,
+    bossHpMultiplier: 0.92,
+    bossActionRate: 0.68,
+    coreMultiplier: 0.95,
+    spawnBase: 9,
+    spawnWaveMultiplier: 4.05,
+    spawnRampBonus: 0.8,
+    maxPerSegment: 13,
+    killEnergyMultiplier: 1,
+    fx: { tint: "125, 100, 40", tintAlpha: 0.08, vignette: 0.12 },
+  },
+  elite: {
+    enemyHp: 1.02,
+    enemySpeed: 1.02,
+    enemyCount: 1.18,
+    powerDrop: 0.92,
+    bossHpMultiplier: 1.75,
+    bossActionRate: 0.92,
+    coreMultiplier: 1.32,
+    spawnBase: 13,
+    spawnWaveMultiplier: 5.65,
+    spawnRampBonus: 1.02,
+    maxPerSegment: 17,
+    killEnergyMultiplier: 0.58,
+    fx: { tint: "175, 85, 40", tintAlpha: 0.1, vignette: 0.15 },
+  },
+  insane: {
+    enemyHp: 1.32,
+    enemySpeed: 1.18,
+    enemyCount: 1.48,
+    powerDrop: 0.78,
+    bossHpMultiplier: 2.65,
+    bossActionRate: 1.1,
+    coreMultiplier: 1.72,
+    spawnBase: 17,
+    spawnWaveMultiplier: 7.05,
+    spawnRampBonus: 1.22,
+    maxPerSegment: 21,
+    killEnergyMultiplier: 0.44,
+    fx: { tint: "185, 45, 55", tintAlpha: 0.13, vignette: 0.18 },
+  },
+  impossible: {
+    enemyHp: 1.62,
+    enemySpeed: 1.32,
+    enemyCount: 1.82,
+    powerDrop: 0.68,
+    bossHpMultiplier: 3.85,
+    bossActionRate: 1.26,
+    coreMultiplier: 2.08,
+    spawnBase: 21,
+    spawnWaveMultiplier: 8.15,
+    spawnRampBonus: 1.42,
+    maxPerSegment: 25,
+    killEnergyMultiplier: 0.36,
+    fx: { tint: "170, 30, 80", tintAlpha: 0.16, vignette: 0.22 },
   },
   nightmare: {
-    enemyHp: 1.35,
-    enemySpeed: 1.15,
-    enemyCount: 1,
-    powerDrop: 0.75,
-    bossHpMultiplier: 1.5,
+    enemyHp: 3.38,
+    enemySpeed: 2.18,
+    enemyCount: 3.48,
+    powerDrop: 0.3,
+    bossHpMultiplier: 8.8,
+    bossActionRate: 2.05,
+    coreMultiplier: 3.45,
+    spawnBase: 40,
+    spawnWaveMultiplier: 13.8,
+    spawnRampBonus: 2.48,
+    maxPerSegment: 44,
+    killEnergyMultiplier: 0.12,
+    fx: { tint: "120, 35, 170", tintAlpha: 0.18, vignette: 0.26 },
+  },
+  abyssal: {
+    enemyHp: 4.12,
+    enemySpeed: 2.48,
+    enemyCount: 4.12,
+    powerDrop: 0.22,
+    bossHpMultiplier: 12.5,
+    bossActionRate: 2.32,
+    coreMultiplier: 4.12,
+    spawnBase: 48,
+    spawnWaveMultiplier: 16.2,
+    spawnRampBonus: 2.88,
+    maxPerSegment: 52,
+    killEnergyMultiplier: 0.065,
+    fx: { tint: "40, 65, 200", tintAlpha: 0.2, vignette: 0.3 },
+  },
+  oblivion: {
+    enemyHp: 5.25,
+    enemySpeed: 2.92,
+    enemyCount: 5.05,
+    powerDrop: 0.15,
+    bossHpMultiplier: 18,
+    bossActionRate: 2.72,
+    coreMultiplier: 5.15,
+    spawnBase: 58,
+    spawnWaveMultiplier: 19.5,
+    spawnRampBonus: 3.35,
+    maxPerSegment: 62,
+    killEnergyMultiplier: 0.04,
+    fx: { tint: "170, 20, 30", tintAlpha: 0.24, vignette: 0.36 },
   },
 };
+
+const getDifficulty = () => difficultyModes[state.difficultyKey] || difficultyModes.veteran;
 
 const shipLoadouts = {
   striker: {
@@ -300,67 +477,46 @@ const shipLoadouts = {
     price: 0,
     unlocked: true,
   },
-  sparrow: {
-    id: "sparrow",
-    name: "Sparrow",
-    tier: "common",
-    speed: 272,
-    maxHp: 74,
-    maxShield: 20,
-    maxEnergy: 72,
-    baseCooldown: 0.58,
-    damageMultiplier: 0.56,
-    shotSpeedMultiplier: 1.12,
-    energyRegenMultiplier: 0.34,
-    shieldRegenMultiplier: 1.05,
-    abilities: [
-      { key: "1", name: "Feather Salvo", cost: 40, type: "rapidVolley" },
-      { key: "2", name: "Blink", cost: 80, type: "blink" },
-      { key: "3", name: "Capacitor Bloom", cost: 60, type: "energySurge" },
-    ],
-    price: 900,
-    unlocked: false,
-  },
   phantom: {
     id: "phantom",
     name: "Phantom",
-    tier: "uncommon",
+    tier: "rare",
     speed: 260,
-    maxHp: 85,
-    maxShield: 26,
-    maxEnergy: 78,
-    baseCooldown: 0.62,
-    damageMultiplier: 0.78,
-    shotSpeedMultiplier: 1.05,
-    energyRegenMultiplier: 0.55,
-    shieldRegenMultiplier: 1.9,
+    maxHp: 92,
+    maxShield: 30,
+    maxEnergy: 88,
+    baseCooldown: 0.58,
+    damageMultiplier: 0.88,
+    shotSpeedMultiplier: 0.98,
+    energyRegenMultiplier: 0.58,
+    shieldRegenMultiplier: 2.0,
     abilities: [
-      { key: "1", name: "Blink", cost: 80, type: "blink" },
-      { key: "2", name: "Ghostfire", cost: 45, type: "ghostfire" },
-      { key: "3", name: "Phase Shift", cost: 65, type: "phaseShift" },
+      { key: "1", name: "Phase Bolt", cost: 72, type: "ghostfire" },
+      { key: "2", name: "Ghost Trace", cost: 58, type: "phaseShift" },
+      { key: "3", name: "Unseen Edge", cost: 68, type: "chainBolt" },
     ],
-    price: 1800,
+    price: 17800,
     unlocked: false,
   },
   aegis: {
     id: "aegis",
     name: "Aegis",
-    tier: "rare",
-    speed: 235,
-    maxHp: 130,
-    maxShield: 58,
-    maxEnergy: 84,
-    baseCooldown: 0.58,
-    damageMultiplier: 0.9,
-    shotSpeedMultiplier: 0.84,
-    energyRegenMultiplier: 0.5,
-    shieldRegenMultiplier: 2.5,
+    tier: "legendary",
+    speed: 228,
+    maxHp: 168,
+    maxShield: 78,
+    maxEnergy: 96,
+    baseCooldown: 0.62,
+    damageMultiplier: 1.02,
+    shotSpeedMultiplier: 0.78,
+    energyRegenMultiplier: 0.62,
+    shieldRegenMultiplier: 3.2,
     abilities: [
-      { key: "1", name: "Bastion Pulse", cost: 100, type: "shockwave" },
-      { key: "2", name: "Aegis Reservoir", cost: 50, type: "shieldOvercharge" },
-      { key: "3", name: "Bulwark Brace", cost: 70, type: "fortify" },
+      { key: "1", name: "Bulwark Burst", cost: 110, type: "energyBarrier" },
+      { key: "2", name: "Phalanx Spin", cost: 75, type: "overload" },
+      { key: "3", name: "Aegis Mirror", cost: 95, type: "shockwave" },
     ],
-    price: 4800,
+    price: 112000,
     unlocked: false,
   },
   tempest: {
@@ -368,41 +524,41 @@ const shipLoadouts = {
     name: "Tempest",
     tier: "rare",
     speed: 285,
-    maxHp: 102,
-    maxShield: 40,
-    maxEnergy: 95,
+    maxHp: 108,
+    maxShield: 42,
+    maxEnergy: 102,
     baseCooldown: 0.52,
-    damageMultiplier: 1.02,
-    shotSpeedMultiplier: 1.16,
+    damageMultiplier: 1.04,
+    shotSpeedMultiplier: 1.14,
     energyRegenMultiplier: 0.95,
-    shieldRegenMultiplier: 2.2,
+    shieldRegenMultiplier: 2.25,
     abilities: [
-      { key: "1", name: "Crown Lightning", cost: 100, type: "lightningStorm" },
-      { key: "2", name: "Storm Shell Drones", cost: 60, type: "combatDrone" },
-      { key: "3", name: "Arc Induction", cost: 70, type: "overload" },
+      { key: "1", name: "Storm Front", cost: 105, type: "lightningStorm" },
+      { key: "2", name: "Rolling Thunder", cost: 68, type: "overload" },
+      { key: "3", name: "Eye of the Storm", cost: 88, type: "burst" },
     ],
-    price: 7600,
+    price: 19200,
     unlocked: false,
   },
   titan: {
     id: "titan",
     name: "Titan",
-    tier: "legendary",
-    speed: 255,
-    maxHp: 320,
-    maxShield: 92,
-    maxEnergy: 98,
-    baseCooldown: 0.4,
-    damageMultiplier: 1.48,
-    shotSpeedMultiplier: 1.02,
-    energyRegenMultiplier: 1.05,
-    shieldRegenMultiplier: 3.2,
+    tier: "mythic",
+    speed: 248,
+    maxHp: 340,
+    maxShield: 96,
+    maxEnergy: 108,
+    baseCooldown: 0.56,
+    damageMultiplier: 1.52,
+    shotSpeedMultiplier: 0.96,
+    energyRegenMultiplier: 1.12,
+    shieldRegenMultiplier: 3.6,
     abilities: [
-      { key: "1", name: "Siege Cannon", cost: 100, type: "siegeCannon" },
-      { key: "2", name: "Energy Barrier", cost: 70, type: "energyBarrier" },
-      { key: "3", name: "Rampage", cost: 75, type: "rampage" },
+      { key: "1", name: "Colossus Beam", cost: 115, type: "siegeCannon" },
+      { key: "2", name: "Earthshaker", cost: 85, type: "shockwave" },
+      { key: "3", name: "Titanic Fury", cost: 92, type: "rampage" },
     ],
-    price: 42000,
+    price: 89800,
     unlocked: false,
   },
   specter: {
@@ -410,167 +566,167 @@ const shipLoadouts = {
     name: "Specter",
     tier: "mythic",
     speed: 340,
-    maxHp: 100,
-    maxShield: 34,
-    maxEnergy: 118,
+    maxHp: 108,
+    maxShield: 38,
+    maxEnergy: 128,
     baseCooldown: 0.36,
-    damageMultiplier: 1.14,
+    damageMultiplier: 1.12,
     shotSpeedMultiplier: 1.38,
-    energyRegenMultiplier: 1.9,
-    shieldRegenMultiplier: 3.5,
+    energyRegenMultiplier: 2.0,
+    shieldRegenMultiplier: 3.6,
     abilities: [
-      { key: "1", name: "Void Snare", cost: 120, type: "blackHole" },
-      { key: "2", name: "Shadow Step", cost: 40, type: "shadowStep" },
-      { key: "3", name: "Ethereal", cost: 60, type: "ethereal" },
+      { key: "1", name: "Haunt", cost: 72, type: "deathMark" },
+      { key: "2", name: "Phantasm", cost: 95, type: "combatDrone" },
+      { key: "3", name: "Death's Door", cost: 140, type: "dimensionalSlash" },
     ],
-    price: 31000,
+    price: 73500,
     unlocked: false,
   },
   vanguard: {
     id: "vanguard",
     name: "Vanguard",
-    tier: "uncommon",
-    speed: 245,
-    maxHp: 102,
-    maxShield: 34,
-    maxEnergy: 74,
-    baseCooldown: 0.6,
-    damageMultiplier: 0.82,
-    shotSpeedMultiplier: 0.95,
-    energyRegenMultiplier: 0.48,
-    shieldRegenMultiplier: 1.7,
+    tier: "rare",
+    speed: 238,
+    maxHp: 124,
+    maxShield: 40,
+    maxEnergy: 86,
+    baseCooldown: 0.56,
+    damageMultiplier: 0.94,
+    shotSpeedMultiplier: 0.92,
+    energyRegenMultiplier: 0.55,
+    shieldRegenMultiplier: 2.0,
     abilities: [
-      { key: "1", name: "Chain Bolt", cost: 55, type: "chainBolt" },
-      { key: "2", name: "Flank Burst", cost: 40, type: "rapidVolley" },
-      { key: "3", name: "Drive Surge", cost: 60, type: "energySurge" },
+      { key: "1", name: "Frontline Beam", cost: 85, type: "chainBolt" },
+      { key: "2", name: "Shield Breach", cost: 62, type: "rapidVolley" },
+      { key: "3", name: "Vanguard Charge", cost: 78, type: "blink" },
     ],
-    price: 2600,
+    price: 16800,
     unlocked: false,
   },
   reaper: {
     id: "reaper",
     name: "Reaper",
-    tier: "rare",
-    speed: 280,
-    maxHp: 118,
-    maxShield: 44,
-    maxEnergy: 88,
-    baseCooldown: 0.5,
-    damageMultiplier: 1.08,
-    shotSpeedMultiplier: 1.1,
-    energyRegenMultiplier: 0.92,
-    shieldRegenMultiplier: 2.4,
+    tier: "legendary",
+    speed: 268,
+    maxHp: 148,
+    maxShield: 52,
+    maxEnergy: 102,
+    baseCooldown: 0.48,
+    damageMultiplier: 1.28,
+    shotSpeedMultiplier: 1.06,
+    energyRegenMultiplier: 1.05,
+    shieldRegenMultiplier: 2.85,
     abilities: [
-      { key: "1", name: "Death Mark", cost: 90, type: "deathMark" },
-      { key: "2", name: "Soul Harvest", cost: 65, type: "soulHarvest" },
-      { key: "3", name: "Blink", cost: 80, type: "blink" },
+      { key: "1", name: "Harvest", cost: 28, type: "deathMark" },
+      { key: "2", name: "Soul Scythe", cost: 72, type: "soulHarvest" },
+      { key: "3", name: "Final Cut", cost: 105, type: "dimensionalSlash" },
     ],
-    price: 9200,
+    price: 117000,
     unlocked: false,
   },
   nova: {
     id: "nova",
     name: "Nova",
-    tier: "legendary",
+    tier: "mythic",
     speed: 318,
-    maxHp: 150,
-    maxShield: 58,
-    maxEnergy: 132,
-    baseCooldown: 0.36,
-    damageMultiplier: 1.38,
-    shotSpeedMultiplier: 1.24,
-    energyRegenMultiplier: 1.35,
-    shieldRegenMultiplier: 2.8,
+    maxHp: 158,
+    maxShield: 62,
+    maxEnergy: 140,
+    baseCooldown: 0.34,
+    damageMultiplier: 1.42,
+    shotSpeedMultiplier: 1.22,
+    energyRegenMultiplier: 1.45,
+    shieldRegenMultiplier: 3.0,
     abilities: [
-      { key: "1", name: "Azure Cataclysm", cost: 120, type: "azureCataclysm" },
-      { key: "2", name: "Bluefall Barrage", cost: 90, type: "bluefallBarrage" },
-      { key: "3", name: "Orbital Tides", cost: 75, type: "novaSwarmDrones" },
+      { key: "1", name: "Supernova", cost: 118, type: "supernova" },
+      { key: "2", name: "Stellar Flare", cost: 88, type: "novaSwarmDrones" },
+      { key: "3", name: "Collapsar", cost: 102, type: "azureCataclysm" },
     ],
-    price: 56000,
+    price: 95200,
     unlocked: false,
   },
   voidwalker: {
     id: "voidwalker",
     name: "Voidwalker",
     tier: "legendary",
-    speed: 355,
-    maxHp: 108,
-    maxShield: 38,
-    maxEnergy: 132,
-    baseCooldown: 0.33,
-    damageMultiplier: 1.2,
-    shotSpeedMultiplier: 1.42,
-    energyRegenMultiplier: 2.1,
-    shieldRegenMultiplier: 3.8,
+    speed: 348,
+    maxHp: 128,
+    maxShield: 44,
+    maxEnergy: 136,
+    baseCooldown: 0.34,
+    damageMultiplier: 1.22,
+    shotSpeedMultiplier: 1.38,
+    energyRegenMultiplier: 2.05,
+    shieldRegenMultiplier: 3.9,
     abilities: [
-      { key: "1", name: "Void Rift", cost: 130, type: "voidRift" },
-      { key: "2", name: "Dimensional Slash", cost: 85, type: "dimensionalSlash" },
-      { key: "3", name: "Ethereal", cost: 60, type: "ethereal" },
+      { key: "1", name: "Null Step", cost: 72, type: "phaseShift" },
+      { key: "2", name: "Abyssal Gaze", cost: 105, type: "voidRift" },
+      { key: "3", name: "Event Horizon", cost: 125, type: "blackHole" },
     ],
-    price: 45000,
+    price: 113000,
     unlocked: false,
   },
   glacier: {
     id: "glacier",
     name: "Glacier",
-    tier: "uncommon",
-    speed: 230,
-    maxHp: 110,
-    maxShield: 40,
-    maxEnergy: 80,
-    baseCooldown: 0.57,
-    damageMultiplier: 0.86,
-    shotSpeedMultiplier: 0.9,
-    energyRegenMultiplier: 0.62,
-    shieldRegenMultiplier: 2.1,
+    tier: "legendary",
+    speed: 218,
+    maxHp: 168,
+    maxShield: 58,
+    maxEnergy: 96,
+    baseCooldown: 0.6,
+    damageMultiplier: 1.08,
+    shotSpeedMultiplier: 0.82,
+    energyRegenMultiplier: 0.72,
+    shieldRegenMultiplier: 2.65,
     abilities: [
-      { key: "1", name: "Frost Nova", cost: 100, type: "burst" },
-      { key: "2", name: "Cryo Volley", cost: 40, type: "rapidVolley" },
-      { key: "3", name: "Ice Reactor", cost: 60, type: "energySurge" },
+      { key: "1", name: "Permafrost Beam", cost: 105, type: "chainBolt" },
+      { key: "2", name: "Glacial Prism", cost: 78, type: "burst" },
+      { key: "3", name: "Absolute Zero", cost: 115, type: "supernova" },
     ],
-    price: 3600,
+    price: 115000,
     unlocked: false,
   },
   bulwark: {
     id: "bulwark",
     name: "Bulwark",
     tier: "uncommon",
-    speed: 220,
-    maxHp: 145,
-    maxShield: 68,
-    maxEnergy: 76,
-    baseCooldown: 0.65,
-    damageMultiplier: 0.8,
-    shotSpeedMultiplier: 0.8,
-    energyRegenMultiplier: 0.42,
-    shieldRegenMultiplier: 2.6,
+    speed: 208,
+    maxHp: 152,
+    maxShield: 72,
+    maxEnergy: 78,
+    baseCooldown: 0.78,
+    damageMultiplier: 1.05,
+    shotSpeedMultiplier: 0.72,
+    energyRegenMultiplier: 0.4,
+    shieldRegenMultiplier: 2.75,
     abilities: [
-      { key: "1", name: "Polarize Field", cost: 50, type: "shieldOvercharge" },
-      { key: "2", name: "Rampart Lock", cost: 70, type: "fortify" },
-      { key: "3", name: "Seismic Clap", cost: 100, type: "shockwave" },
+      { key: "1", name: "Fortify Pulse", cost: 62, type: "energyBarrier" },
+      { key: "2", name: "Reinforced Beam", cost: 55, type: "chainBolt" },
+      { key: "3", name: "Steadfast Core", cost: 88, type: "fortify" },
     ],
-    price: 4200,
+    price: 8200,
     unlocked: false,
   },
   inferno: {
     id: "inferno",
     name: "Inferno",
-    tier: "legendary",
-    speed: 300,
-    maxHp: 175,
-    maxShield: 62,
-    maxEnergy: 128,
-    baseCooldown: 0.38,
-    damageMultiplier: 1.34,
-    shotSpeedMultiplier: 1.1,
-    energyRegenMultiplier: 1.45,
-    shieldRegenMultiplier: 2.9,
+    tier: "mythic",
+    speed: 288,
+    maxHp: 188,
+    maxShield: 66,
+    maxEnergy: 132,
+    baseCooldown: 0.42,
+    damageMultiplier: 1.38,
+    shotSpeedMultiplier: 1.02,
+    energyRegenMultiplier: 1.5,
+    shieldRegenMultiplier: 3.0,
     abilities: [
-      { key: "1", name: "Core Flare", cost: 70, type: "overload" },
-      { key: "2", name: "Thermal Bloom", cost: 60, type: "energySurge" },
-      { key: "3", name: "Pyroclast Rain", cost: 75, type: "starfall" },
+      { key: "1", name: "Conflagration", cost: 82, type: "overload" },
+      { key: "2", name: "Pyroclasm", cost: 95, type: "starfall" },
+      { key: "3", name: "Hellfire", cost: 110, type: "combatDrone" },
     ],
-    price: 62000,
+    price: 102000,
     unlocked: false,
   },
   aurora: {
@@ -587,11 +743,11 @@ const shipLoadouts = {
     energyRegenMultiplier: 1.8,
     shieldRegenMultiplier: 3.1,
     abilities: [
-      { key: "1", name: "Borealis Threads", cost: 100, type: "lightningStorm" },
-      { key: "2", name: "Chain Bolt", cost: 55, type: "chainBolt" },
-      { key: "3", name: "Aurora Slip", cost: 65, type: "phaseShift" },
+      { key: "1", name: "Borealis", cost: 105, type: "lightningStorm" },
+      { key: "2", name: "Prismatic Veil", cost: 72, type: "overload" },
+      { key: "3", name: "Celestial Dance", cost: 118, type: "burst" },
     ],
-    price: 32000,
+    price: 78800,
     unlocked: false,
   },
   aphelion: {
@@ -610,24 +766,34 @@ const shipLoadouts = {
     abilities: [
       { key: "1", name: "Keelbreaker Singularity", cost: 120, type: "blackHole" },
       { key: "2", name: "Keelbreaker Cascade", cost: 75, type: "starfall" },
-      { key: "3", name: "Aether Warp", cost: 60, type: "ethereal" },
+      { key: "3", name: "Orbital Aegis", cost: 60, type: "dimensionalSlash" },
     ],
-    price: 120000,
+    price: 132000,
     unlocked: false,
   },
 };
 
 const ADVANCED_SHIP_LIBRARY = [
-  { id: "halberd", name: "Halberd", tier: "rare", speed: 268, maxHp: 128, maxShield: 46, maxEnergy: 98, baseCooldown: 0.49, damageMultiplier: 1.06, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 2.1, abilities: [{ key: "1", name: "Halberd Shock", cost: 100, type: "shockwave" }, { key: "2", name: "Chain Bolt", cost: 55, type: "chainBolt" }, { key: "3", name: "Polearm Brace", cost: 70, type: "fortify" }], price: 9800, unlocked: false },
-  { id: "lancer", name: "Lancer", tier: "uncommon", speed: 292, maxHp: 102, maxShield: 32, maxEnergy: 92, baseCooldown: 0.52, damageMultiplier: 0.9, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 1.8, abilities: [{ key: "1", name: "Lance Volley", cost: 40, type: "rapidVolley" }, { key: "2", name: "Blink", cost: 80, type: "blink" }, { key: "3", name: "Chain Bolt", cost: 55, type: "chainBolt" }], price: 5400, unlocked: false },
-  { id: "raven", name: "Raven", tier: "rare", speed: 312, maxHp: 112, maxShield: 38, maxEnergy: 104, baseCooldown: 0.44, damageMultiplier: 1.08, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 2.0, abilities: [{ key: "1", name: "Ghostfire", cost: 45, type: "ghostfire" }, { key: "2", name: "Death Mark", cost: 90, type: "deathMark" }, { key: "3", name: "Shadow Step", cost: 40, type: "shadowStep" }], price: 12600, unlocked: false },
-  { id: "warden", name: "Warden", tier: "rare", speed: 242, maxHp: 180, maxShield: 76, maxEnergy: 102, baseCooldown: 0.57, damageMultiplier: 0.94, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3.0, abilities: [{ key: "1", name: "Energy Barrier", cost: 70, type: "energyBarrier" }, { key: "2", name: "Bastion Reinforce", cost: 50, type: "shieldOvercharge" }, { key: "3", name: "Aftershock", cost: 100, type: "shockwave" }], price: 16000, unlocked: false },
-  { id: "helios", name: "Helios", tier: "legendary", speed: 322, maxHp: 192, maxShield: 64, maxEnergy: 140, baseCooldown: 0.33, damageMultiplier: 1.44, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 2.9, abilities: [{ key: "1", name: "Solar Collapse", cost: 120, type: "supernova" }, { key: "2", name: "Coronal Deluge", cost: 75, type: "starfall" }, { key: "3", name: "Photosphere Overdrive", cost: 70, type: "overload" }], price: 72000, unlocked: false },
-  { id: "eclipse", name: "Eclipse", tier: "mythic", speed: 362, maxHp: 132, maxShield: 52, maxEnergy: 168, baseCooldown: 0.29, damageMultiplier: 1.36, shotSpeedMultiplier: 1.5, energyRegenMultiplier: 2.22, shieldRegenMultiplier: 3.8, abilities: [{ key: "1", name: "Penumbra Core", cost: 120, type: "blackHole" }, { key: "2", name: "Void Rift", cost: 130, type: "voidRift" }, { key: "3", name: "Aether Warp", cost: 60, type: "ethereal" }], price: 88000, unlocked: false },
-  { id: "oracle", name: "Oracle", tier: "legendary", speed: 305, maxHp: 158, maxShield: 70, maxEnergy: 154, baseCooldown: 0.35, damageMultiplier: 1.28, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 3.4, abilities: [{ key: "1", name: "Oracular Blink", cost: 65, type: "phaseShift" }, { key: "2", name: "Probability Arcs", cost: 100, type: "lightningStorm" }, { key: "3", name: "Sentinel Knives", cost: 60, type: "combatDrone" }], price: 69000, unlocked: false },
-  { id: "seraph", name: "Seraph", tier: "exotic", speed: 390, maxHp: 210, maxShield: 102, maxEnergy: 190, baseCooldown: 0.22, damageMultiplier: 1.82, shotSpeedMultiplier: 1.64, energyRegenMultiplier: 3.0, shieldRegenMultiplier: 6.0, abilities: [{ key: "1", name: "Umbral Singularity", cost: 120, type: "blackHole" }, { key: "2", name: "Stellar Ignition", cost: 120, type: "supernova" }, { key: "3", name: "Dimensional Slash", cost: 85, type: "dimensionalSlash" }], price: 135000, unlocked: false },
-  { id: "myrmidon", name: "Myrmidon", tier: "uncommon", speed: 276, maxHp: 126, maxShield: 40, maxEnergy: 96, baseCooldown: 0.54, damageMultiplier: 0.92, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 1.9, abilities: [{ key: "1", name: "Kickback Salvo", cost: 40, type: "rapidVolley" }, { key: "2", name: "Reactor Flush", cost: 60, type: "energySurge" }, { key: "3", name: "Phalanx Brace", cost: 70, type: "fortify" }], price: 6100, unlocked: false },
-  { id: "grimstar", name: "Grimstar", tier: "legendary", speed: 334, maxHp: 166, maxShield: 58, maxEnergy: 148, baseCooldown: 0.31, damageMultiplier: 1.41, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 3.2, abilities: [{ key: "1", name: "Death Mark", cost: 90, type: "deathMark" }, { key: "2", name: "Soul Harvest", cost: 65, type: "soulHarvest" }, { key: "3", name: "Obituary Meteors", cost: 75, type: "starfall" }], price: 76000, unlocked: false }
+  { id: "dart", name: "Dart", tier: "common", speed: 288, maxHp: 70, maxShield: 18, maxEnergy: 68, baseCooldown: 0.5, damageMultiplier: 0.52, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.0, abilities: [{ key: "1", name: "Twin Pierce", cost: 38, type: "rapidVolley" }, { key: "2", name: "Seeker Darts", cost: 48, type: "chainBolt" }, { key: "3", name: "Triple Volley", cost: 52, type: "ghostfire" }], price: 560, unlocked: false },
+  { id: "pebble", name: "Pebble", tier: "common", speed: 238, maxHp: 88, maxShield: 26, maxEnergy: 70, baseCooldown: 0.62, damageMultiplier: 0.58, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 1.12, abilities: [{ key: "1", name: "Stone Line", cost: 42, type: "chainBolt" }, { key: "2", name: "Gravel Fan", cost: 45, type: "burst" }, { key: "3", name: "Rolling Stone", cost: 58, type: "fortify" }], price: 680, unlocked: false },
+  { id: "wick", name: "Wick", tier: "common", speed: 296, maxHp: 66, maxShield: 16, maxEnergy: 74, baseCooldown: 0.48, damageMultiplier: 0.5, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 0.95, abilities: [{ key: "1", name: "Cinder Shell", cost: 35, type: "rapidVolley" }, { key: "2", name: "Flame Rush", cost: 50, type: "chainBolt" }, { key: "3", name: "Wild Sparks", cost: 55, type: "burst" }], price: 480, unlocked: false },
+  { id: "bolt", name: "Bolt", tier: "common", speed: 262, maxHp: 80, maxShield: 22, maxEnergy: 76, baseCooldown: 0.54, damageMultiplier: 0.6, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 1.08, abilities: [{ key: "1", name: "Ion Veil", cost: 40, type: "rapidVolley" }, { key: "2", name: "Arc Chain", cost: 52, type: "chainBolt" }, { key: "3", name: "Storm Cage", cost: 48, type: "shockwave" }], price: 740, unlocked: false },
+  { id: "knave", name: "Knave", tier: "uncommon", speed: 302, maxHp: 88, maxShield: 24, maxEnergy: 84, baseCooldown: 0.5, damageMultiplier: 0.78, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 1.45, abilities: [{ key: "1", name: "Cheap Shot", cost: 42, type: "shadowStep" }, { key: "2", name: "Dirty Trick", cost: 55, type: "ghostfire" }, { key: "3", name: "Underhanded", cost: 62, type: "burst" }], price: 5800, unlocked: false },
+  { id: "ember", name: "Ember", tier: "uncommon", speed: 278, maxHp: 92, maxShield: 28, maxEnergy: 88, baseCooldown: 0.52, damageMultiplier: 0.82, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 1.55, abilities: [{ key: "1", name: "Smolder", cost: 50, type: "chainBolt" }, { key: "2", name: "Cinder Burst", cost: 48, type: "burst" }, { key: "3", name: "Ash Cloud", cost: 65, type: "energySurge" }], price: 6400, unlocked: false },
+  { id: "claw", name: "Claw", tier: "uncommon", speed: 268, maxHp: 98, maxShield: 30, maxEnergy: 82, baseCooldown: 0.54, damageMultiplier: 0.86, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 1.65, abilities: [{ key: "1", name: "Scratch", cost: 42, type: "rapidVolley" }, { key: "2", name: "Tear", cost: 58, type: "chainBolt" }, { key: "3", name: "Rend", cost: 68, type: "ghostfire" }], price: 7600, unlocked: false },
+  { id: "stinger", name: "Stinger", tier: "uncommon", speed: 308, maxHp: 84, maxShield: 22, maxEnergy: 80, baseCooldown: 0.44, damageMultiplier: 0.74, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 1.35, abilities: [{ key: "1", name: "Prick", cost: 45, type: "chainBolt" }, { key: "2", name: "Hornet Swarm", cost: 50, type: "rapidVolley" }, { key: "3", name: "Venom Tip", cost: 62, type: "deathMark" }], price: 7200, unlocked: false },
+  { id: "halberd", name: "Halberd", tier: "rare", speed: 262, maxHp: 132, maxShield: 48, maxEnergy: 100, baseCooldown: 0.56, damageMultiplier: 1.08, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 2.15, abilities: [{ key: "1", name: "Cleaving Blow", cost: 105, type: "shockwave" }, { key: "2", name: "Polearm Spin", cost: 58, type: "burst" }, { key: "3", name: "Executioner's Swing", cost: 88, type: "chainBolt" }], price: 21800, unlocked: false },
+  { id: "lancer", name: "Lancer", tier: "rare", speed: 288, maxHp: 110, maxShield: 34, maxEnergy: 94, baseCooldown: 0.48, damageMultiplier: 0.98, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 1.85, abilities: [{ key: "1", name: "Impale", cost: 55, type: "chainBolt" }, { key: "2", name: "Cavalry Sweep", cost: 72, type: "blink" }, { key: "3", name: "Lance Formation", cost: 85, type: "combatDrone" }], price: 15200, unlocked: false },
+  { id: "raven", name: "Raven", tier: "rare", speed: 308, maxHp: 116, maxShield: 40, maxEnergy: 106, baseCooldown: 0.44, damageMultiplier: 1.06, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 2.05, abilities: [{ key: "1", name: "Murder", cost: 52, type: "ghostfire" }, { key: "2", name: "Unkindness", cost: 88, type: "starfall" }, { key: "3", name: "Omen", cost: 95, type: "deathMark" }], price: 24800, unlocked: false },
+  { id: "warden", name: "Warden", tier: "rare", speed: 228, maxHp: 188, maxShield: 78, maxEnergy: 108, baseCooldown: 0.58, damageMultiplier: 0.96, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 3.1, abilities: [{ key: "1", name: "Law's Reach", cost: 78, type: "chainBolt" }, { key: "2", name: "Judgment Pulse", cost: 68, type: "shieldOvercharge" }, { key: "3", name: "Warden's Oath", cost: 105, type: "lightningStorm" }], price: 26500, unlocked: false },
+  { id: "marauder", name: "Marauder", tier: "rare", speed: 272, maxHp: 122, maxShield: 36, maxEnergy: 96, baseCooldown: 0.5, damageMultiplier: 1.02, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 1.75, abilities: [{ key: "1", name: "Pillage", cost: 55, type: "soulHarvest" }, { key: "2", name: "Raid", cost: 62, type: "ghostfire" }, { key: "3", name: "Plunder", cost: 88, type: "burst" }], price: 20500, unlocked: false },
+  { id: "gallant", name: "Gallant", tier: "rare", speed: 252, maxHp: 128, maxShield: 44, maxEnergy: 90, baseCooldown: 0.54, damageMultiplier: 0.98, shotSpeedMultiplier: 1.0, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 2.25, abilities: [{ key: "1", name: "Challenge", cost: 58, type: "deathMark" }, { key: "2", name: "Duelist's Lunge", cost: 65, type: "blink" }, { key: "3", name: "Valor's Light", cost: 78, type: "energySurge" }], price: 23200, unlocked: false },
+  { id: "helios", name: "Helios", tier: "legendary", speed: 318, maxHp: 198, maxShield: 66, maxEnergy: 142, baseCooldown: 0.34, damageMultiplier: 1.42, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.45, shieldRegenMultiplier: 2.95, abilities: [{ key: "1", name: "Solar Flare", cost: 95, type: "supernova" }, { key: "2", name: "Orbital Ray", cost: 82, type: "starfall" }, { key: "3", name: "Dawnbringer", cost: 115, type: "overload" }], price: 120000, unlocked: false },
+  { id: "eclipse", name: "Eclipse", tier: "mythic", speed: 358, maxHp: 136, maxShield: 54, maxEnergy: 170, baseCooldown: 0.3, damageMultiplier: 1.34, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 2.2, shieldRegenMultiplier: 3.85, abilities: [{ key: "1", name: "Occultation", cost: 75, type: "phaseShift" }, { key: "2", name: "Shadow Crown", cost: 95, type: "energyBarrier" }, { key: "3", name: "Total Eclipse", cost: 125, type: "supernova" }], price: 84200, unlocked: false },
+  { id: "oracle", name: "Oracle", tier: "mythic", speed: 298, maxHp: 162, maxShield: 72, maxEnergy: 158, baseCooldown: 0.36, damageMultiplier: 1.32, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 1.75, shieldRegenMultiplier: 3.5, abilities: [{ key: "1", name: "Foresight", cost: 70, type: "phaseShift" }, { key: "2", name: "Prophecy", cost: 95, type: "lightningStorm" }, { key: "3", name: "Revelation", cost: 118, type: "supernova" }], price: 108000, unlocked: false },
+  { id: "seraph", name: "Seraph", tier: "exotic", speed: 390, maxHp: 210, maxShield: 102, maxEnergy: 190, baseCooldown: 0.22, damageMultiplier: 1.82, shotSpeedMultiplier: 1.64, energyRegenMultiplier: 3.0, shieldRegenMultiplier: 6.0, abilities: [{ key: "1", name: "Umbral Singularity", cost: 120, type: "blackHole" }, { key: "2", name: "Stellar Ignition", cost: 120, type: "supernova" }, { key: "3", name: "Dimensional Slash", cost: 85, type: "dimensionalSlash" }], price: 145000, unlocked: false },
+  { id: "myrmidon", name: "Myrmidon", tier: "uncommon", speed: 270, maxHp: 124, maxShield: 42, maxEnergy: 98, baseCooldown: 0.42, damageMultiplier: 0.82, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 1.92, abilities: [{ key: "1", name: "Phalanx Shot", cost: 42, type: "rapidVolley" }, { key: "2", name: "Shield Throw", cost: 58, type: "chainBolt" }, { key: "3", name: "Formation Break", cost: 72, type: "burst" }], price: 9600, unlocked: false },
+  { id: "grimstar", name: "Grimstar", tier: "legendary", speed: 328, maxHp: 172, maxShield: 60, maxEnergy: 150, baseCooldown: 0.32, damageMultiplier: 1.38, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 3.25, abilities: [{ key: "1", name: "Void Star", cost: 95, type: "blackHole" }, { key: "2", name: "Dirge", cost: 72, type: "overload" }, { key: "3", name: "Mourning Star", cost: 105, type: "starfall" }], price: 124000, unlocked: false }
 ];
 
 const ADVANCED_PATTERN_LIBRARY = [
@@ -676,7 +842,17 @@ const ADVANCED_SHIP_VISUAL_LIBRARY = [
   { id: "helios", hull: "flare", wings: "sunbarb", trail: "sun-lace", accent: "#5ec6ff" },
   { id: "eclipse", hull: "crescent", wings: "double-prism", trail: "umbra-coil", accent: "#d9a6ff" },
   { id: "oracle", hull: "seer", wings: "orbital-winglet", trail: "lumen-thread", accent: "#6fffe9" },
-  { id: "seraph", hull: "archon", wings: "tri-crown", trail: "scarlet-lens", accent: "#ff7b7b" }
+  { id: "seraph", hull: "archon", wings: "tri-crown", trail: "scarlet-lens", accent: "#ff7b7b" },
+  { id: "dart", hull: "needle", wings: "reverse-thin", trail: "cyan-short", accent: "#f0f4ff" },
+  { id: "pebble", hull: "delta", wings: "dual-mid", trail: "amber-thick", accent: "#b8c4cc" },
+  { id: "wick", hull: "needle", wings: "flared", trail: "sun-lace", accent: "#ff9a3c" },
+  { id: "bolt", hull: "dart", wings: "dual-mid", trail: "ion-band", accent: "#66a8ff" },
+  { id: "knave", hull: "talon", wings: "hollow-prong", trail: "violet-ghost", accent: "#c86bff" },
+  { id: "ember", hull: "flare", wings: "dual-mid", trail: "sun-lace", accent: "#ff6b35" },
+  { id: "claw", hull: "talon", wings: "swept", trail: "dark-plasma", accent: "#5cff8a" },
+  { id: "stinger", hull: "needle", wings: "swept", trail: "yellow-arc", accent: "#ffe566" },
+  { id: "marauder", hull: "riftblade", wings: "armored-mid", trail: "dark-plasma", accent: "#ff4466" },
+  { id: "gallant", hull: "spearhead", wings: "orbital-winglet", trail: "lumen-thread", accent: "#a8d4ff" }
 ];
 
 const STELLAR_CODEX_ENTRIES = [
@@ -854,7 +1030,9 @@ const upgradePool = [
     desc: "+45 shield cap & +60% shield regen",
     apply: (player) => {
       player.maxShield += 45;
+      const prevShield = player.shield;
       player.shield = Math.min(player.shield + 45, player.maxShield);
+      recordShieldRegen(player.shield - prevShield);
       player.shieldRegenMultiplier *= 1.6;
     },
   },
@@ -864,7 +1042,9 @@ const upgradePool = [
     desc: "+55 hull integrity & heavy heal",
     apply: (player) => {
       player.maxHp += 55;
+      const prevHp = player.hp;
       player.hp = Math.min(player.hp + 85, player.maxHp);
+      recordHealthRegen(player.hp - prevHp);
     },
   },
   {
@@ -881,7 +1061,9 @@ const upgradePool = [
     desc: "+45 max energy & +30% regen",
     apply: (player) => {
       player.maxEnergy += 45;
+      const prevEnergy = player.energy;
       player.energy = Math.min(player.energy + 45, player.maxEnergy);
+      recordEnergyRegen(player.energy - prevEnergy);
       player.energyRegenMultiplier *= 1.3;
     },
   },
@@ -929,6 +1111,7 @@ const getNearestEnemy = (x, y) => {
   let nearest = null;
   let best = Infinity;
   for (const enemy of state.enemies) {
+    if (enemy.hp <= 0) continue;
     const d = dist(x, y, enemy.x, enemy.y);
     if (d < best) {
       best = d;
@@ -982,6 +1165,872 @@ class Particle {
   }
 }
 
+const drawFriendlyProjectileSilhouette = (ctx, bullet) => {
+  if (!bullet.friendly) return false;
+  const shape = bullet.visualShape;
+  const inferredShape =
+    shape ||
+    (bullet.pebbleBoulder ? "spikedBoulder" :
+    bullet.aegisDisc ? "shieldDisc" :
+    bullet.glacierShard ? "iceShard" :
+    bullet.reaperCrescent ? "crescent" :
+    bullet.marauderShard ? "raggedShard" :
+    bullet.titanMegaOrb ? "heavyOrb" :
+    bullet.voidwalkerMicro ? "singularity" :
+    bullet.novaPrimaryPop ? "starPellet" :
+    bullet.infernoGlob ? "moltenGlob" :
+    bullet.picketTri ? "triangle" :
+    bullet.staticPop ? "lineShot" :
+    bullet.lineShot ? "lineShot" :
+    null);
+  if (!inferredShape) return false;
+
+  const angle = Math.atan2(bullet.vy, bullet.vx);
+  const s = bullet.size || 4;
+  ctx.save();
+  ctx.translate(bullet.x, bullet.y);
+  ctx.rotate(angle);
+  ctx.globalAlpha = bullet.life < 0.25 ? clamp(bullet.life / 0.25, 0, 1) : 1;
+  ctx.shadowBlur = Math.max(8, s * 2.8);
+  ctx.shadowColor = bullet.color || "#ffffff";
+  ctx.fillStyle = bullet.color || "#ffffff";
+  ctx.strokeStyle = bullet.color || "#ffffff";
+  ctx.lineWidth = Math.max(1.2, s * 0.32);
+
+  if (inferredShape === "lineShot") {
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-s * 4.2, 0);
+    ctx.lineTo(s * 4.2, 0);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.88)";
+    ctx.lineWidth = Math.max(0.8, s * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(-s * 2.7, 0);
+    ctx.lineTo(s * 3.4, 0);
+    ctx.stroke();
+  } else if (inferredShape === "triangle") {
+    ctx.beginPath();
+    ctx.moveTo(s * 2.1, 0);
+    ctx.lineTo(-s * 1.15, -s * 1.25);
+    ctx.lineTo(-s * 0.65, 0);
+    ctx.lineTo(-s * 1.15, s * 1.25);
+    ctx.closePath();
+    ctx.fill();
+  } else if (inferredShape === "needle") {
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-s * 5.2, 0);
+    ctx.lineTo(s * 5.8, 0);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.beginPath();
+    ctx.arc(s * 4.8, 0, Math.max(1, s * 0.35), 0, Math.PI * 2);
+    ctx.fill();
+  } else if (inferredShape === "feather") {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 2.2, s * 0.65, -0.25, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.75)";
+    ctx.beginPath();
+    ctx.moveTo(-s * 2, 0);
+    ctx.lineTo(s * 2, 0);
+    ctx.stroke();
+  } else if (inferredShape === "bird") {
+    ctx.beginPath();
+    ctx.moveTo(s * 2.2, 0);
+    ctx.quadraticCurveTo(0, -s * 1.8, -s * 2.2, -s * 0.2);
+    ctx.quadraticCurveTo(-s * 0.4, 0, -s * 2.2, s * 0.2);
+    ctx.quadraticCurveTo(0, s * 1.8, s * 2.2, 0);
+    ctx.fill();
+  } else if (inferredShape === "clawHook") {
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-s * 2.5, s * 0.8);
+    ctx.quadraticCurveTo(s * 0.2, -s * 2.6, s * 3.2, -s * 0.5);
+    ctx.quadraticCurveTo(s * 1.9, s * 0.15, s * 1.15, s * 1.5);
+    ctx.stroke();
+  } else if (inferredShape === "axeBlade") {
+    ctx.beginPath();
+    ctx.moveTo(s * 3.4, 0);
+    ctx.quadraticCurveTo(s * 0.4, -s * 2.7, -s * 2.5, -s * 0.9);
+    ctx.lineTo(-s * 0.8, 0);
+    ctx.lineTo(-s * 2.5, s * 0.9);
+    ctx.quadraticCurveTo(s * 0.4, s * 2.7, s * 3.4, 0);
+    ctx.fill();
+  } else if (inferredShape === "crescent") {
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 2.35, -1.05, 1.05);
+    ctx.arc(s * 0.9, 0, s * 1.65, 1.05, -1.05, true);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,40,40,0.8)";
+    ctx.stroke();
+  } else if (inferredShape === "starShot") {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? s * 2.1 : s * 0.85;
+      const a = -Math.PI / 2 + (i / 10) * Math.PI * 2;
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  } else if (inferredShape === "pawShot") {
+    const r = s * 0.95;
+    ctx.beginPath();
+    ctx.arc(0, s * 0.5, r * 1.35, 0, Math.PI * 2);
+    ctx.fill();
+    for (const toe of [
+      { x: -r * 1.15, y: -r * 0.45 },
+      { x: -r * 0.4, y: -r * 0.95 },
+      { x: r * 0.4, y: -r * 0.95 },
+      { x: r * 1.15, y: -r * 0.45 },
+    ]) {
+      ctx.beginPath();
+      ctx.arc(toe.x, toe.y, r * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    ctx.lineWidth = Math.max(1, s * 0.18);
+    ctx.stroke();
+  } else if (inferredShape === "rune") {
+    ctx.strokeStyle = bullet.color || "#b8fff8";
+    ctx.beginPath();
+    ctx.moveTo(-s * 1.6, -s * 1.2);
+    ctx.lineTo(s * 1.4, 0);
+    ctx.lineTo(-s * 1.6, s * 1.2);
+    ctx.moveTo(-s * 0.4, -s * 1.6);
+    ctx.lineTo(s * 0.5, s * 1.6);
+    ctx.stroke();
+  } else if (inferredShape === "shieldDisc") {
+    const wx = bullet.aegisBasicWide ? 1.42 : 1;
+    const hy = bullet.aegisBasicWide ? 0.52 : 1;
+    ctx.beginPath();
+    ctx.moveTo(s * 1.8 * wx, 0);
+    ctx.lineTo(s * 0.8 * wx, -s * 1.65 * hy);
+    ctx.lineTo(-s * 1.4 * wx, -s * 1.25 * hy);
+    ctx.lineTo(-s * 1.8 * wx, 0);
+    ctx.lineTo(-s * 1.4 * wx, s * 1.25 * hy);
+    ctx.lineTo(s * 0.8 * wx, s * 1.65 * hy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.8)";
+    ctx.stroke();
+  } else if (inferredShape === "iceShard" || inferredShape === "raggedShard") {
+    ctx.beginPath();
+    ctx.moveTo(s * 2.8, 0);
+    ctx.lineTo(-s * 0.8, -s * 1.3);
+    ctx.lineTo(-s * 2.0, -s * 0.25);
+    ctx.lineTo(-s * 0.7, s * 1.1);
+    ctx.closePath();
+    ctx.fill();
+    if (inferredShape === "iceShard") {
+      ctx.strokeStyle = "rgba(255,255,255,0.88)";
+      ctx.stroke();
+    }
+  } else if (inferredShape === "moltenGlob" || inferredShape === "heavyOrb") {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 1.5, s * 1.05, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.beginPath();
+    ctx.arc(s * 0.35, -s * 0.3, s * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (inferredShape === "spikedBoulder") {
+    const R = s * 1.35;
+    ctx.fillStyle = bullet.color || "#7a8590";
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(40,48,56,0.95)";
+    ctx.lineWidth = Math.max(1.4, s * 0.12);
+    ctx.stroke();
+    const spikes = 11;
+    for (let k = 0; k < spikes; k++) {
+      const a = (k / spikes) * Math.PI * 2 + angle * 0.08;
+      const r0 = R * 0.88;
+      const r1 = R * (1.22 + (k % 3) * 0.06);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a - 0.09) * r0, Math.sin(a - 0.09) * r0);
+      ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+      ctx.lineTo(Math.cos(a + 0.09) * r0, Math.sin(a + 0.09) * r0);
+      ctx.closePath();
+      ctx.fillStyle = k % 2 ? "#5c6670" : "#8a96a2";
+      ctx.fill();
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.beginPath();
+    ctx.arc(-R * 0.25, -R * 0.28, R * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (inferredShape === "singularity") {
+    ctx.strokeStyle = "rgba(180,100,255,0.95)";
+    for (let r = 0; r < 3; r++) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, s * (1.2 + r * 0.45), s * (0.55 + r * 0.22), r * 0.8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#05000a";
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 0.92, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (inferredShape === "coin") {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 1.45, s * 0.95, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.stroke();
+  } else if (inferredShape === "spark") {
+    ctx.beginPath();
+    ctx.moveTo(s * 2.2, 0);
+    ctx.lineTo(-s * 0.2, -s * 0.9);
+    ctx.lineTo(-s * 1.5, 0);
+    ctx.lineTo(-s * 0.2, s * 0.9);
+    ctx.closePath();
+    ctx.fill();
+  } else if (inferredShape === "ghostBolt") {
+    ctx.globalAlpha *= 0.62;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 1.8, s * 0.82, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.72)";
+    ctx.stroke();
+  } else if (inferredShape === "starPellet") {
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const r = i % 2 === 0 ? s * 1.55 : s * 0.45;
+      const a = (i / 8) * Math.PI * 2;
+      const x = Math.cos(a) * r;
+      const y = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.restore();
+    return false;
+  }
+
+  ctx.restore();
+  return true;
+};
+
+function drawInstantArc(x1, y1, x2, y2, color, life = 0.14, width = 3) {
+  state.visualBeams.push({
+    x1,
+    y1,
+    x2,
+    y2,
+    color: color || "rgba(255,255,255,0.9)",
+    width,
+    life,
+    maxLife: life,
+    phase: performance.now() * 0.01,
+  });
+}
+
+function angleWrapDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function buildLightningPolyline(x0, y0, x1, y1, segments, seed) {
+  const pts = [{ x: x0, y: y0 }];
+  let s = (Math.abs(seed | 0) % 100000) + 1;
+  const rnd = () => {
+    s = (s * 1103515245 + 12345) >>> 0;
+    return (s & 0xffff) / 0xffff;
+  };
+  for (let i = 1; i < segments; i++) {
+    const t = i / segments;
+    const bx = x0 + (x1 - x0) * t;
+    const by = y0 + (y1 - y0) * t;
+    const mx = x1 - x0;
+    const my = y1 - y0;
+    const len = Math.hypot(mx, my) || 1;
+    const px = -my / len;
+    const py = mx / len;
+    const envelope = Math.sin(Math.PI * t) * 24;
+    const ox = (rnd() - 0.5) * 2 * envelope;
+    pts.push({ x: bx + px * ox, y: by + py * ox });
+  }
+  pts.push({ x: x1, y: y1 });
+  return pts;
+}
+
+function pushDecorativeLightning(points, color, life = 1.5, width = 2.6) {
+  if (!state.decorativeLightning) state.decorativeLightning = [];
+  state.decorativeLightning.push({
+    points,
+    life,
+    maxLife: life,
+    color: color || "rgba(150, 210, 255, 0.92)",
+    width,
+  });
+}
+
+function drawEnemyDizzyStars(ctx, enemy) {
+  if (!(enemy.stunTimer > 0)) return;
+  const bob = Math.sin(performance.now() / 130 + (enemy.phase || 0)) * 2.2;
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y - enemy.size - 18 + bob);
+  const spin = performance.now() / 260;
+  for (let r = 0; r < 3; r++) {
+    const a = spin + (r * Math.PI * 2) / 3;
+    const sx = Math.cos(a) * 10;
+    const sy = Math.sin(a) * 4 - 5;
+    ctx.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const ka = (k / 5) * Math.PI - Math.PI / 2;
+      const rad = k % 2 === 0 ? 3.4 : 1.35;
+      const px = sx + Math.cos(ka) * rad;
+      const py = sy + Math.sin(ka) * rad;
+      if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = "#fff6a8";
+    ctx.strokeStyle = "rgba(70, 55, 10, 0.75)";
+    ctx.lineWidth = 1.1;
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawEnemyPoisonStacks(ctx, enemy) {
+  if (!(enemy.stingerPoisonStacks > 0) || !(enemy.stingerPoisonTimer > 0)) return;
+  const stacks = Math.min(3, enemy.stingerPoisonStacks | 0);
+  const pulse = 0.55 + Math.sin(performance.now() / 120 + enemy.x * 0.02) * 0.18;
+  ctx.save();
+  ctx.translate(enemy.x, enemy.y - enemy.size - 10);
+  for (let i = 0; i < stacks; i++) {
+    const a = (i / Math.max(stacks, 1)) * Math.PI * 2 + performance.now() / 480;
+    const r = 7 + (i % 2) * 3;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * (r * 0.55);
+    ctx.fillStyle = `rgba(150, 255, 130, ${0.55 + pulse * 0.35})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function boltStormRayEndpoints(cage, px, py) {
+  const n = cage.rays || 15;
+  const spin = ((performance.now() - cage.startMs) / 1000) * ((Math.PI * 2) / 6);
+  const footY = cage.footYOffset ?? 20;
+  const inner = cage.innerRadius ?? 22;
+  const outer = cage.outerRadius ?? 152;
+  const ox = px;
+  const oy = py + footY;
+  const rays = [];
+  for (let k = 0; k < n; k++) {
+    const rayAng = (k / n) * Math.PI * 2 + spin;
+    const x0 = ox + Math.cos(rayAng) * inner;
+    const y0 = oy + Math.sin(rayAng) * inner;
+    const x1 = ox + Math.cos(rayAng) * outer;
+    const y1 = oy + Math.sin(rayAng) * outer;
+    rays.push({ ang: rayAng, x0, y0, x1, y1 });
+  }
+  return { ox, oy, rays, outer };
+}
+
+function applyBoltChannelStorm(dt) {
+  const pl = state.player;
+  if (!pl || (pl.boltChannelLock || 0) <= 0 || !state.boltCage) return;
+  const cage = state.boltCage;
+  const px = pl.x;
+  const py = pl.y;
+  const dm = pl.damageMultiplier * pl.abilityDamageMultiplier;
+  const { rays } = boltStormRayEndpoints(cage, px, py);
+  const hitBand = (cage.hitBand ?? 26) + 0.001;
+  const dps = 52 * dm;
+  for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+    const enemy = state.enemies[ei];
+    if (!enemy || enemy.hp <= 0) continue;
+    let segD = Infinity;
+    for (const r of rays) {
+      const d = pointToSegmentDistance(enemy.x, enemy.y, r.x0, r.y0, r.x1, r.y1);
+      if (d < segD) segD = d;
+    }
+    if (segD > enemy.size + hitBand) continue;
+    enemy.hp -= dps * dt;
+    recordDamageDealt(dps * dt);
+    enemy.stunTimer = Math.max(enemy.stunTimer || 0, 0.55);
+    if (enemy.hp <= 0) onEnemyDestroyed(enemy, ei);
+  }
+}
+
+function drawBoltCageLightning(ctx) {
+  const pl = state.player;
+  if (!pl || (pl.boltChannelLock || 0) <= 0 || !state.boltCage) return;
+  const cage = state.boltCage;
+  const px = pl.x;
+  const py = pl.y;
+  const { rays } = boltStormRayEndpoints(cage, px, py);
+  const tseed = (performance.now() / 38) | 0;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let k = 0; k < rays.length; k++) {
+    const r = rays[k];
+    const poly = buildLightningPolyline(r.x0, r.y0, r.x1, r.y1, 11, tseed * 997 + k * 104729);
+    ctx.beginPath();
+    ctx.moveTo(poly[0].x, poly[0].y);
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+    ctx.strokeStyle = "rgba(140, 200, 255, 0.55)";
+    ctx.lineWidth = 5;
+    ctx.shadowBlur = 22;
+    ctx.shadowColor = "#66a8ff";
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(230, 248, 255, 0.88)";
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 12;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function spawnTriangleSparks(x, y, baseAngle, count, color, damage, speed, visualShape = "spark") {
+  for (let i = 0; i < count; i++) {
+    const a = baseAngle + (i / count) * Math.PI * 2;
+    const spark = new Bullet(x, y, a, speed, true, 2.4, color, damage);
+    spark.visualShape = visualShape;
+    spark.life = 0.55;
+    spark.noTrail = true;
+    state.bullets.push(spark);
+  }
+}
+
+function createFirePuddle(x, y, color = "#ff6b2a", duration = 2) {
+  state.novaAnomalies.push(
+    new NovaAnomaly(x, y, {
+      maxRadius: 58,
+      duration,
+      pullStrength: 0,
+      damagePerSecond: 18 * state.player.damageMultiplier,
+      pullEnabled: false,
+      explodeAtEnd: false,
+      color,
+      stunWhilePulled: false,
+    })
+  );
+}
+
+function spawnGlacierBurst(enemy, sourceDamage, freezeFactor = 1.5) {
+  const starts = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+  for (const a of starts) {
+    const shard = new Bullet(enemy.x, enemy.y, a, 340 * state.player.shotSpeedMultiplier, true, 2.8, "#b8ecff", sourceDamage * 0.42);
+    shard.visualShape = "iceShard";
+    shard.freezeFactor = 0.35;
+    shard.glacierFreezeDuration = freezeFactor;
+    shard.life = 0.75;
+    state.bullets.push(shard);
+  }
+}
+
+function applyScytheSwing(cx, cy, angle, radius, arc, damage, knockback = 42, color = "#ff1f1f", excludedEnemy = null, extra = null) {
+  const opts = extra && typeof extra === "object" ? extra : {};
+  const pivotArcBlendRadius = opts.pivotArcBlendRadius > 0 ? opts.pivotArcBlendRadius : 0;
+  state.scytheSwings.push({
+    x: cx,
+    y: cy,
+    angle,
+    radius,
+    arc,
+    color,
+    life: 0.28,
+    maxLife: 0.28,
+    showHandle: !!opts.showHandle,
+    handleLength: opts.handleLength > 0 ? opts.handleLength : 52,
+  });
+  for (let s = 0; s < 32; s++) {
+    const a = angle - arc / 2 + (s / 31) * arc;
+    const px = cx + Math.cos(a) * radius;
+    const py = cy + Math.sin(a) * radius;
+    const p = new Particle(px, py, color);
+    p.life = 0.22;
+    p.size = rng(2, 4);
+    state.particles.push(p);
+  }
+  for (let i = state.enemies.length - 1; i >= 0; i--) {
+    const enemy = state.enemies[i];
+    if (enemy === excludedEnemy) continue;
+    const d = dist(cx, cy, enemy.x, enemy.y);
+    if (d > radius + enemy.size) continue;
+    let diff = Math.atan2(enemy.y - cy, enemy.x - cx) - angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    let halfArcAllowed = arc / 2;
+    if (pivotArcBlendRadius > 0) {
+      const pivotBlend = clamp(1 - d / pivotArcBlendRadius, 0, 1);
+      halfArcAllowed += pivotBlend * (Math.PI - arc / 2);
+    }
+    if (Math.abs(diff) > halfArcAllowed) continue;
+    enemy.hp -= damage;
+    recordDamageDealt(damage);
+    enemy.x += Math.cos(angle) * knockback;
+    enemy.y += Math.sin(angle) * knockback;
+    if (enemy.hp <= 0) {
+      const si = state.enemies.indexOf(enemy);
+      if (si > -1) onEnemyDestroyed(enemy, si);
+    }
+  }
+}
+
+class ReaperPortal {
+  constructor(x, y, side) {
+    this.x = x;
+    this.y = y;
+    this.side = side;
+    this.life = 4;
+    this.maxLife = 4;
+    this.spawned = 0;
+    this.spawnTimer = 0.25;
+  }
+  update(dt) {
+    this.life -= dt;
+    this.spawnTimer -= dt;
+    if (this.spawned < 3 && this.spawnTimer <= 0) {
+      this.spawnTimer = 1.2;
+      this.spawned++;
+      state.reaperMinions.push(new ReaperMinion(this.x + rng(-18, 18), this.y + rng(-18, 18)));
+      for (let i = 0; i < 24; i++) {
+        const p = new Particle(this.x + rng(-18, 18), this.y + rng(-28, 28), "#c0c0c0");
+        p.life = rng(0.25, 0.55);
+        state.particles.push(p);
+      }
+    }
+    return this.life <= 0;
+  }
+  draw(ctx) {
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = "#a0a0a0";
+    ctx.fillStyle = "rgba(20, 10, 25, 0.65)";
+    ctx.shadowBlur = 22;
+    ctx.shadowColor = "#7a1f1f";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 28 + Math.sin(performance.now() / 140) * 3, 44, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+class ReaperMinion {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.life = 5.8;
+    this.hp = 46;
+    this.maxHp = 46;
+    this.attackTimer = 0.35;
+    this.size = 14;
+  }
+  update(dt) {
+    this.life -= dt;
+    for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+      const bullet = state.enemyBullets[i];
+      if (dist(this.x, this.y, bullet.x, bullet.y) > this.size + bullet.size) continue;
+      this.hp -= bullet.damage || 6;
+      state.enemyBullets.splice(i, 1);
+      for (let p = 0; p < 8; p++) state.particles.push(new Particle(bullet.x, bullet.y, "#d0d0d0"));
+      if (this.hp <= 0) return true;
+    }
+    const target = getNearestEnemy(this.x, this.y);
+    if (target) {
+      const a = Math.atan2(target.y - this.y, target.x - this.x);
+      this.x += Math.cos(a) * 115 * dt;
+      this.y += Math.sin(a) * 115 * dt;
+      this.attackTimer -= dt;
+      if (this.attackTimer <= 0 && dist(this.x, this.y, target.x, target.y) < 110) {
+        this.attackTimer = 0.85;
+        applyScytheSwing(this.x, this.y, a, 118, Math.PI * 0.92, 34 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, 30, "#ff2222");
+      }
+    }
+    return this.life <= 0 || this.hp <= 0;
+  }
+  draw(ctx) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.fillStyle = "#c8c8c8";
+    ctx.strokeStyle = "#ff2222";
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = "#ff2222";
+    ctx.beginPath();
+    ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.78)";
+    ctx.fillRect(-12, 16, 24 * clamp(this.hp / this.maxHp, 0, 1), 3);
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(-18, 20);
+    ctx.lineTo(12, -22);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(12, -22);
+    ctx.quadraticCurveTo(38, -22, 42, 2);
+    ctx.quadraticCurveTo(25, -11, 13, -5);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.8)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(17, -20);
+    ctx.quadraticCurveTo(34, -17, 39, -1);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+class ReaperChain {
+  constructor(target) {
+    this.target = target;
+    this.life = 10;
+    this.maxLife = 10;
+  }
+  update(dt) {
+    if (!this.target) return true;
+    if (this.target.hp <= 0) {
+      const idx0 = state.enemies.indexOf(this.target);
+      if (idx0 > -1) onEnemyDestroyed(this.target, idx0);
+      return true;
+    }
+    this.life -= dt;
+    this.target.reaperChainSlowTimer = Math.max(this.target.reaperChainSlowTimer || 0, 0.12);
+    const activeChains = Math.max(1, state.reaperChains.filter((chain) => chain.target && chain.target.hp > 0).length);
+    const focusMultiplier = clamp(8 / activeChains, 1, 4.2);
+    const dmg = 18 * focusMultiplier * state.player.damageMultiplier * state.player.abilityDamageMultiplier * dt;
+    this.target.hp -= dmg;
+    recordDamageDealt(dmg);
+    const heal = 1.4 * dt;
+    state.player.hp = Math.min(state.player.maxHp, state.player.hp + heal);
+    const a = Math.atan2(state.player.y - this.target.y, state.player.x - this.target.x);
+    for (let i = 0; i < 2; i++) {
+      const p = new Particle(this.target.x + rng(-8, 8), this.target.y + rng(-8, 8), "#ff2222");
+      p.vx = Math.cos(a) * rng(80, 180);
+      p.vy = Math.sin(a) * rng(80, 180);
+      p.life = 0.28;
+      state.particles.push(p);
+    }
+    if (this.target.hp <= 0) {
+      const idx = state.enemies.indexOf(this.target);
+      if (idx > -1) onEnemyDestroyed(this.target, idx);
+      return true;
+    }
+    return this.life <= 0;
+  }
+  draw(ctx) {
+    if (!this.target || !state.player) return;
+    ctx.save();
+    ctx.strokeStyle = "#ff2222";
+    ctx.lineWidth = 3;
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = "#ff1111";
+    ctx.beginPath();
+    const links = 14;
+    for (let i = 0; i <= links; i++) {
+      const t = i / links;
+      const x = state.player.x + (this.target.x - state.player.x) * t + Math.sin(t * Math.PI * 10 + performance.now() / 80) * 5;
+      const y = state.player.y + (this.target.y - state.player.y) * t + Math.cos(t * Math.PI * 8 + performance.now() / 70) * 5;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+class SolarFlareEmitter {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.life = 3;
+    this.maxLife = 3;
+    this.angle = 0;
+    this.emitTimer = 0;
+  }
+  update(dt) {
+    this.life -= dt;
+    this.angle += dt * Math.PI * 2.2;
+    this.emitTimer -= dt;
+    while (this.emitTimer <= 0) {
+      this.emitTimer += 0.025;
+      for (let i = 0; i < 5; i++) {
+        const a = this.angle + rng(-0.36, 0.36) + i * 0.08;
+        const flame = new Bullet(this.x, this.y, a, rng(180, 430) * state.player.shotSpeedMultiplier, true, rng(3.5, 6.5), Math.random() < 0.5 ? "#ff4a1f" : "#ffbd45", 3.8 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+        flame.visualShape = "spark";
+        flame.heliosFlame = true;
+        flame.life = rng(0.45, 0.95);
+        state.bullets.push(flame);
+      }
+    }
+    return this.life <= 0;
+  }
+  draw(ctx) {
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.45 * alpha;
+    ctx.fillStyle = "#ffb347";
+    ctx.shadowBlur = 30;
+    ctx.shadowColor = "#ff4a1f";
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 42 + Math.sin(performance.now() / 80) * 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class FireColumn {
+  constructor(x, width = 16, duration = 1.2) {
+    this.x = x;
+    this.width = width;
+    this.life = duration;
+    this.maxLife = duration;
+  }
+  update(dt) {
+    this.life -= dt;
+    const dmg = 75 * state.player.damageMultiplier * state.player.abilityDamageMultiplier * dt;
+    for (let i = state.enemies.length - 1; i >= 0; i--) {
+      const enemy = state.enemies[i];
+      if (Math.abs(enemy.x - this.x) <= this.width + enemy.size) {
+        enemy.hp -= dmg;
+        recordDamageDealt(dmg);
+        if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
+      }
+    }
+    for (let p = 0; p < 8; p++) {
+      const spark = new Particle(this.x + rng(-this.width, this.width), rng(TOP_HUD_SAFE_Y, config.height), Math.random() < 0.5 ? "#ff4a1f" : "#ffbd45");
+      spark.life = 0.22;
+      spark.size = rng(2, 5);
+      state.particles.push(spark);
+    }
+    return this.life <= 0;
+  }
+  draw(ctx) {
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.32 * alpha;
+    ctx.fillStyle = "#ff5a2a";
+    ctx.shadowBlur = 24;
+    ctx.shadowColor = "#ff9a2f";
+    ctx.fillRect(this.x - this.width / 2, TOP_HUD_SAFE_Y, this.width, config.height - TOP_HUD_SAFE_Y);
+    ctx.restore();
+  }
+}
+
+class GrimstarWave {
+  constructor() {
+    this.y = config.height + 70;
+    this.life = 2.4;
+    this.maxLife = 2.4;
+    this.height = 74;
+    this.hitCooldowns = new Map();
+  }
+  update(dt) {
+    this.life -= dt;
+    this.y -= 360 * dt;
+    const dmg = 84 * state.player.damageMultiplier * state.player.abilityDamageMultiplier * dt;
+    for (let i = state.enemies.length - 1; i >= 0; i--) {
+      const enemy = state.enemies[i];
+      if (Math.abs(enemy.y - this.y) > this.height * 0.55 + enemy.size) continue;
+      enemy.hp -= dmg;
+      recordDamageDealt(dmg);
+      enemy.y -= 145 * dt;
+      enemy.x += Math.sign(enemy.x - config.width * 0.5) * 28 * dt;
+      if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
+    }
+    for (let i = 0; i < 18; i++) {
+      const p = new Particle(rng(0, config.width), this.y + rng(-this.height * 0.45, this.height * 0.45), Math.random() < 0.5 ? "#8b62ff" : "#4a2080");
+      p.vy = rng(-160, -70);
+      p.life = rng(0.25, 0.55);
+      p.size = rng(1.5, 4);
+      state.particles.push(p);
+    }
+    return this.life <= 0 || this.y < TOP_HUD_SAFE_Y - 90;
+  }
+  draw(ctx) {
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.55 * alpha;
+    const grad = ctx.createLinearGradient(0, this.y - this.height / 2, 0, this.y + this.height / 2);
+    grad.addColorStop(0, "rgba(185, 130, 255, 0)");
+    grad.addColorStop(0.5, "rgba(120, 55, 210, 0.85)");
+    grad.addColorStop(1, "rgba(25, 0, 45, 0)");
+    ctx.fillStyle = grad;
+    ctx.shadowBlur = 28;
+    ctx.shadowColor = "#8b62ff";
+    ctx.fillRect(0, this.y - this.height / 2, config.width, this.height);
+    ctx.restore();
+  }
+}
+
+function getEnemyTargetFor(enemy, player) {
+  let best = player;
+  let bestD = Infinity;
+  for (const minion of state.reaperMinions || []) {
+    if (!minion || minion.hp <= 0) continue;
+    const d = dist(enemy.x, enemy.y, minion.x, minion.y);
+    if (d < bestD && d < 520) {
+      bestD = d;
+      best = minion;
+    }
+  }
+  return best;
+}
+
+function getTierPowerScale(tier) {
+  if (tier === "legendary") return { basic: 2.45, ability: 2.65 };
+  if (tier === "mythic") return { basic: 1.85, ability: 2.05 };
+  return { basic: 1, ability: 1 };
+}
+
+const configurePebbleRicochetOrb = (b) => {
+  b.noTrail = true;
+  b.visualShape = "heavyOrb";
+  b.maxRebounds = 4;
+  b.rebounds = 0;
+  b.verticalReboundOnly = false;
+  b.onReboundGlow = () => {
+    b.damage *= 1.06;
+    b.size *= 1.03;
+    b.color = b.rebounds >= 3 ? "#d8e0e6" : "#aab4bc";
+  };
+};
+
+function handleBasicBulletExpired(bullet) {
+  if (bullet.hitSomething) return;
+  if (bullet.wickExplosiveShot && !bullet.wickExploded) {
+    bullet.wickExploded = true;
+    for (let p = 0; p < 14; p++) {
+      state.particles.push(new Particle(bullet.x + rng(-6, 6), bullet.y + rng(-6, 6), "#ffcc80"));
+    }
+    return;
+  }
+  if (bullet.wickBasic && !bullet.wickMissPopped) {
+    bullet.wickMissPopped = true;
+    spawnTriangleSparks(bullet.x, bullet.y, -Math.PI / 2, 3, "#ffb347", bullet.damage * 0.45, 260 * state.player.shotSpeedMultiplier);
+  }
+  if (bullet.novaPrimaryPop && !bullet.novaExpiredPopped) {
+    bullet.novaExpiredPopped = true;
+    emitNovaShellParticles(bullet.x, bullet.y, "#ffffff", "#e8ffff", 4, 28);
+    spawnTriangleSparks(bullet.x, bullet.y, -Math.PI / 2, 3, "#ffffff", bullet.damage * 0.55, 280 * state.player.shotSpeedMultiplier, "starPellet");
+  }
+  if ((bullet.emberPuddle || bullet.infernoGlob) && !bullet.puddleSpawned) {
+    bullet.puddleSpawned = true;
+    createFirePuddle(bullet.x, bullet.y, bullet.infernoGlob ? "#ff4a1f" : "#ff7a45", bullet.infernoGlob ? 2 : 0.5);
+  }
+}
+
 class Bullet {
   constructor(
     x,
@@ -1006,12 +2055,192 @@ class Bullet {
     this.owner = owner;
     this.rebounds = 0; 
     this.maxRebounds = 0; 
-    this.piercing = false; 
+    this.piercing = false;
+    this.noTrail = false;
+    this.lineShot = false;
+    this.gravityDrop = 0;
+    this.wobbleAmp = 0;
+    this.wobbleT = 0;
+    this.infernoGlob = false;
+    this.age = 0;
+    this.baseSpeed = speed;
+    this.hitCount = 0;
   }
   update(dt) {
+    if (!this.friendly && state.player && (state.player.boltChannelLock || 0) > 0 && state.boltCage) {
+      const pl = state.player;
+      const cage = state.boltCage;
+      const band = (cage.hitBand ?? 26) + (this.size || 4) + 4;
+      const { rays } = boltStormRayEndpoints(cage, pl.x, pl.y);
+      let best = Infinity;
+      for (const r of rays) {
+        const d = pointToSegmentDistance(this.x, this.y, r.x0, r.y0, r.x1, r.y1);
+        if (d < best) best = d;
+      }
+      if (best <= band) return;
+    }
     this.life -= dt;
-    
-    
+    this.age += dt;
+    if (this.friendly && this.seraphRailEmitter && !this.seraphNeedle && this.life > 0) {
+      this.emitAcc = (this.emitAcc || 0) + dt;
+      const interval = 0.036;
+      while (this.emitAcc >= interval) {
+        this.emitAcc -= interval;
+        const ang = Math.atan2(this.vy, this.vx);
+        const sp = Math.hypot(this.vx, this.vy) + 140;
+        const ox = this.x + Math.cos(ang) * 12;
+        const oy = this.y + Math.sin(ang) * 12;
+        const nd = new Bullet(
+          ox,
+          oy,
+          ang,
+          sp,
+          true,
+          2.4,
+          "#ff1212",
+          9.2 * (state.player && state.player.damageMultiplier ? state.player.damageMultiplier : 1)
+        );
+        nd.life = 0.15;
+        nd.seraphNeedle = true;
+        nd.owner = "player";
+        state.bullets.push(nd);
+      }
+    }
+
+    if (this.dartBasic && !this.dartAccelerated && this.age >= 1) {
+      this.dartAccelerated = true;
+      this.vx *= 2.25;
+      this.vy *= 2.25;
+      this.piercing = true;
+      this.pierceCount = 1;
+      this.color = "#ffffff";
+      this.size *= 1.15;
+    }
+
+    if (this.lancerGrow) {
+      const growth = clamp(this.age / 0.8, 0, 1);
+      this.size = Math.max(this.size, 2.4 + growth * 2.2);
+      if (growth >= 1) {
+        this.piercing = true;
+        this.pierceCount = Math.max(this.pierceCount || 0, 2);
+      }
+    }
+
+    if (this.stingerReturn && !this.stingerReturned && this.age > 0.45) {
+      const nearEdge = this.x < 28 || this.x > config.width - 28 || this.y < TOP_HUD_SAFE_Y + 10 || this.y > config.height - 28;
+      if (nearEdge) {
+        const target = getNearestEnemy(this.x, this.y);
+        if (target) {
+          const a = Math.atan2(target.y - this.y, target.x - this.x);
+          const sp = Math.hypot(this.vx, this.vy) || 600;
+          this.vx = Math.cos(a) * sp * 0.78;
+          this.vy = Math.sin(a) * sp * 0.78;
+          this.tracking = true;
+          this.trackingTarget = target;
+          this.trackingTurnRate = 8;
+          this.stingerReturned = true;
+          this.life = Math.max(this.life, 0.85);
+        }
+      }
+    }
+
+    if (this.tempestOrb) {
+      this.tempestArcTimer = (this.tempestArcTimer || 0) - dt;
+      if (this.tempestArcTimer <= 0 && (this.tempestArcCount || 0) < 3) {
+        this.tempestArcTimer = 0.22;
+        let target = null;
+        let bestD = 150;
+        for (const enemy of state.enemies) {
+          const d = dist(this.x, this.y, enemy.x, enemy.y);
+          if (d < bestD) {
+            bestD = d;
+            target = enemy;
+          }
+        }
+        if (target) {
+          const arcDamage = this.damage * 0.28;
+          target.hp -= arcDamage;
+          recordDamageDealt(arcDamage);
+          drawInstantArc(this.x, this.y, target.x, target.y, "#fff176", 0.16);
+          if (target.hp <= 0) {
+            const idx = state.enemies.indexOf(target);
+            if (idx > -1) onEnemyDestroyed(target, idx);
+          }
+          this.tempestArcCount = (this.tempestArcCount || 0) + 1;
+        }
+      }
+    }
+
+    if (this.auroraCurveDir && !this.sinePath) {
+      const sp = Math.hypot(this.vx, this.vy) || 1;
+      const base = Math.atan2(this.vy, this.vx);
+      const next = base + this.auroraCurveDir * dt * 1.75;
+      this.vx = Math.cos(next) * sp;
+      this.vy = Math.sin(next) * sp;
+    }
+
+    if (this.grimstarTrail) {
+      this.trailTimer = (this.trailTimer || 0) - dt;
+      if (this.trailTimer <= 0) {
+        this.trailTimer = this.thinPurpleTrail ? 0.025 : 0.08;
+        if (this.thinPurpleTrail) {
+          const p = new Particle(this.x + rng(-2, 2), this.y + rng(-2, 2), "#9b62ff");
+          p.life = 0.22;
+          p.size = rng(1, 2);
+          state.particles.push(p);
+        } else {
+          state.voidTrails.push({ x: this.x, y: this.y, radius: 34, life: 0.5, maxLife: 0.5, color: "#4a2080" });
+        }
+      }
+    }
+
+    if (this.wardenAbsorb) {
+      for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+        const enemyBullet = state.enemyBullets[i];
+        if (dist(this.x, this.y, enemyBullet.x, enemyBullet.y) > this.size + enemyBullet.size + 12) continue;
+        state.enemyBullets.splice(i, 1);
+        this.wardenAbsorbs = (this.wardenAbsorbs || 0) + 1;
+        this.size = Math.min(this.size + 0.8, (this.baseSize || this.size) + 3);
+        this.damage *= 1.08;
+        for (let p = 0; p < 8; p++) state.particles.push(new Particle(enemyBullet.x, enemyBullet.y, "#ffe9a8"));
+        if (this.wardenAbsorbs >= 3) break;
+      }
+    }
+
+    if (this.bucklerGuard || this.aegisReflectDisc) {
+      const reflectReach =
+        this.hitEllipseW != null && this.hitEllipseH != null
+          ? Math.max(this.hitEllipseW, this.hitEllipseH) * 0.72 + 6
+          : this.size + 6;
+      for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+        const enemyBullet = state.enemyBullets[i];
+        if (dist(this.x, this.y, enemyBullet.x, enemyBullet.y) > reflectReach + enemyBullet.size) continue;
+        state.enemyBullets.splice(i, 1);
+        if (this.aegisReflectDisc && !this.aegisReflected) {
+          this.aegisReflected = true;
+          this.damage *= 0.5;
+          const a = Math.atan2(enemyBullet.vy || 0, enemyBullet.vx || -1) + Math.PI;
+          const reflected = new Bullet(this.x, this.y, a, 420, true, 4, "#9fd4ff", this.damage);
+          reflected.lineShot = true;
+          reflected.life = 0.85;
+          state.bullets.push(reflected);
+        } else if (this.bucklerGuard) {
+          state.player.hp = Math.min(state.player.maxHp, state.player.hp + state.player.maxHp * 0.006);
+          this.life = 0;
+        }
+        for (let p = 0; p < 8; p++) state.particles.push(new Particle(this.x, this.y, this.color || "#ffb347"));
+        break;
+      }
+    }
+
+    if (this.dartHomingPending) {
+      this.dartHomingArmDelay -= dt;
+      if (this.dartHomingArmDelay <= 0) {
+        this.dartHomingPending = false;
+        this.tracking = true;
+        this.trackingTarget = getNearestEnemy(this.x, this.y);
+      }
+    }
     if (this.tracking) {
       if (!this.trackingTarget || this.trackingTarget.hp <= 0) {
         this.trackingTarget = getNearestEnemy(this.x, this.y);
@@ -1042,28 +2271,295 @@ class Bullet {
         this.vy = Math.sin(newAngle) * speed;
       }
     }
+
+    if (this.friendly && this.boltIonOrb && state.player) {
+      const dps = (this.boltIonOrbDps || 40) * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const reach = this.size + 10;
+      for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+        const enemy = state.enemies[ei];
+        if (!enemy || enemy.hp <= 0) continue;
+        if (dist(this.x, this.y, enemy.x, enemy.y) < reach + enemy.size) {
+          enemy.hp -= dps * dt;
+          recordDamageDealt(dps * dt);
+          if (Math.random() < 0.22) {
+            state.particles.push(new Particle(enemy.x + rng(-4, 4), enemy.y + rng(-4, 4), "#a8d8ff"));
+          }
+          if (enemy.hp <= 0) {
+            onEnemyDestroyed(enemy, ei);
+          }
+        }
+      }
+    }
     
     this.x += this.vx * dt;
     this.y += this.vy * dt;
+    if (this.sinePath) {
+      if (!this.sineOrigin) {
+        this.sineOrigin = { x: this.x, y: this.y };
+        this.sineAngle = Math.atan2(this.vy, this.vx);
+        this.sineSpeed = Math.hypot(this.vx, this.vy) || this.baseSpeed || 1;
+      }
+      const amp = this.sineAmplitude || 24;
+      const freq = this.sineFrequency || 10;
+      const phase = this.sinePhase || 0;
+      const forward = this.sineSpeed * this.age;
+      const side = Math.sin(this.age * freq + phase) * amp;
+      const sideVelocity = Math.cos(this.age * freq + phase) * amp * freq;
+      const ca = Math.cos(this.sineAngle);
+      const sa = Math.sin(this.sineAngle);
+      const px = Math.cos(this.sineAngle + Math.PI / 2);
+      const py = Math.sin(this.sineAngle + Math.PI / 2);
+      this.x = this.sineOrigin.x + ca * forward + Math.cos(this.sineAngle + Math.PI / 2) * side;
+      this.y = this.sineOrigin.y + sa * forward + Math.sin(this.sineAngle + Math.PI / 2) * side;
+      this.vx = ca * this.sineSpeed + px * sideVelocity;
+      this.vy = sa * this.sineSpeed + py * sideVelocity;
+    }
     
     
-    if (this.maxRebounds > 0 && this.rebounds < this.maxRebounds) {
-      if (this.x <= this.size || this.x >= config.width - this.size) {
+    const topBounceY = TOP_HUD_SAFE_Y + this.size;
+    if (this.maxRebounds > 0 && (this.wallBounceInfinite || this.rebounds < this.maxRebounds)) {
+      if (!this.verticalReboundOnly && (this.x <= this.size || this.x >= config.width - this.size)) {
         this.vx = -this.vx;
-        this.rebounds++;
+        if (!this.wallBounceInfinite) this.rebounds++;
         this.x = Math.max(this.size, Math.min(config.width - this.size, this.x));
+        if (this.onReboundGlow) this.onReboundGlow();
       }
-      if (this.y <= this.size || this.y >= config.height - this.size) {
+      const hitFloor = this.y >= config.height - this.size;
+      const hitCeilingHud = this.y <= topBounceY;
+      if (this.verticalReboundOnly) {
+        if (hitCeilingHud || hitFloor) {
+          this.vy = -this.vy;
+          if (!this.wallBounceInfinite) this.rebounds++;
+          this.y = Math.max(topBounceY, Math.min(config.height - this.size, this.y));
+          if (this.onReboundGlow) this.onReboundGlow();
+        }
+      } else if (hitCeilingHud || hitFloor) {
         this.vy = -this.vy;
-        this.rebounds++;
-        this.y = Math.max(this.size, Math.min(config.height - this.size, this.y));
+        if (!this.wallBounceInfinite) this.rebounds++;
+        this.y = Math.max(topBounceY, Math.min(config.height - this.size, this.y));
+        if (this.onReboundGlow) this.onReboundGlow();
       }
+    }
+    if (this.gravityDrop) {
+      this.vy += this.gravityDrop * dt;
+    }
+    if (this.wobbleAmp) {
+      this.wobbleT += dt * 11;
+      const sp = Math.hypot(this.vx, this.vy) || 1;
+      const base = Math.atan2(this.vy, this.vx);
+      let na = base + Math.sin(this.wobbleT) * this.wobbleAmp;
+      if ((this.knaveLeftCurveTimer || 0) > 0) {
+        na -= this.wobbleAmp * 0.5;
+        this.knaveLeftCurveTimer = Math.max(0, this.knaveLeftCurveTimer - dt);
+      }
+      this.vx = Math.cos(na) * sp;
+      this.vy = Math.sin(na) * sp;
+    }
+    if (this.friendly && this.infernoGlob && Math.random() < 0.45) {
+      state.particles.push(new Particle(this.x + rng(-4, 4), this.y + rng(-4, 4), "#ff6b2a"));
+    }
+    if (this.heliosFlame && Math.random() < 0.72) {
+      const p = new Particle(this.x + rng(-3, 3), this.y + rng(-3, 3), Math.random() < 0.5 ? "#ff5a2a" : "#ffb347");
+      p.life = 0.18;
+      p.size = rng(1.5, 3.4);
+      state.particles.push(p);
+    }
+    if (this.friendly && this.emberInfernoOrb) {
+      this.emberTrailTick = (this.emberTrailTick || 0) + dt;
+      if (this.emberTrailTick >= 0.035) {
+        this.emberTrailTick = 0;
+        state.voidTrails.push({
+          x: this.x,
+          y: this.y,
+          radius: 42,
+          life: 0.72,
+          maxLife: 0.72,
+          color: "rgba(255, 70, 35, 0.7)",
+          emberTrail: true,
+          dps: this.emberTrailDps || 18,
+        });
+      }
+      if (Math.random() < 0.65) {
+        const p = new Particle(this.x + rng(-8, 8), this.y + rng(-8, 8), Math.random() < 0.5 ? "#ff5a2a" : "#ffb347");
+        p.life = 0.22;
+        p.size = rng(2, 4.4);
+        state.particles.push(p);
+      }
+    }
+    if (this.friendly && this.stingerSpiral) {
+      const lifeMax = Math.max(this.life + this.age, 0.001);
+      const t = clamp(this.age / lifeMax, 0, 1);
+      const outward = t < 0.5;
+      const halfT = outward ? t / 0.5 : (t - 0.5) / 0.5;
+      const radius = outward
+        ? this.stingerSpiralMaxR * halfT
+        : this.stingerSpiralMaxR * (1 - halfT);
+      const spinDir = outward ? this.stingerSpiralOutSpin : this.stingerSpiralInSpin;
+      const base = this.stingerSpiralStart || 0;
+      const turnRate = this.stingerSpiralTurnRate || 6;
+      const theta = base + spinDir * turnRate * this.age + (outward ? 0 : Math.PI * 0.35);
+      const cx = this.stingerSpiralCx || this.x;
+      const cy = this.stingerSpiralCy || this.y;
+      this.x = cx + Math.cos(theta) * radius;
+      this.y = cy + Math.sin(theta) * radius;
+      this.vx = Math.cos(theta + Math.PI / 2 * spinDir) * (220 + radius * 0.8);
+      this.vy = Math.sin(theta + Math.PI / 2 * spinDir) * (220 + radius * 0.8);
+    }
+    if (this.friendly && this.clawHoverPaw) {
+      const target = this.clawHoverTarget;
+      if (!target || target.hp <= 0) {
+        this.life = 0;
+      } else {
+        const tx = target.x;
+        const ty = target.y - target.size - 24;
+        const dx = tx - this.x;
+        const dy = ty - this.y;
+        const d = Math.hypot(dx, dy) || 1;
+        if (d > 18) {
+          const spd = 360;
+          this.vx = (dx / d) * spd;
+          this.vy = (dy / d) * spd;
+          this.x += this.vx * dt;
+          this.y += this.vy * dt;
+        } else {
+          this.x = tx;
+          this.y = ty;
+          const dps = this.clawHoverDps || 3;
+          target.hp -= dps * dt;
+          target.stunTimer = Math.max(target.stunTimer || 0, this.clawHoverStun || 0.25);
+          recordDamageDealt(dps * dt);
+          if (Math.random() < 0.2) state.particles.push(new Particle(target.x + rng(-5, 5), target.y + rng(-5, 5), "#7dffb3"));
+          if (target.hp <= 0) {
+            const idx = state.enemies.indexOf(target);
+            if (idx > -1) onEnemyDestroyed(target, idx);
+            this.life = 0;
+          }
+        }
+      }
+    }
+    if (this.dartBasic && Math.random() < 0.5) {
+      const p = new Particle(this.x - this.vx * 0.018 + rng(-2, 2), this.y - this.vy * 0.018 + rng(-2, 2), "rgba(220,220,220,0.45)");
+      p.life = 0.28;
+      p.size = rng(1, 2);
+      state.particles.push(p);
+    }
+    if (this.chainArc && this.chainDamagePct === 0.15 && Math.random() < 0.42) {
+      const p = new Particle(this.x + rng(-4, 4), this.y + rng(-4, 4), "#66a8ff");
+      p.life = 0.14;
+      p.size = rng(1, 2.2);
+      state.particles.push(p);
+    }
+    if (this.novaPrimaryPop && Math.random() < 0.65) {
+      const p = new Particle(this.x, this.y, "#ffffff");
+      p.life = 0.3;
+      p.size = rng(2, 3.5);
+      state.particles.push(p);
     }
   }
   draw(ctx) {
     ctx.save();
-    
-    
+    if (this.friendly && this.boltIonOrb) {
+      const pulse = 0.82 + Math.sin(this.age * 11) * 0.18;
+      const s = this.size * pulse;
+      const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, s * 2.4);
+      g.addColorStop(0, "rgba(230, 248, 255, 0.98)");
+      g.addColorStop(0.35, "rgba(120, 190, 255, 0.82)");
+      g.addColorStop(0.72, "rgba(50, 110, 220, 0.45)");
+      g.addColorStop(1, "rgba(20, 40, 120, 0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, s * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(200, 235, 255, 0.9)";
+      ctx.lineWidth = 2.2;
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = "#66a8ff";
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, s * 1.05, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let k = 0; k < 9; k++) {
+        const base = this.age * 6 + k * 0.7;
+        const a0 = (k / 9) * Math.PI * 2 + this.age * 2.2;
+        const r0 = s * 0.35;
+        const r1 = s * (1.55 + Math.sin(base) * 0.25);
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(180, 220, 255, ${0.35 + (k % 3) * 0.12})`;
+        ctx.lineWidth = 1.2;
+        ctx.shadowBlur = 8;
+        ctx.moveTo(this.x + Math.cos(a0) * r0, this.y + Math.sin(a0) * r0);
+        let ax = this.x + Math.cos(a0) * r0;
+        let ay = this.y + Math.sin(a0) * r0;
+        const steps = 5;
+        for (let t = 1; t <= steps; t++) {
+          const u = t / steps;
+          const ang = a0 + Math.sin(base + u * 5) * 0.55;
+          const rr = r0 + (r1 - r0) * u;
+          ax = this.x + Math.cos(ang) * rr + Math.sin(base * 3 + u * 11) * 3;
+          ay = this.y + Math.sin(ang) * rr + Math.cos(base * 2.7 + u * 9) * 3;
+          ctx.lineTo(ax, ay);
+        }
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+      ctx.restore();
+      return;
+    }
+
+    if (this.friendly && (this.seraphNeedle || this.seraphRailEmitter)) {
+      const ang = Math.atan2(this.vy, this.vx);
+      ctx.translate(this.x, this.y);
+      ctx.rotate(ang);
+      const L = this.seraphNeedle ? 16 : 20;
+      const W = this.seraphNeedle ? 3.4 : 5;
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = "#ff0000";
+      ctx.fillStyle = this.seraphNeedle ? "#ff1c1c" : "#ff2e2e";
+      ctx.fillRect(-L * 0.2, -W / 2, L * 0.95, W);
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.fillRect(L * 0.25, -W * 0.35, L * 0.55, W * 0.7);
+      ctx.shadowBlur = 0;
+      ctx.restore();
+      return;
+    }
+
+    if (drawFriendlyProjectileSilhouette(ctx, this)) {
+      ctx.restore();
+      return;
+    }
+
+    if (this.friendly && this.lineShot) {
+      ctx.save();
+      const ang = Math.atan2(this.vy, this.vx);
+      ctx.translate(this.x, this.y);
+      ctx.rotate(ang);
+      ctx.strokeStyle = this.color || "#66a8ff";
+      ctx.lineWidth = Math.max(1.2, this.size * 0.35);
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.moveTo(-this.size * 3, 0);
+      ctx.lineTo(this.size * 3, 0);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    if (this.friendly && this.picketTri) {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      const ang = Math.atan2(this.vy, this.vx);
+      ctx.rotate(ang);
+      ctx.fillStyle = this.color || "#f0f6ff";
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.moveTo(this.size * 1.8, 0);
+      ctx.lineTo(-this.size * 0.9, -this.size * 1.1);
+      ctx.lineTo(-this.size * 0.9, this.size * 1.1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
     let coreColor, glowColor, trailColor;
     
     if (this.friendly) {
@@ -1083,6 +2579,10 @@ class Bullet {
         coreColor = "#ffd1b0";
         glowColor = "rgba(255, 123, 47, 0.9)";
         trailColor = "rgba(255, 123, 47, 0.5)";
+      } else if (this.color === "#ff1212" || this.color === "#ff1515") {
+        coreColor = "#ff4444";
+        glowColor = "rgba(255, 30, 30, 0.95)";
+        trailColor = "rgba(255, 40, 40, 0.55)";
       } else if (this.color === "#ff1f1f") {
         coreColor = "#ff9a9a";
         glowColor = "rgba(255, 31, 31, 0.95)";
@@ -1110,6 +2610,10 @@ class Bullet {
         coreColor = "#d16bff";
         glowColor = "rgba(209, 107, 255, 0.8)";
         trailColor = "rgba(209, 107, 255, 0.4)";
+      } else if (this.color === "#c45fff") {
+        coreColor = "#e8a8ff";
+        glowColor = "rgba(196, 95, 255, 0.92)";
+        trailColor = "rgba(180, 80, 255, 0.55)";
       } else {
         
         coreColor = "#74ffce";
@@ -1149,6 +2653,7 @@ class Bullet {
     }
     
     
+    if (!this.noTrail) {
     const trailLength = 8;
     const trailX = this.x - this.vx * 0.02;
     const trailY = this.y - this.vy * 0.02;
@@ -1159,6 +2664,7 @@ class Bullet {
     ctx.beginPath();
     ctx.ellipse(trailX, trailY, this.size * 0.6, this.size * 1.2, Math.atan2(this.vy, this.vx), 0, Math.PI * 2);
     ctx.fill();
+    }
     
     
     const glowGradient = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size * 2.5);
@@ -1319,17 +2825,42 @@ class Barrier {
     this.width = 8;
     this.life = 8;
     this.maxLife = 8;
+    this.color = "#00ffff";
   }
   update(dt) {
     this.life -= dt;
-    
+    if (this.riseVy != null) {
+      this.y += this.riseVy * dt;
+    }
+    if (this.aegisBulwark) {
+      const dm = state.player ? state.player.damageMultiplier * (state.player.abilityDamageMultiplier || 1) : 1;
+      const dps = 19 * dm;
+      const rise = this.riseVy ?? -200;
+      for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+        const enemy = state.enemies[ei];
+        const d = this.distToLine(enemy.x, enemy.y);
+        if (d > enemy.size + this.width * 0.5 + 5) continue;
+        const chunk = dps * dt;
+        enemy.hp -= chunk;
+        recordDamageDealt(chunk);
+        if (enemy.hp <= 0) {
+          onEnemyDestroyed(enemy, ei);
+          continue;
+        }
+        enemy.y += rise * dt * 1.05;
+        enemy.x += (enemy.x - this.x) * 2.8 * dt;
+        enemy.x = clamp(enemy.x, enemy.size, config.width - enemy.size);
+        enemy.y = clamp(enemy.y, TOP_HUD_SAFE_Y + enemy.size, config.height - enemy.size);
+      }
+    }
+
     for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
       const bullet = state.enemyBullets[i];
       const distToBarrier = this.distToLine(bullet.x, bullet.y);
       if (distToBarrier < this.width / 2 + bullet.size) {
         state.enemyBullets.splice(i, 1);
         for (let j = 0; j < 8; j++) {
-          state.particles.push(new Particle(bullet.x, bullet.y, "#00ffff"));
+          state.particles.push(new Particle(bullet.x, bullet.y, this.color));
         }
       }
     }
@@ -1365,15 +2896,131 @@ class Barrier {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
     const alpha = this.life / this.maxLife;
+    const color = this.color || "#00ffff";
     const gradient = ctx.createLinearGradient(-this.length / 2, 0, this.length / 2, 0);
-    gradient.addColorStop(0, `rgba(0, 255, 255, ${alpha * 0.3})`);
-    gradient.addColorStop(0.5, `rgba(0, 255, 255, ${alpha * 0.8})`);
-    gradient.addColorStop(1, `rgba(0, 255, 255, ${alpha * 0.3})`);
+    gradient.addColorStop(0, `${color}44`);
+    gradient.addColorStop(0.5, `${color}dd`);
+    gradient.addColorStop(1, `${color}44`);
     ctx.fillStyle = gradient;
     ctx.fillRect(-this.length / 2, -this.width / 2, this.length, this.width);
-    ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.strokeRect(-this.length / 2, -this.width / 2, this.length, this.width);
+    ctx.restore();
+  }
+}
+
+class ScreenLaser {
+  constructor(config = {}) {
+    this.orientation = config.orientation || "vertical";
+    this.x = config.x || 0;
+    this.y = config.y || 0;
+    this.width = config.width || 20;
+    this.color = config.color || "rgba(255, 70, 70, 0.9)";
+    this.life = config.life || 2.5;
+    this.maxLife = this.life;
+    this.damagePerSecond = config.damagePerSecond || 120;
+    this.delay = config.delay || 0;
+  }
+  update(dt) {
+    if (this.delay > 0) {
+      this.delay -= dt;
+      return;
+    }
+    this.life -= dt;
+    for (let i = state.enemies.length - 1; i >= 0; i--) {
+      const enemy = state.enemies[i];
+      const inBeam = this.orientation === "vertical"
+        ? Math.abs(enemy.x - this.x) <= this.width * 0.5 + enemy.size
+        : Math.abs(enemy.y - this.y) <= this.width * 0.5 + enemy.size;
+      if (!inBeam) continue;
+      const dmg = this.damagePerSecond * dt * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      enemy.hp -= dmg;
+      recordDamageDealt(dmg);
+      enemy.fireTimer += 0.12;
+      if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
+    }
+  }
+  draw(ctx) {
+    if (this.delay > 0) return;
+    const fade = this.life < 0.4 ? clamp(this.life / 0.4, 0, 1) : 1;
+    ctx.save();
+    ctx.globalAlpha = 0.96 * fade;
+    ctx.shadowBlur = 22;
+    ctx.shadowColor = this.color;
+    ctx.fillStyle = this.color;
+    if (this.orientation === "vertical") {
+      ctx.fillRect(this.x - this.width * 0.5, TOP_HUD_SAFE_Y, this.width, config.height - TOP_HUD_SAFE_Y);
+    } else {
+      ctx.fillRect(0, this.y - this.width * 0.5, config.width, this.width);
+    }
+    ctx.restore();
+  }
+}
+
+class OrbitalAegisShield {
+  constructor(index, total, duration = 4) {
+    this.index = index;
+    this.total = Math.max(1, total);
+    this.angle = (index / this.total) * Math.PI * 2;
+    this.radius = 72;
+    this.life = duration;
+    this.maxLife = duration;
+    this.hp = 220;
+    this.maxHp = 220;
+    this.flashTimer = 0;
+    this.x = state.player.x;
+    this.y = state.player.y;
+  }
+  update(dt) {
+    this.life -= dt;
+    this.flashTimer = Math.max(0, this.flashTimer - dt);
+    this.angle += dt * 1.25;
+    const wave = Math.sin(performance.now() / 420 + this.index) * 7;
+    const r = this.radius + wave;
+    this.x = state.player.x + Math.cos(this.angle) * r;
+    this.y = state.player.y + Math.sin(this.angle) * r * 0.82;
+    for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+      const bullet = state.enemyBullets[i];
+      if (dist(bullet.x, bullet.y, this.x, this.y) > 38 + bullet.size) continue;
+      state.enemyBullets.splice(i, 1);
+      this.hp -= bullet.damage * 2.2;
+      this.flashTimer = 0.16;
+      for (let p = 0; p < 12; p++) {
+        const spark = new Particle(this.x + rng(-8, 8), this.y + rng(-10, 10), "#b78cff");
+        spark.life = rng(0.12, 0.25);
+        spark.size = rng(2.2, 4.5);
+        state.particles.push(spark);
+      }
+      if (this.hp <= 0) {
+        this.life = 0;
+        break;
+      }
+    }
+  }
+  draw(ctx) {
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle + Math.PI / 2);
+    const flash = this.flashTimer > 0 ? 1 : 0;
+    const col = flash ? "rgba(230,160,255,0.95)" : `rgba(150,95,220,${0.88 * alpha})`;
+    ctx.fillStyle = col;
+    ctx.strokeStyle = flash ? "#f0ccff" : "#c79bff";
+    ctx.lineWidth = 2.2;
+    ctx.shadowBlur = flash ? 24 : 10;
+    ctx.shadowColor = flash ? "#f0ccff" : "#9f6cff";
+    ctx.beginPath();
+    ctx.moveTo(0, -9);
+    ctx.lineTo(22, -5);
+    ctx.lineTo(20, 6);
+    ctx.lineTo(0, 11);
+    ctx.lineTo(-20, 6);
+    ctx.lineTo(-22, -5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
     ctx.restore();
   }
 }
@@ -1692,6 +3339,7 @@ class Enemy {
     if (this.kind === "splitter") {
       this.hasSplit = false;
     }
+    this.stunTimer = 0;
   }
   update(dt, player, bulletsOut) {
     
@@ -1702,8 +3350,14 @@ class Enemy {
         this.deathMarkTimer = 0;
       }
     }
-    
-    const angle = Math.atan2(player.y - this.y, player.x - this.x);
+    if ((this.stunTimer || 0) > 0) {
+      this.stunTimer = Math.max(0, this.stunTimer - dt);
+      return;
+    }
+    const targetActor = getEnemyTargetFor(this, player);
+    const angle = Math.atan2(targetActor.y - this.y, targetActor.x - this.x);
+    const movementDt = this.reaperChainSlowTimer && this.reaperChainSlowTimer > 0 ? dt * 0.5 : dt;
+    if (this.reaperChainSlowTimer) this.reaperChainSlowTimer = Math.max(0, this.reaperChainSlowTimer - dt);
     if (this.kind === "swarm") {
       this.vx = Math.cos(angle) * this.speed;
       this.vy = Math.sin(angle) * this.speed;
@@ -1711,8 +3365,8 @@ class Enemy {
       const smoothing = 0.15; 
       this.smoothVx += (this.vx - this.smoothVx) * smoothing;
       this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      this.x += this.vx * movementDt;
+      this.y += this.vy * movementDt;
     } else if (this.kind === "charger") {
       this.speed = 120 + Math.sin(performance.now() / 300) * 60;
       this.vx = Math.cos(angle) * this.speed;
@@ -1721,8 +3375,8 @@ class Enemy {
       const smoothing = 0.15;
       this.smoothVx += (this.vx - this.smoothVx) * smoothing;
       this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      this.x += this.vx * movementDt;
+      this.y += this.vy * movementDt;
     } else if (this.kind === "shooter") {
       
       const minY = config.height - 200;
@@ -1731,7 +3385,7 @@ class Enemy {
         this.vy = 80;
         this.smoothVx += (this.vx - this.smoothVx) * 0.15;
         this.smoothVy += (this.vy - this.smoothVy) * 0.15;
-        this.y += this.vy * dt;
+        this.y += this.vy * movementDt;
         this.y = Math.min(this.y, minY);
       } else {
         const targetY = minY + Math.sin(performance.now() / 700 + this.phase) * 50;
@@ -1739,8 +3393,8 @@ class Enemy {
         this.vy = (targetY - this.y) * 2.5;
         this.smoothVx += (this.vx - this.smoothVx) * 0.15;
         this.smoothVy += (this.vy - this.smoothVy) * 0.15;
-        this.x += this.vx * dt;
-        this.y += this.vy * dt;
+        this.x += this.vx * movementDt;
+        this.y += this.vy * movementDt;
       }
     } else if (this.kind === "defender") {
       
@@ -1750,8 +3404,8 @@ class Enemy {
       const smoothing = 0.15;
       this.smoothVx += (this.vx - this.smoothVx) * smoothing;
       this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      this.x += this.vx * movementDt;
+      this.y += this.vy * movementDt;
     } else if (this.kind === "dart") {
       
       const burstSpeed = this.speed * (1.5 + Math.sin(performance.now() / 200) * 0.5);
@@ -1761,8 +3415,8 @@ class Enemy {
       const smoothing = 0.2; 
       this.smoothVx += (this.vx - this.smoothVx) * smoothing;
       this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      this.x += this.vx * movementDt;
+      this.y += this.vy * movementDt;
     } else if (this.kind === "orbiter") {
       
       this.orbitAngle += this.orbitSpeed * dt;
@@ -1774,8 +3428,8 @@ class Enemy {
       const smoothing = 0.2;
       this.smoothVx += (this.vx - this.smoothVx) * smoothing;
       this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      this.x += this.vx * movementDt;
+      this.y += this.vy * movementDt;
     } else if (this.kind === "splitter") {
       
       this.vx = Math.cos(angle) * this.speed;
@@ -1784,8 +3438,8 @@ class Enemy {
       const smoothing = 0.15;
       this.smoothVx += (this.vx - this.smoothVx) * smoothing;
       this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      this.x += this.vx * movementDt;
+      this.y += this.vy * movementDt;
     } else if (this.kind === "boss") {
       
       if (this.bossType === "titan") {
@@ -1933,11 +3587,7 @@ class Enemy {
       this.pickBossPattern();
     }
     this.patternTimer -= dt;
-    const bossActionRate = state.difficultyKey === "recruit"
-      ? 0.45
-      : state.difficultyKey === "veteran"
-      ? 0.78
-      : 1;
+    const bossActionRate = getDifficulty().bossActionRate || 1;
     
     if (this.bossType === "titan") {
       
@@ -2878,21 +4528,25 @@ class Player {
     this.maxHp = loadout.maxHp;
     this.shield = loadout.maxShield * 0.9;
     this.maxShield = loadout.maxShield;
-    this.energy = 0;
+    this.energy = loadout.maxEnergy;
     this.maxEnergy = loadout.maxEnergy;
     this.cooldown = 0;
     this.baseCooldown = loadout.baseCooldown;
     this.rapidTimer = 0;
     this.burstTimer = 0;
-    this.damageMultiplier = loadout.damageMultiplier;
+    const tierScale = getTierPowerScale(loadout.tier);
+    this.damageMultiplier = loadout.damageMultiplier * tierScale.basic;
     this.shotSpeedMultiplier = loadout.shotSpeedMultiplier;
     this.energyRegenMultiplier = loadout.energyRegenMultiplier;
     this.shieldRegenMultiplier = loadout.shieldRegenMultiplier;
     this.extraProjectiles = 0;
     this.novaDamageMultiplier = 1;
-    this.abilityDamageMultiplier = 1;
+    this.abilityDamageMultiplier = tierScale.ability;
     this.abilities = loadout.abilities || [];
     this.shipId = loadout.id;
+    this.eclipseShotToggle = 0;
+    this.foresightTimer = 0;
+    this.titanFuryTimer = 0;
     this.invincible = false;
     this.invincibleTimer = 0;
     this.shieldColorOverride = null;
@@ -2901,8 +4555,19 @@ class Player {
     this.infiniteShieldTimer = 0;
     this.rapidVolleyActive = false;
     this.rapidVolleyTimer = 0;
+    this.wickSprayTimer = 0;
+    this.wickSprayAcc = 0;
+    this.wickSprayShotsRemaining = 0;
+    this.dartTwinPierceTimer = 0;
+    this.dartFlockWavesLeft = 0;
+    this.dartFlockWaveAcc = 0;
     this.fortifyActive = false;
     this.fortifyTimer = 0;
+    this.seraphSweepTimer = 0;
+    this.seraphSweepPhase = 0;
+    this.infernoPyroTimer = 0;
+    this.aimAngle = -Math.PI / 2;
+    this.boltChannelLock = 0;
   }
   getShieldRadius() {
     const shieldPercent = this.shield / this.maxShield;
@@ -2930,13 +4595,18 @@ class Player {
     }
     const wasMoving = Math.abs(this.vx) > 1 || Math.abs(this.vy) > 1;
     
-    const canMove = !state.tutorialMode || state.tutorialStep >= 1 || state.tutorialTestWave;
-    if (canMove) {
+    const canMove = !state.tutorialMode || state.tutorialStep >= 0 || state.tutorialTestWave;
+    const boltLocked = (this.boltChannelLock || 0) > 0;
+    if (canMove && !boltLocked) {
       
       if (input.keys.has("w") || input.keys.has("arrowup")) this.vy -= accel * dt;
       if (input.keys.has("s") || input.keys.has("arrowdown")) this.vy += accel * dt;
       if (input.keys.has("a") || input.keys.has("arrowleft")) this.vx -= accel * dt;
       if (input.keys.has("d") || input.keys.has("arrowright")) this.vx += accel * dt;
+    }
+    if (boltLocked) {
+      this.vx = 0;
+      this.vy = 0;
     }
     
     
@@ -2953,7 +4623,10 @@ class Player {
 
     const speedBoost =
       this.rapidTimer > 0 ? 1.15 : this.burstTimer > 0 ? 1.05 : 1;
-    const maxSpeed = this.speed * speedBoost * shipSpeedMultiplier;
+    let maxSpeed = this.speed * speedBoost * shipSpeedMultiplier;
+    if (this.shipId === "wick" && (this.wickSprayTimer || 0) > 0) {
+      maxSpeed *= 0.5;
+    }
     this.vx = clamp(this.vx, -maxSpeed, maxSpeed);
     this.vy = clamp(this.vy, -maxSpeed, maxSpeed);
 
@@ -2961,20 +4634,24 @@ class Player {
     this.y = clamp(this.y + this.vy * dt, 20, config.height - 20);
 
     this.cooldown = Math.max(this.cooldown - dt, 0);
+    const prevShield = this.shield;
     this.shield = clamp(
       this.shield + dt * 0.5 * this.shieldRegenMultiplier,
       0,
       this.maxShield
     );
+    recordShieldRegen(this.shield - prevShield);
     
     const energyRegenMultiplier = this.fortifyActive 
       ? this.energyRegenMultiplier * 3 
       : this.energyRegenMultiplier;
+    const prevEnergy = this.energy;
     this.energy = clamp(
-      this.energy + dt * 20 * energyRegenMultiplier,
+      this.energy + dt * 40 * energyRegenMultiplier,
       0,
       this.maxEnergy
     );
+    recordEnergyRegen(this.energy - prevEnergy);
     this.rapidTimer = Math.max(this.rapidTimer - dt, 0);
     this.burstTimer = Math.max(this.burstTimer - dt, 0);
     this.invincibleTimer = Math.max(this.invincibleTimer - dt, 0);
@@ -2987,6 +4664,128 @@ class Player {
     if (this.rapidVolleyTimer <= 0) this.rapidVolleyActive = false;
     this.fortifyTimer = Math.max(this.fortifyTimer - dt, 0);
     if (this.fortifyTimer <= 0) this.fortifyActive = false;
+    this.boltChannelLock = Math.max((this.boltChannelLock || 0) - dt, 0);
+    if (this.boltChannelLock <= 0) state.boltCage = null;
+    this.seraphSweepTimer = Math.max(this.seraphSweepTimer - dt, 0);
+    this.infernoPyroTimer = Math.max(this.infernoPyroTimer - dt, 0);
+    this.foresightTimer = Math.max(this.foresightTimer - dt, 0);
+    this.titanFuryTimer = Math.max(this.titanFuryTimer - dt, 0);
+    this.dartTwinPierceTimer = Math.max((this.dartTwinPierceTimer || 0) - dt, 0);
+    this.seraphSweepPhase += dt;
+    if (this.shipId === "dart" && (this.dartFlockWavesLeft || 0) > 0) {
+      this.dartFlockWaveAcc = (this.dartFlockWaveAcc || 0) + dt;
+      const gap = 0.38;
+      const sm = this.shotSpeedMultiplier;
+      const dm = this.damageMultiplier * this.abilityDamageMultiplier;
+      while (this.dartFlockWaveAcc >= gap && (this.dartFlockWavesLeft || 0) > 0) {
+        this.dartFlockWaveAcc -= gap;
+        this.dartFlockWavesLeft--;
+        const baseAng = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
+        for (let i = 0; i < 6; i++) {
+          const a = baseAng + (i - 2.5) * 0.085;
+          const wb = new Bullet(this.x, this.y, a, 455 * sm, true, 2.25, "#f5f8ff", 5.1 * dm);
+          wb.noTrail = true;
+          wb.visualShape = "needle";
+          wb.life = 1.05;
+          state.bullets.push(wb);
+        }
+      }
+      if ((this.dartFlockWavesLeft || 0) <= 0) this.dartFlockWaveAcc = 0;
+    }
+    if (this.shipId === "wick") {
+      if ((this.wickSprayTimer || 0) > 0) {
+        this.wickSprayTimer -= dt;
+        this.wickSprayAcc = (this.wickSprayAcc || 0) + dt * (50 / 3);
+        while (this.wickSprayAcc >= 1 && (this.wickSprayShotsRemaining || 0) > 0) {
+          this.wickSprayAcc -= 1;
+          this.wickSprayShotsRemaining--;
+          const a = rng(0, Math.PI * 2);
+          const sm = this.shotSpeedMultiplier;
+          const dm = this.damageMultiplier * this.abilityDamageMultiplier;
+          const bb = new Bullet(
+            this.x,
+            this.y,
+            a,
+            rng(240, 420) * sm,
+            true,
+            4.35,
+            Math.random() < 0.5 ? "#ffdd77" : "#ff9800",
+            5.35 * dm
+          );
+          bb.noTrail = true;
+          bb.visualShape = "heavyOrb";
+          bb.life = 0.95;
+          state.bullets.push(bb);
+        }
+      }
+      if ((this.wickSprayTimer || 0) <= 0 && (this.wickSprayShotsRemaining || 0) > 0) {
+        while ((this.wickSprayShotsRemaining || 0) > 0) {
+          this.wickSprayShotsRemaining--;
+          const a = rng(0, Math.PI * 2);
+          const sm = this.shotSpeedMultiplier;
+          const dm = this.damageMultiplier * this.abilityDamageMultiplier;
+          const bb = new Bullet(
+            this.x,
+            this.y,
+            a,
+            rng(240, 420) * sm,
+            true,
+            4.35,
+            Math.random() < 0.5 ? "#ffdd77" : "#ff9800",
+            5.35 * dm
+          );
+          bb.noTrail = true;
+          bb.visualShape = "heavyOrb";
+          bb.life = 0.95;
+          state.bullets.push(bb);
+        }
+        this.wickSprayAcc = 0;
+      }
+    }
+    if (this.shipId === "seraph") {
+      this.aimAngle = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
+      const ca = Math.cos(this.aimAngle);
+      const sa = Math.sin(this.aimAngle);
+      const beamFwd = 40;
+      const beamLen = config.width * 1.2;
+      const mx = this.x + ca * beamFwd;
+      const my = this.y + sa * beamFwd;
+      const beamEndX = this.x + ca * beamLen;
+      const beamEndY = this.y + sa * beamLen;
+      const beamWidth = 16;
+      const shotInterval = Math.max(this.baseCooldown * 0.2, 0.04);
+      const primaryDps = (24 * this.damageMultiplier) / shotInterval;
+      const sweepPhaseRate = 2.85;
+      const sweepDps = primaryDps * 4.75;
+      const railPerp = 40;
+      const applyBeamToEnemies = (x0, y0, x1, y1, width, dps, bumpFire) => {
+        for (let i = state.enemies.length - 1; i >= 0; i--) {
+          const enemy = state.enemies[i];
+          const d = pointToSegmentDistance(enemy.x, enemy.y, x0, y0, x1, y1);
+          if (d > width + enemy.size * 0.48) continue;
+          const dmg = dps * dt;
+          enemy.hp -= dmg;
+          recordDamageDealt(dmg);
+          if (bumpFire) enemy.fireTimer += 0.06;
+          if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
+        }
+      };
+      applyBeamToEnemies(mx, my, beamEndX, beamEndY, beamWidth, primaryDps, true);
+      if (this.seraphSweepTimer > 0) {
+        const perp = this.aimAngle + Math.PI / 2;
+        const cp = Math.cos(perp);
+        const sp = Math.sin(perp);
+        const swing = Math.sin(this.seraphSweepPhase * sweepPhaseRate) * 0.7;
+        for (const side of [-1, 1]) {
+          const sideAngle = this.aimAngle + side * swing;
+          const sx = this.x + cp * side * railPerp + ca * beamFwd;
+          const sy = this.y + sp * side * railPerp + sa * beamFwd;
+          const ex = sx + Math.cos(sideAngle) * beamLen;
+          const ey = sy + Math.sin(sideAngle) * beamLen;
+          applyBeamToEnemies(sx, sy, ex, ey, beamWidth, sweepDps, true);
+        }
+      }
+    }
   }
   shoot(bullets) {
     if (this.cooldown > 0 && !this.rapidVolleyActive) return;
@@ -3047,6 +4846,43 @@ class Player {
         rightVolley.burnDamage = rightVolley.damage * 0.35;
         leftVolley.knockback = 52;
         rightVolley.knockback = 52;
+      } else if (this.shipId === "myrmidon") {
+        leftVolley.color = "#ff4d4d";
+        rightVolley.color = "#ff4d4d";
+        leftVolley.size = 3.2;
+        rightVolley.size = 3.2;
+      } else if (this.shipId === "dart" || this.shipId === "wick") {
+        leftVolley.color = this.shipId === "dart" ? "#f5f8ff" : "#ff9a3c";
+        rightVolley.color = leftVolley.color;
+        leftVolley.size = this.shipId === "dart" ? 2.4 : 2.8;
+        rightVolley.size = leftVolley.size;
+        leftVolley.noTrail = true;
+        rightVolley.noTrail = true;
+      } else if (this.shipId === "bolt") {
+        leftVolley.color = "#4d9fff";
+        rightVolley.color = "#4d9fff";
+        leftVolley.lineShot = true;
+        rightVolley.lineShot = true;
+        leftVolley.size = 2;
+        rightVolley.size = 2;
+      } else if (this.shipId === "ember") {
+        leftVolley.color = "#ff7a45";
+        rightVolley.color = "#ff9e6a";
+        leftVolley.burnDamage = leftVolley.damage * 0.22;
+        rightVolley.burnDamage = rightVolley.damage * 0.22;
+      } else if (this.shipId === "claw") {
+        leftVolley.color = "#5cff8a";
+        rightVolley.color = "#7dffb3";
+      } else if (this.shipId === "stinger") {
+        leftVolley.color = "#ffe94d";
+        rightVolley.color = "#fff176";
+        leftVolley.size = 2.2;
+        rightVolley.size = 2.2;
+      } else if (this.shipId === "buckler") {
+        leftVolley.color = "#ffb347";
+        rightVolley.color = "#ffb347";
+        leftVolley.size = 4.2;
+        rightVolley.size = 4.2;
       }
       bullets.push(leftVolley);
       bullets.push(rightVolley);
@@ -3054,153 +4890,476 @@ class Player {
       return;
     }
 
-    
-    if (this.shipId === "titan") {
-      
-      const coneCount = 8 + Math.min(this.extraProjectiles, 4);
-      const coneSpread = 0.42;
-      const coneSpeed = 300 * this.shotSpeedMultiplier;
-      const baseDamage = 4.9 * this.damageMultiplier;
-      for (let i = 0; i < coneCount; i++) {
-        const offset = ((i / (coneCount - 1 || 1)) - 0.5) * coneSpread;
-        const flame = new Bullet(this.x + Math.cos(angle) * 14, this.y + Math.sin(angle) * 14, angle + offset + rng(-0.03, 0.03), coneSpeed + rng(-30, 35), true, 5, "#ff8f2a", baseDamage);
-        flame.life = 0.38;
-        flame.burnDamage = baseDamage * 0.5;
-        flame.knockback = 18;
-        bullets.push(flame);
-        if (Math.random() < 0.7) state.particles.push(new Particle(this.x + rng(-6, 6), this.y + rng(-6, 6), "#ff8f2a"));
+    const dm = this.damageMultiplier;
+    const sm = this.shotSpeedMultiplier;
+
+    if (this.shipId === "sparrow") {
+      const volleyId = `sparrow-${performance.now()}-${Math.random()}`;
+      for (let i = 0; i < 5; i++) {
+        const b = new Bullet(this.x - Math.cos(angle) * i * 5, this.y - Math.sin(angle) * i * 5, angle + (i - 2) * 0.018, 650 * sm, true, 2.4, "#ffdd33", 3.2 * dm);
+        b.noTrail = true;
+        b.visualShape = "feather";
+        b.wobbleAmp = 0.035;
+        b.sparrowFeather = true;
+        b.volleyId = volleyId;
+        b.life = 1.1;
+        bullets.push(b);
+      }
+      this.cooldown = this.baseCooldown * 0.92;
+      return;
+    }
+    if (this.shipId === "dart" && (this.dartTwinPierceTimer || 0) > 0) {
+      const perp = angle + Math.PI / 2;
+      const lane = 7;
+      for (const sign of [-1, 1]) {
+        const b = new Bullet(
+          this.x + Math.cos(perp) * lane * sign,
+          this.y + Math.sin(perp) * lane * sign,
+          angle,
+          455 * sm,
+          true,
+          2.15,
+          "#f7fbff",
+          6.4 * dm
+        );
+        b.visualShape = "needle";
+        b.noTrail = true;
+        b.infinitePierce = true;
+        b.life = 1.65;
+        bullets.push(b);
+      }
+      this.cooldown = this.baseCooldown * 0.78;
+      return;
+    }
+    if (this.shipId === "dart") {
+      const b = new Bullet(this.x, this.y, angle, 430 * sm, true, 2.1, "#f7fbff", 7.0 * dm);
+      b.visualShape = "needle";
+      b.dartBasic = true;
+      b.life = 1.75;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.78;
+      return;
+    }
+    if (this.shipId === "pebble") {
+      const b = new Bullet(this.x, this.y, angle, 420 * sm, true, 4.2, "#8f979e", 7.5 * dm);
+      configurePebbleRicochetOrb(b);
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.88;
+      return;
+    }
+    if (this.shipId === "wick") {
+      const perp = angle + Math.PI / 2;
+      const lane = 7;
+      const sp = 520 * sm;
+      const dmgEach = 2.9 * dm;
+      for (const sign of [-1, 1]) {
+        const b = new Bullet(
+          this.x + Math.cos(perp) * lane * sign,
+          this.y + Math.sin(perp) * lane * sign,
+          angle,
+          sp,
+          true,
+          2.5,
+          "#ff9a3c",
+          dmgEach
+        );
+        b.noTrail = true;
+        b.lineShot = true;
+        b.wickBasic = true;
+        b.life = 1.15;
+        bullets.push(b);
+      }
+      this.cooldown = this.baseCooldown * 0.72;
+      return;
+    }
+    if (this.shipId === "bolt") {
+      const b = new Bullet(this.x, this.y, angle, 540 * sm, true, 2.2, "#4d9fff", 7.2 * dm);
+      b.lineShot = true;
+      b.chainArc = true;
+      b.chainDamagePct = 0.15;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.8;
+      return;
+    }
+    if (this.shipId === "bulwark") {
+      const b = new Bullet(this.x, this.y, angle, 300 * sm, true, 7.2, "#ff8c42", 12.5 * dm);
+      b.visualShape = "shieldDisc";
+      b.bulwarkPush = true;
+      b.life = 0.85;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 1.12;
+      return;
+    }
+    if (this.shipId === "myrmidon") {
+      for (let i = 0; i < 3; i++) {
+        const b = new Bullet(this.x - Math.cos(angle) * i * 7, this.y - Math.sin(angle) * i * 7, angle + (i - 1) * 0.015, 600 * sm, true, 2.1, "#ff3333", 3.2 * dm);
+        b.noTrail = true;
+        b.visualShape = "starPellet";
+        b.myrmidonDot = true;
+        b.life = 0.85;
+        bullets.push(b);
       }
       this.cooldown = this.baseCooldown * 0.34;
       return;
     }
-    if (this.shipId === "inferno") {
-      
-      const flameRange = 270;
-      const coneHalfAngle = 0.22;
-      const dps = (26 / 3) * this.damageMultiplier; 
-      const tickDamage = dps * 0.025; 
-      for (let i = 0; i < 6; i++) {
-        const flameAngle = angle + rng(-coneHalfAngle, coneHalfAngle);
-        const px = this.x;
-        const py = this.y;
-        const shades = ["#ff4d2a", "#ff7b2f", "#ff9e45", "#ffcf6d"];
-        const p = new Particle(px, py, shades[Math.floor(Math.random() * shades.length)]);
-        const speed = rng(300, 460);
-        p.vx = Math.cos(flameAngle) * speed + Math.cos(flameAngle + Math.PI / 2) * rng(-45, 45);
-        p.vy = Math.sin(flameAngle) * speed + Math.sin(flameAngle + Math.PI / 2) * rng(-45, 45);
-        
-        p.life = 999;
-        p.size = rng(4.5, 9.5); 
-        
-        p.maxTravel = rng(flameRange * 0.82, flameRange * 1.18);
-        state.particles.push(p);
-      }
-      for (let i = state.enemies.length - 1; i >= 0; i--) {
-        const enemy = state.enemies[i];
-        const ex = enemy.x - this.x;
-        const ey = enemy.y - this.y;
-        const distance = Math.hypot(ex, ey);
-        if (distance > flameRange) continue;
-        const enemyAngle = Math.atan2(ey, ex);
-        let diff = enemyAngle - angle;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        if (Math.abs(diff) <= coneHalfAngle) {
-          enemy.hp -= tickDamage;
-          enemy.fireTimer += 0.08;
-          
-          enemy.x += Math.cos(enemyAngle) * 4.5;
-          enemy.y += Math.sin(enemyAngle) * 4.5;
-          enemy.x = clamp(enemy.x, enemy.size, config.width - enemy.size);
-          enemy.y = clamp(enemy.y, TOP_HUD_SAFE_Y + enemy.size, config.height - enemy.size);
-          if (enemy.hp <= 0) {
-            onEnemyDestroyed(enemy, i);
-            continue;
-          }
-        }
-      }
-      
-      this.cooldown = 0.025;
+    if (this.shipId === "knave") {
+      const startX = this.x + Math.cos(angle) * 14;
+      const startY = this.y + Math.sin(angle) * 14;
+      const b = new Bullet(startX, startY, angle, 480 * sm, true, 3.8, "#b86bff", 8.2 * dm);
+      b.wobbleAmp = 0.14;
+      b.knaveLeftCurveTimer = 0.2;
+      b.visualShape = "raggedShard";
+      b.knaveSteal = true;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.62;
       return;
     }
-    if (this.shipId === "aurora") {
-      
-      const beamLength = 560;
-      const beamWidth = 14;
-      const beamEndX = this.x + Math.cos(angle) * beamLength;
-      const beamEndY = this.y + Math.sin(angle) * beamLength;
-      state.visualBeams.push({
-        x1: this.x,
-        y1: this.y,
-        x2: beamEndX,
-        y2: beamEndY,
-        color: "rgba(138, 240, 255, 0.9)",
-        width: beamWidth,
-        life: 0.1,
-        maxLife: 0.1,
-        phase: performance.now() * 0.01,
-      });
-      const pulse = 0.75 + 0.25 * Math.sin(performance.now() / 70);
-      const beamDamage = (26 * this.damageMultiplier) * pulse;
-      for (const enemy of state.enemies) {
-        const d = pointToSegmentDistance(enemy.x, enemy.y, this.x, this.y, beamEndX, beamEndY);
-        if (d <= beamWidth + enemy.size * 0.45) {
-          enemy.hp -= beamDamage;
-          enemy.fireTimer += 0.1;
-        }
-      }
-      for (let i = 0; i < 26; i++) {
-        const t = i / 25;
-        const x = this.x + (beamEndX - this.x) * t + Math.cos(performance.now() / 80 + i) * 4;
-        const y = this.y + (beamEndY - this.y) * t + Math.sin(performance.now() / 90 + i) * 4;
-        const p = new Particle(x, y, i % 2 ? "#8af0ff" : "#6bc6ff");
-        p.life = 0.09;
-        p.size = 2.2;
-        p.vx = rng(-20, 20);
-        p.vy = rng(-20, 20);
-        state.particles.push(p);
-      }
-      this.cooldown = this.baseCooldown * 0.85;
+    if (this.shipId === "buckler") {
+      const b = new Bullet(this.x, this.y, angle, 440 * sm, true, 4.8, "#ffb347", 8 * dm);
+      b.visualShape = "heavyOrb";
+      b.bucklerGuard = true;
+      b.wobbleAmp = 0.025;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.72;
       return;
     }
-    if (this.shipId === "specter") {
-      
-      const lance = new Bullet(this.x, this.y, angle, 980 * this.shotSpeedMultiplier, true, 8, "#c28cff", 24 * this.damageMultiplier);
-      lance.piercing = true;
-      lance.pierceCount = 8;
-      lance.life = 2.2; 
-      bullets.push(lance);
+    if (this.shipId === "ember") {
+      const b = new Bullet(this.x, this.y, angle, 500 * sm, true, 3.2, "#ff7a45", 5.6 * dm);
+      b.burnDamage = b.damage * 0.12;
+      b.visualShape = "spark";
+      b.emberPuddle = true;
+      b.life = 0.55;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.68;
+      return;
+    }
+    if (this.shipId === "claw") {
+      const b = new Bullet(this.x, this.y, angle, 430 * sm, true, 4.8, "#5cff8a", 7.0 * dm);
+      b.visualShape = "pawShot";
+      b.clawBasic = true;
+      b.knockback = 58;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.7;
+      return;
+    }
+    if (this.shipId === "picket") {
+      const perp = angle + Math.PI / 2;
+      const b = new Bullet(this.x + Math.cos(perp) * 3, this.y + Math.sin(perp) * 3, angle, 500 * sm, true, 3.2, "#f0f6ff", 7.4 * dm);
+      b.picketTri = true;
+      b.life = 0.95;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.74;
+      return;
+    }
+    if (this.shipId === "stinger") {
+      for (let i = -1; i <= 1; i++) {
+        const b = new Bullet(this.x, this.y, angle + i * 0.08, 430 * sm, true, 5.2, "#a0ff7a", 4.2 * dm);
+        b.visualShape = "clawHook";
+        b.stingerPoison = true;
+        b.stingerPoisonPerTick = 1.8 * dm;
+        b.life = 1.1;
+        bullets.push(b);
+      }
+      this.cooldown = this.baseCooldown * 0.62;
+      return;
+    }
+    if (this.shipId === "phantom") {
+      const b = new Bullet(this.x, this.y, angle, 400 * sm, true, 3.8, "rgba(200,190,255,0.75)", 8.5 * dm);
+      b.piercing = true;
+      b.pierceCount = 1;
+      b.visualShape = "ghostBolt";
+      b.phantomPhaseBasic = true;
+      b.life = 1.15;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.72;
+      return;
+    }
+    if (this.shipId === "tempest") {
+      const b = new Bullet(this.x, this.y, angle, 260 * sm, true, 5.2, "#fff176", 8.2 * dm);
+      b.visualShape = "heavyOrb";
+      b.tempestOrb = true;
+      b.life = 1.6;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.62;
+      return;
+    }
+    if (this.shipId === "vanguard") {
+      const b = new Bullet(this.x, this.y, angle, 440 * sm, true, 5.2, "#f2f6ff", 9.2 * dm);
+      b.knockback = 38;
+      b.visualShape = "lineShot";
+      b.vanguardTrail = true;
+      state.visualBeams.push({ x1: this.x, y1: this.y, x2: this.x - Math.cos(angle) * 90, y2: this.y - Math.sin(angle) * 90, color: "rgba(255,255,255,0.45)", width: 8, life: 0.22, maxLife: 0.22, phase: 0 });
+      bullets.push(b);
       this.cooldown = this.baseCooldown * 0.78;
       return;
     }
-    if (this.shipId === "voidwalker") {
-      
+    if (this.shipId === "lancer") {
+      const b = new Bullet(this.x, this.y, angle, 620 * sm, true, 2.4, "#66ff99", 9.8 * dm);
+      b.piercing = true;
+      b.pierceCount = b.age > 0.65 ? 2 : 1;
+      b.noTrail = true;
+      b.visualShape = "needle";
+      b.lancerGrow = true;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.68;
+      return;
+    }
+    if (this.shipId === "halberd") {
+      const b = new Bullet(this.x, this.y, angle + rng(-0.04, 0.04), 340 * sm, true, 7, "#ffe066", 10.5 * dm);
+      b.piercing = true;
+      b.pierceCount = 2;
+      b.visualShape = "axeBlade";
+      b.halberdBlade = true;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.92;
+      return;
+    }
+    if (this.shipId === "raven") {
       const nearest = getNearestEnemy(this.x, this.y);
-      for (const offset of [-0.1, 0.1]) {
-        const lance = new Bullet(this.x, this.y, angle + offset, 560 * this.shotSpeedMultiplier, true, 6, "#b27bff", 13 * this.damageMultiplier);
-        lance.piercing = true;
-        lance.pierceCount = 4;
-        lance.burnDamage = 1.8 * this.damageMultiplier;
-        if (nearest) {
-          lance.tracking = true;
-          lance.trackingTarget = nearest;
-          lance.trackingTurnRate = 42; 
-        }
-        lance.life = 2.4;
-        bullets.push(lance);
+      const b = new Bullet(this.x, this.y, angle, 480 * sm, true, 3.2, "#4a2a6a", 8 * dm);
+      b.visualShape = "bird";
+      b.ravenBird = true;
+      if (nearest) {
+        b.tracking = true;
+        b.trackingTarget = nearest;
+        b.trackingTurnRate = 28;
       }
-      this.cooldown = this.baseCooldown * 0.85;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.62;
+      return;
+    }
+    if (this.shipId === "warden") {
+      const pulse = 0.85 + 0.15 * Math.sin(performance.now() / 500);
+      const b = new Bullet(this.x, this.y, angle, 280 * sm, true, 6.5 * pulse, "#f5e6a8", 9.5 * dm);
+      b.visualShape = "heavyOrb";
+      b.baseSize = b.size;
+      b.wardenAbsorb = true;
+      b.life = 1.2;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 1.05;
+      return;
+    }
+    if (this.shipId === "marauder") {
+      const b = new Bullet(this.x, this.y, angle + rng(-0.1, 0.1), 440 * sm, true, 4.2, "#cc3344", 8.8 * dm);
+      b.marauderShard = true;
+      b.visualShape = "raggedShard";
+      b.marauderGeneration = 0;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.64;
+      return;
+    }
+    if (this.shipId === "gallant") {
+      const b = new Bullet(this.x, this.y, angle, 470 * sm, true, 3.8, "#c8e0ff", 8.4 * dm);
+      b.visualShape = "needle";
+      b.gallantHeal = true;
+      b.life = 0.55;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.7;
+      return;
+    }
+    if (this.shipId === "aegis") {
+      const main = new Bullet(this.x, this.y, angle, 320 * sm, true, 7.2, "#78c0ff", 8.2 * dm);
+      main.aegisDisc = true;
+      main.aegisReflectDisc = true;
+      main.aegisBasicWide = true;
+      main.hitEllipseW = 15;
+      main.hitEllipseH = 3.1;
+      main.life = 1.85;
+      bullets.push(main);
+      this.cooldown = this.baseCooldown * 0.95;
+      return;
+    }
+    if (this.shipId === "glacier") {
+      const b = new Bullet(this.x, this.y, angle, 300 * sm, true, 5, "#9ce8ff", 9 * dm);
+      b.visualShape = "iceShard";
+      b.glacierPrimary = true;
+      b.glacierFreezeDuration = 3;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.88;
+      return;
+    }
+    if (this.shipId === "reaper") {
+      const b = new Bullet(this.x, this.y, angle + 0.12, 380 * sm, true, 5.5, "#4a0018", 10 * dm);
+      b.burnDamage = 4 * dm;
+      b.reaperCrescent = true;
+      b.reaperBoomerang = true;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.82;
+      return;
+    }
+    if (this.shipId === "helios") {
+      for (let i = 0; i < 54; i++) {
+        const a = angle + rng(-0.28, 0.28);
+        const flame = new Bullet(this.x + Math.cos(a) * 18, this.y + Math.sin(a) * 18, a, rng(260, 700) * sm, true, rng(2.2, 5.2), Math.random() < 0.5 ? "#ff4a1f" : "#ff9a2f", 1.15 * dm);
+        flame.visualShape = "spark";
+        flame.heliosFlame = true;
+        flame.life = rng(0.42, 1.18);
+        bullets.push(flame);
+      }
+      this.cooldown = 0.045;
+      return;
+    }
+    if (this.shipId === "grimstar") {
+      const main = new Bullet(this.x, this.y, angle + rng(-0.025, 0.025), 470 * sm, true, 6.6, "#8b62ff", 10.2 * dm);
+      main.visualShape = "starShot";
+      main.grimstarTrail = true;
+      main.thinPurpleTrail = true;
+      main.life = 0.72;
+      bullets.push(main);
+      for (const phase of [0, Math.PI]) {
+        const side = new Bullet(this.x, this.y, angle, 455 * sm, true, 4.8, "#a783ff", 7.4 * dm);
+        side.visualShape = "starShot";
+        side.grimstarTrail = true;
+        side.thinPurpleTrail = true;
+        side.sinePath = true;
+        side.sineOrigin = { x: this.x, y: this.y };
+        side.sineAngle = angle;
+        side.sineSpeed = 455 * sm;
+        side.sineAmplitude = 20;
+        side.sineFrequency = 12;
+        side.sinePhase = phase;
+        side.life = 0.78;
+        bullets.push(side);
+      }
+      this.cooldown = this.baseCooldown * 0.58;
+      return;
+    }
+    if (this.shipId === "eclipse") {
+      this.eclipseShotToggle ^= 1;
+      const dark = this.eclipseShotToggle === 0;
+      const col = dark ? "#1a0a28" : "#f0f0ff";
+      const b = new Bullet(this.x, this.y, angle, 500 * sm, true, 3.8, col, 8.8 * dm);
+      b.visualShape = dark ? "singularity" : "lineShot";
+      b.eclipseBlind = dark;
+      b.eclipseHeal = !dark;
+      b.life = 0.95;
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.76;
+      return;
+    }
+    if (this.shipId === "oracle") {
+      const nearest = getNearestEnemy(this.x, this.y);
+      const b = new Bullet(this.x, this.y, angle, 480 * sm, true, 3.6, "#b8fff8", 8.6 * dm);
+      b.visualShape = "rune";
+      if (nearest) {
+        const lvx = nearest.smoothVx !== undefined ? nearest.smoothVx : nearest.vx;
+        const lvy = nearest.smoothVy !== undefined ? nearest.smoothVy : nearest.vy;
+        const lead = Math.atan2(nearest.y + lvy * 0.45 - this.y, nearest.x + lvx * 0.45 - this.x);
+        b.vx = Math.cos(lead) * 480 * sm;
+        b.vy = Math.sin(lead) * 480 * sm;
+        b.tracking = true;
+        b.trackingTarget = nearest;
+        b.trackingTurnRate = 7;
+      }
+      bullets.push(b);
+      this.cooldown = this.baseCooldown * 0.7;
+      return;
+    }
+
+    if (this.shipId === "seraph") {
+      const perp = angle + Math.PI / 2;
+      const sideOffsets = [-46, -17, 17, 46];
+      for (const off of sideOffsets) {
+        const bx = this.x + Math.cos(perp) * off;
+        const by = this.y + Math.sin(perp) * off;
+        const bullet = new Bullet(bx, by, angle, 760 * this.shotSpeedMultiplier, true, 4, "#ff1a1a", 14 * this.damageMultiplier);
+        bullet.seraphRailEmitter = true;
+        bullet.emitAcc = 0;
+        bullets.push(bullet);
+      }
+      this.cooldown = this.baseCooldown * 0.2;
+      return;
+    }
+
+    
+    if (this.shipId === "titan") {
+      const sz = this.titanFuryTimer > 0 ? 28 : 22;
+      const core = new Bullet(this.x + Math.cos(angle) * 10, this.y + Math.sin(angle) * 10, angle, 95 * this.shotSpeedMultiplier, true, sz, "#d94a0a", 24 * this.damageMultiplier);
+      core.life = 2.3;
+      core.titanMegaOrb = true;
+      core.piercing = true;
+      core.pierceCount = 8;
+      core.knockback = 90;
+      core.burnDamage = core.damage * 0.35;
+      bullets.push(core);
+      this.cooldown = this.baseCooldown * 1.15;
+      return;
+    }
+    if (this.shipId === "inferno") {
+      const count = this.infernoPyroTimer > 0 ? 3 : 1;
+      for (let i = 0; i < count; i++) {
+        const offset = count === 1 ? 0 : (i - 1) * 0.14;
+        const glo = new Bullet(this.x, this.y, angle + offset + rng(-0.04, 0.04), 220 * this.shotSpeedMultiplier, true, 8.8, "#ff5a2a", 11.5 * this.damageMultiplier);
+        glo.life = 1.1;
+        glo.burnDamage = 6.5 * this.damageMultiplier;
+        glo.knockback = 24;
+        glo.infernoGlob = true;
+        glo.maxRebounds = 1;
+        glo.puddleOnExpire = true;
+        bullets.push(glo);
+      }
+      this.cooldown = this.baseCooldown * (this.infernoPyroTimer > 0 ? 0.43 : 0.86);
+      return;
+    }
+    if (this.shipId === "aurora") {
+      const phase = Math.floor(performance.now() / 500) % 3;
+      const colors = [
+        { key: "green", color: "#78ffb4" },
+        { key: "cyan", color: "#78f0ff" },
+        { key: "purple", color: "#c896ff" },
+      ];
+      const c = colors[phase];
+      for (const dir of [-1, 1]) {
+        const ribbon = new Bullet(this.x, this.y, angle, 460 * this.shotSpeedMultiplier, true, 5.6, c.color, 7.2 * this.damageMultiplier);
+        ribbon.visualShape = "lineShot";
+        ribbon.auroraColor = c.key;
+        ribbon.sinePath = true;
+        ribbon.sineOrigin = { x: this.x, y: this.y };
+        ribbon.sineAngle = angle;
+        ribbon.sineSpeed = 460 * this.shotSpeedMultiplier;
+        ribbon.sineAmplitude = 28;
+        ribbon.sineFrequency = 12;
+        ribbon.sinePhase = dir < 0 ? 0 : Math.PI;
+        ribbon.life = 1.1;
+        bullets.push(ribbon);
+      }
+      this.cooldown = this.baseCooldown * 0.75;
+      return;
+    }
+    if (this.shipId === "specter") {
+      const lance = new Bullet(this.x, this.y, angle, 920 * this.shotSpeedMultiplier, true, 2.2, "rgba(220,220,240,0.02)", 11 * this.damageMultiplier);
+      lance.piercing = true;
+      lance.pierceCount = 4;
+      lance.life = 1.35;
+      lance.noTrail = true;
+      lance.specterNeedle = true;
+      lance.noHitParticle = true;
+      state.visualBeams.push({ x1: 0, y1: this.y - 4, x2: config.width, y2: this.y + 4, color: "rgba(220,220,255,0.04)", width: 2, life: 0.08, maxLife: 0.08, phase: 0 });
+      bullets.push(lance);
+      this.cooldown = this.baseCooldown * 0.72;
+      return;
+    }
+    if (this.shipId === "voidwalker") {
+      const sequence = [0, 0.12, -0.12];
+      for (let i = 0; i < sequence.length; i++) {
+        const slash = new Bullet(this.x - Math.cos(angle) * i * 12, this.y - Math.sin(angle) * i * 12, angle + sequence[i], 620 * this.shotSpeedMultiplier, true, 4.2, "#b27bff", 7.5 * this.damageMultiplier);
+        slash.visualShape = "lineShot";
+        slash.voidwalkerSlash = true;
+        slash.voidwalkerScale = 1;
+        slash.infinitePierce = true;
+        slash.life = 0.55 + i * 0.08;
+        bullets.push(slash);
+      }
+      this.cooldown = this.baseCooldown * 0.8;
       return;
     }
     if (this.shipId === "nova") {
-      for (const offset of [-0.1, 0, 0.1]) {
-        const star = new Bullet(this.x, this.y, angle + offset, 360 * this.shotSpeedMultiplier, true, 6.2, "#6ef8ff", 11 * this.damageMultiplier);
-        star.explosive = true;
-        star.burnDamage = star.damage * 0.18;
-        star.novaAzureMini = true;
-        bullets.push(star);
-      }
-      this.cooldown = this.baseCooldown * 0.95;
+      const star = new Bullet(this.x, this.y, angle, 380 * this.shotSpeedMultiplier, true, 3.2, "#ffffff", 6.2 * this.damageMultiplier);
+      star.life = 1.0;
+      star.visualShape = "starPellet";
+      star.novaPrimaryPop = true;
+      bullets.push(star);
+      this.cooldown = this.baseCooldown * 0.62;
       return;
     }
     if (this.shipId === "aphelion") {
@@ -3321,8 +5480,60 @@ class Player {
     ctx.translate(this.x, this.y);
     const angle = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
     ctx.rotate(angle);
-    
-    
+    if (this.shipId === "seraph") {
+      const beamDrawStart = 36;
+      const len = config.width * 0.92;
+      const drawLen = Math.max(len - beamDrawStart, 120);
+      const bw = 18;
+      ctx.save();
+      ctx.globalAlpha = 1;
+      const g = ctx.createLinearGradient(beamDrawStart, 0, len, 0);
+      g.addColorStop(0, "rgba(255, 200, 200, 1)");
+      g.addColorStop(0.2, "rgba(255, 70, 70, 1)");
+      g.addColorStop(0.45, "rgba(255, 30, 30, 1)");
+      g.addColorStop(0.62, "rgba(255, 220, 220, 1)");
+      g.addColorStop(0.78, "rgba(255, 45, 45, 1)");
+      g.addColorStop(1, "rgba(255, 80, 80, 1)");
+      ctx.fillStyle = g;
+      ctx.shadowBlur = 22;
+      ctx.shadowColor = "#ff2222";
+      ctx.fillRect(beamDrawStart, -bw / 2, drawLen, bw);
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(beamDrawStart, -bw / 2, drawLen, bw);
+      if (this.seraphSweepTimer > 0) {
+        const sweepPhaseRate = 2.85;
+        const swing = Math.sin(this.seraphSweepPhase * sweepPhaseRate) * 0.7;
+        const sweepLen = len * 0.95;
+        const railDraw = 38;
+        ctx.lineCap = "round";
+        for (const side of [-1, 1]) {
+          const ox = beamDrawStart;
+          const oy = side * railDraw;
+          const dx = Math.cos(side * swing);
+          const dy = Math.sin(side * swing);
+          const sx2 = ox + dx * sweepLen;
+          const sy2 = oy + dy * sweepLen;
+          ctx.strokeStyle = "rgba(255, 50, 50, 1)";
+          ctx.lineWidth = 10;
+          ctx.shadowBlur = 20;
+          ctx.shadowColor = "#ff0000";
+          ctx.beginPath();
+          ctx.moveTo(ox, oy);
+          ctx.lineTo(sx2, sy2);
+          ctx.stroke();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.98)";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(ox, oy);
+          ctx.lineTo(sx2, sy2);
+          ctx.stroke();
+        }
+      }
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+
     let coreColor, glowColor, accentColor;
     const powerUpActive = this.rapidTimer > 0 || this.burstTimer > 0;
     
@@ -3368,6 +5579,10 @@ class Player {
         coreColor = "#ff8844";
         glowColor = "rgba(255, 136, 68, 0.76)";
         accentColor = "#ff4d2a";
+      } else if (this.shipId === "seraph") {
+        coreColor = "#ff5a5a";
+        glowColor = "rgba(255, 90, 90, 0.78)";
+        accentColor = "#ff2020";
       } else if (this.shipId === "aurora") {
         coreColor = "#97f8ff";
         glowColor = "rgba(151, 248, 255, 0.76)";
@@ -3911,6 +6126,74 @@ class Player {
       ctx.arc(-10, 0, 6, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
+    } else if (this.shipId === "seraph") {
+      const railYs = [-46, -17, 17, 46];
+      const wingFill = ctx.createLinearGradient(-18, 0, 8, 0);
+      wingFill.addColorStop(0, "#2a1218");
+      wingFill.addColorStop(0.45, "#4a222c");
+      wingFill.addColorStop(1, "#5c2a36");
+      ctx.fillStyle = wingFill;
+      ctx.strokeStyle = "#8a3038";
+      ctx.lineWidth = 1.6;
+      ctx.shadowBlur = 0;
+      for (const sy of [-1, 1]) {
+        const m = sy;
+        ctx.beginPath();
+        ctx.moveTo(-2, m * 7);
+        ctx.lineTo(6, m * 9);
+        ctx.lineTo(10, m * 22);
+        ctx.lineTo(4, m * 42);
+        ctx.lineTo(-8, m * 48);
+        ctx.lineTo(-16, m * 44);
+        ctx.lineTo(-14, m * 18);
+        ctx.lineTo(-8, m * 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      for (const ry of railYs) {
+        const bw = Math.abs(ry) >= 40 ? 5.2 : 4.6;
+        const len = 13;
+        const bg = ctx.createLinearGradient(0, ry - bw / 2, len, ry + bw / 2);
+        bg.addColorStop(0, "#2a1014");
+        bg.addColorStop(0.55, "#4a1820");
+        bg.addColorStop(1, "#1a080c");
+        ctx.fillStyle = bg;
+        ctx.strokeStyle = "#3d1518";
+        ctx.lineWidth = 1.15;
+        ctx.fillRect(0, ry - bw / 2, len, bw);
+        ctx.strokeRect(0.5, ry - bw / 2 + 0.35, len - 1, bw - 0.7);
+        ctx.strokeStyle = "#ff4444";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(0.6, ry - bw * 0.35);
+        ctx.lineTo(len - 0.6, ry - bw * 0.35);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.moveTo(15, 0);
+      ctx.lineTo(10, -3.5);
+      ctx.lineTo(2, -5.2);
+      ctx.lineTo(-6, -4.5);
+      ctx.lineTo(-14, -2);
+      ctx.lineTo(-17, 0);
+      ctx.lineTo(-14, 2);
+      ctx.lineTo(-6, 4.5);
+      ctx.lineTo(2, 5.2);
+      ctx.lineTo(10, 3.5);
+      ctx.closePath();
+      ctx.fillStyle = bodyGradient;
+      ctx.strokeStyle = coreColor;
+      ctx.lineWidth = 2.5;
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = "#ff6666";
+      ctx.beginPath();
+      ctx.arc(4, 0, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
     }
     
     ctx.shadowBlur = 0;
@@ -4028,6 +6311,18 @@ class Player {
       ctx.lineTo(-3, 9);
       ctx.lineTo(10, 9);
       ctx.lineTo(20, 4);
+      ctx.closePath();
+    } else if (this.shipId === "seraph") {
+      ctx.moveTo(15, 0);
+      ctx.lineTo(10, -3.5);
+      ctx.lineTo(2, -5.2);
+      ctx.lineTo(-6, -4.5);
+      ctx.lineTo(-14, -2);
+      ctx.lineTo(-17, 0);
+      ctx.lineTo(-14, 2);
+      ctx.lineTo(-6, 4.5);
+      ctx.lineTo(2, 5.2);
+      ctx.lineTo(10, 3.5);
       ctx.closePath();
     }
     ctx.stroke();
@@ -4217,8 +6512,10 @@ class NovaAnomaly {
     this.knockbackRadius = config.knockbackRadius || this.maxRadius * 1.35;
     this.exploded = false;
     this.color = config.color || "#57b7ff";
+    this.opacityScale = config.opacityScale == null ? 1 : config.opacityScale;
     this.stunWhilePulled = config.stunWhilePulled !== false;
     this.azureVortex = !!config.azureVortex;
+    this.aphelionCollapse = !!config.aphelionCollapse;
     this.streamBudget = 0;
     this.streamColors = config.streamColors || ["#00ffff", "#4ddbff", "#a8ffff", "#00b8d4"];
   }
@@ -4252,14 +6549,46 @@ class NovaAnomaly {
       if (this.pullEnabled && d > 1) {
         const pullAngle = Math.atan2(this.y - enemy.y, this.x - enemy.x);
         const pullForce = this.pullStrength * dt * (1 - d / (this.radius + 1));
-        enemy.x += Math.cos(pullAngle) * pullForce;
-        enemy.y += Math.sin(pullAngle) * pullForce;
-        if (this.stunWhilePulled) {
-          enemy.fireTimer = Math.max(enemy.fireTimer, 0.18);
+        if (this.aphelionCollapse) {
+          const spiral = pullAngle + Math.PI / 2;
+          const radial = pullForce * 0.55;
+          const tang = pullForce * 0.68;
+          enemy.x += Math.cos(pullAngle) * radial + Math.cos(spiral) * tang;
+          enemy.y += Math.sin(pullAngle) * radial + Math.sin(spiral) * tang;
+          enemy.fireTimer = Math.max(enemy.fireTimer, 3);
+        } else {
+          enemy.x += Math.cos(pullAngle) * pullForce;
+          enemy.y += Math.sin(pullAngle) * pullForce;
+          if (this.stunWhilePulled) {
+            enemy.fireTimer = Math.max(enemy.fireTimer, 0.18);
+          }
         }
+      } else if (this.aphelionCollapse) {
+        enemy.fireTimer = Math.max(enemy.fireTimer, 3);
       }
       enemy.hp -= this.damagePerSecond * dt;
       if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
+    }
+    if (this.aphelionCollapse) {
+      for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+        const bullet = state.enemyBullets[i];
+        const d = dist(this.x, this.y, bullet.x, bullet.y);
+        if (d > this.radius + 22) continue;
+        const pullB = this.pullStrength * 1.4 * dt * (1 - d / (this.radius + 48));
+        const baseAng = Math.atan2(this.y - bullet.y, this.x - bullet.x);
+        const spiral = baseAng + Math.PI / 2;
+        const w = 0.54;
+        bullet.x += Math.cos(baseAng) * pullB * w + Math.cos(spiral) * pullB * (1 - w);
+        bullet.y += Math.sin(baseAng) * pullB * w + Math.sin(spiral) * pullB * (1 - w);
+        bullet.vx *= 0.93;
+        bullet.vy *= 0.93;
+        if (d < 14) {
+          state.enemyBullets.splice(i, 1);
+          for (let p = 0; p < 4; p++) {
+            state.particles.push(new Particle(this.x + rng(-5, 5), this.y + rng(-5, 5), p % 2 ? "#e8c8ff" : "#a070ff"));
+          }
+        }
+      }
     }
     if (this.life <= 0 && this.explodeAtEnd && !this.exploded) {
       this.exploded = true;
@@ -4279,12 +6608,12 @@ class NovaAnomaly {
           enemy.y += Math.sin(a) * kb;
         }
       }
-      const burstTint = this.azureVortex ? "#b6ffff" : "#8ad7ff";
-      const count = this.azureVortex ? 420 : 220;
+      const burstTint = this.aphelionCollapse ? "#c291ff" : this.azureVortex ? "#b6ffff" : "#8ad7ff";
+      const count = this.aphelionCollapse ? 620 : this.azureVortex ? 420 : 220;
       for (let i = 0; i < count; i++) {
         const a = (i / count) * Math.PI * 2;
-        const dist = rng(20, this.maxRadius * (this.azureVortex ? 1.65 : 1.2));
-        const p = new Particle(this.x + Math.cos(a) * dist, this.y + Math.sin(a) * dist, this.azureVortex && i % 2 ? "#00ffff" : burstTint);
+        const dist = rng(20, this.maxRadius * (this.aphelionCollapse ? 2.1 : this.azureVortex ? 1.65 : 1.2));
+        const p = new Particle(this.x + Math.cos(a) * dist, this.y + Math.sin(a) * dist, this.aphelionCollapse ? (i % 2 ? "#9d5bff" : "#d9b2ff") : this.azureVortex && i % 2 ? "#00ffff" : burstTint);
         p.vx = Math.cos(a) * rng(140, 420);
         p.vy = Math.sin(a) * rng(140, 420);
         p.life = rng(0.28, 0.72);
@@ -4299,9 +6628,9 @@ class NovaAnomaly {
     if (this.azureVortex) {
       ctx.globalAlpha = alpha * 0.92;
       ctx.shadowBlur = 38;
-      ctx.shadowColor = "#00ffff";
+      ctx.shadowColor = this.aphelionCollapse ? "#b07dff" : this.color;
     } else {
-      ctx.globalAlpha = alpha * 0.7;
+      ctx.globalAlpha = alpha * 0.7 * this.opacityScale;
     }
     const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
     g.addColorStop(0, this.color + "ee");
@@ -4314,13 +6643,211 @@ class NovaAnomaly {
     ctx.fill();
     if (this.azureVortex) {
       ctx.globalAlpha = alpha * 0.55;
-      ctx.strokeStyle = "rgba(180,255,255,0.65)";
+      ctx.strokeStyle = this.aphelionCollapse ? "rgba(205,170,255,0.74)" : "rgba(255,140,140,0.72)";
       ctx.lineWidth = 2.2;
       ctx.beginPath();
       ctx.arc(this.x, this.y, this.radius * 0.88, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(this.x, this.y, this.radius * 0.52, 0, Math.PI * 2);
+      ctx.stroke();
+      if (this.aphelionCollapse) {
+        ctx.globalAlpha = alpha * 0.65;
+        for (let i = 0; i < 24; i++) {
+          const a = (i / 24) * Math.PI * 2 + performance.now() * 0.001;
+          const len = this.radius * (0.45 + (i % 3) * 0.2);
+          ctx.strokeStyle = i % 2 ? "rgba(186,130,255,0.75)" : "rgba(142,88,255,0.7)";
+          ctx.lineWidth = 2 + (i % 3);
+          ctx.beginPath();
+          ctx.moveTo(this.x, this.y);
+          ctx.lineTo(this.x + Math.cos(a) * len, this.y + Math.sin(a) * len);
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+}
+
+class TempestEyeStormVortex {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.maxRadius = Math.min(468, Math.hypot(config.width, config.height) * 0.44);
+    this.radius = 0;
+    this.life = 5.5;
+    this.maxLife = this.life;
+    this.age = 0;
+    this.streamBudget = 0;
+  }
+  update(dt) {
+    this.life -= dt;
+    this.age += dt;
+    const t = 1 - Math.max(this.life / this.maxLife, 0);
+    this.radius = this.maxRadius * (0.1 + 0.9 * (1 - Math.pow(1 - t, 0.5)));
+    const dm = state.player
+      ? state.player.damageMultiplier * (state.player.abilityDamageMultiplier || 1)
+      : 1;
+    const dps = 26 * dm;
+    const spiral = 620 * dt;
+    const spinBias = 1.22 + Math.sin(this.age * 2.6) * 0.42;
+
+    this.streamBudget += dt * 420;
+    while (this.streamBudget >= 1) {
+      this.streamBudget -= 1;
+      const ang = Math.random() * Math.PI * 2;
+      const distOut = this.radius * (0.22 + Math.random() * 0.98);
+      const px = this.x + Math.cos(ang) * distOut;
+      const py = this.y + Math.sin(ang) * distOut;
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const tangent = ang + (Math.PI / 2) * dir;
+      const p = new Particle(px, py, Math.random() < 0.55 ? "#ffeb3b" : "#ffc400");
+      const sp = rng(70, 220);
+      p.vx = Math.cos(tangent) * sp + rng(-55, 55);
+      p.vy = Math.sin(tangent) * sp + rng(-55, 55);
+      p.life = rng(0.14, 0.4);
+      p.size = rng(1.6, 4.6);
+      state.particles.push(p);
+    }
+
+    for (let i = state.enemies.length - 1; i >= 0; i--) {
+      const enemy = state.enemies[i];
+      const d = dist(this.x, this.y, enemy.x, enemy.y);
+      if (d > this.radius + enemy.size) continue;
+      const falloff = Math.pow(1 - Math.min(1, d / Math.max(this.radius * 0.92, 1)), 0.62);
+      if (d > 2) {
+        const toCenter = Math.atan2(this.y - enemy.y, this.x - enemy.x);
+        const swirl = toCenter + (Math.PI / 2) * spinBias;
+        const radial = spiral * falloff * 0.38;
+        const tang = spiral * falloff * 1.52;
+        const wobble =
+          Math.sin(this.age * 7.2 + (enemy.wave || 0) * 0.3 + d * 0.045) * spiral * falloff * 0.62;
+        enemy.x += Math.cos(toCenter) * radial + Math.cos(swirl) * tang + Math.cos(swirl + Math.PI / 2) * wobble;
+        enemy.y += Math.sin(toCenter) * radial + Math.sin(swirl) * tang + Math.sin(swirl + Math.PI / 2) * wobble;
+      }
+      const chunk = dps * dt;
+      enemy.hp -= chunk;
+      recordDamageDealt(chunk);
+      if (enemy.hp <= 0) {
+        onEnemyDestroyed(enemy, i);
+        continue;
+      }
+      enemy.fireTimer = Math.max(enemy.fireTimer || 0, 0.42);
+      enemy.x = clamp(enemy.x, enemy.size, config.width - enemy.size);
+      enemy.y = clamp(enemy.y, TOP_HUD_SAFE_Y + enemy.size, config.height - enemy.size);
+    }
+
+    for (let j = state.enemyBullets.length - 1; j >= 0; j--) {
+      const bullet = state.enemyBullets[j];
+      const d = dist(this.x, this.y, bullet.x, bullet.y);
+      if (d > this.radius + 48) continue;
+      const falloff = 1 - Math.min(1, d / Math.max(this.radius + 40, 1));
+      if (d > 1) {
+        const baseAng = Math.atan2(this.y - bullet.y, this.x - bullet.x);
+        const tangA = baseAng + (Math.PI / 2) * spinBias;
+        const pullB = 780 * dt * falloff * falloff;
+        const w = 0.26;
+        bullet.x += Math.cos(baseAng) * pullB * w + Math.cos(tangA) * pullB * (1 - w);
+        bullet.y += Math.sin(baseAng) * pullB * w + Math.sin(tangA) * pullB * (1 - w);
+        const sp = Math.hypot(bullet.vx, bullet.vy) || 1;
+        const curA = Math.atan2(bullet.vy, bullet.vx);
+        const twist = Math.sin(this.age * 6.5 + d * 0.09) * 1.15;
+        const targetA = tangA + twist;
+        let da = targetA - curA;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        const blend = clamp(0.32 * falloff, 0, 0.55);
+        const na = curA + da * blend;
+        bullet.vx = Math.cos(na) * sp;
+        bullet.vy = Math.sin(na) * sp;
+        bullet.vx *= 0.985;
+        bullet.vy *= 0.985;
+      }
+    }
+
+    for (let k = state.bullets.length - 1; k >= 0; k--) {
+      const bullet = state.bullets[k];
+      if (bullet.friendly) continue;
+      const d = dist(this.x, this.y, bullet.x, bullet.y);
+      if (d > this.radius + 52) continue;
+      const falloff = 1 - Math.min(1, d / Math.max(this.radius + 44, 1));
+      if (d > 1) {
+        const baseAng = Math.atan2(this.y - bullet.y, this.x - bullet.x);
+        const tangA = baseAng + (Math.PI / 2) * spinBias;
+        const pullB = 720 * dt * falloff * falloff;
+        const w = 0.26;
+        bullet.x += Math.cos(baseAng) * pullB * w + Math.cos(tangA) * pullB * (1 - w);
+        bullet.y += Math.sin(baseAng) * pullB * w + Math.sin(tangA) * pullB * (1 - w);
+        const sp = Math.hypot(bullet.vx, bullet.vy) || 1;
+        const curA = Math.atan2(bullet.vy, bullet.vx);
+        const twist = Math.sin(this.age * 6.5 + d * 0.09) * 1.05;
+        const targetA = tangA + twist;
+        let da = targetA - curA;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        const blend = clamp(0.28 * falloff, 0, 0.5);
+        const na = curA + da * blend;
+        bullet.vx = Math.cos(na) * sp;
+        bullet.vy = Math.sin(na) * sp;
+        bullet.vx *= 0.986;
+        bullet.vy *= 0.986;
+      }
+    }
+  }
+  draw(ctx) {
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    const spin = this.age * 1.85;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.globalAlpha = alpha * 0.88;
+    ctx.shadowBlur = 48;
+    ctx.shadowColor = "rgba(255, 210, 60, 0.95)";
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, this.radius);
+    g.addColorStop(0, "rgba(255, 248, 180, 0.95)");
+    g.addColorStop(0.22, "rgba(255, 220, 80, 0.72)");
+    g.addColorStop(0.5, "rgba(255, 193, 7, 0.45)");
+    g.addColorStop(0.78, "rgba(255, 160, 0, 0.2)");
+    g.addColorStop(1, "rgba(255, 140, 0, 0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = alpha * 0.72;
+    ctx.strokeStyle = "rgba(255, 235, 120, 0.82)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius * 0.92, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius * 0.55, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = alpha * 0.68;
+    const arms = 40;
+    for (let i = 0; i < arms; i++) {
+      const base = (i / arms) * Math.PI * 2 + spin;
+      const coil = 2.1 + (i % 5) * 0.35;
+      ctx.strokeStyle = i % 2 === 0 ? "rgba(255, 240, 140, 0.75)" : "rgba(255, 180, 40, 0.65)";
+      ctx.lineWidth = 1.8 + (i % 4) * 0.45;
+      ctx.beginPath();
+      const steps = 14;
+      for (let s = 0; s <= steps; s++) {
+        const u = s / steps;
+        const r = this.radius * (0.06 + u * 0.94);
+        const a = base + u * coil;
+        const px = Math.cos(a) * r;
+        const py = Math.sin(a) * r;
+        if (s === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = alpha * 0.45;
+    ctx.strokeStyle = "rgba(255, 255, 200, 0.5)";
+    ctx.lineWidth = 1.2;
+    for (let r = 0; r < 5; r++) {
+      const rr = this.radius * (0.28 + r * 0.16);
+      ctx.beginPath();
+      ctx.arc(0, 0, rr, spin * 0.6 + r * 0.4, spin * 0.6 + r * 0.4 + Math.PI * 1.25);
       ctx.stroke();
     }
     ctx.restore();
@@ -4341,6 +6868,8 @@ class NovaOrbiter {
     this.phase = Math.random() * Math.PI * 2;
     this.tightOrbit = false;
     this.oracleDrone = false;
+    this.specterDecoy = false;
+    this.infernoSwarm = false;
   }
   update(dt) {
     this.life -= dt;
@@ -4371,11 +6900,20 @@ class NovaOrbiter {
       const enemy = state.enemies[i];
       const d = dist(enemy.x, enemy.y, this.x, this.y);
       if (d < enemy.size + 12 && this.cooldown <= 0) {
-        enemy.hp -= 22 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+        const dmgOrb =
+          (this.specterDecoy ? 3.4 : this.infernoSwarm ? 15 : 22) *
+          state.player.damageMultiplier *
+          state.player.abilityDamageMultiplier;
+        enemy.hp -= dmgOrb;
+        recordDamageDealt(dmgOrb);
         const a = Math.atan2(enemy.y - state.player.y, enemy.x - state.player.x);
         enemy.x += Math.cos(a) * 16;
         enemy.y += Math.sin(a) * 16;
-        state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1.2);
+        if (!this.specterDecoy) {
+          const prevHp = state.player.hp;
+          state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1.2);
+          recordHealthRegen(state.player.hp - prevHp);
+        }
         this.cooldown = 0.08;
         if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
       }
@@ -4392,6 +6930,18 @@ class NovaOrbiter {
       g.addColorStop(1, "rgba(120,60,200,0)");
       ctx.shadowBlur = 12;
       ctx.shadowColor = "#d4a8ff";
+    } else if (this.specterDecoy) {
+      g.addColorStop(0, "rgba(255,255,255,0.95)");
+      g.addColorStop(0.5, "rgba(230,230,255,0.35)");
+      g.addColorStop(1, "rgba(200,200,255,0)");
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = "#ffffff";
+    } else if (this.infernoSwarm) {
+      g.addColorStop(0, "#ffcf6d");
+      g.addColorStop(0.5, "#ff5a2a");
+      g.addColorStop(1, "rgba(255,40,0,0)");
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = "#ff4500";
     } else if (this.tightOrbit) {
       g.addColorStop(0, "#f0ffff");
       g.addColorStop(0.5, "#3defff");
@@ -4489,6 +7039,185 @@ class BluefallPortal {
   }
 }
 
+class AphelionKeelPortal {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.life = 4.5;
+    this.maxLife = this.life;
+    this.fireCd = 0.05;
+    this.phase = Math.random() * Math.PI * 2;
+  }
+  update(dt) {
+    this.life -= dt;
+    this.phase += dt * 2.4;
+    this.fireCd -= dt;
+    if (this.fireCd <= 0) {
+      this.fireCd = 0.26;
+      const base = -Math.PI / 2 + rng(-0.38, 0.38);
+      const bolt = new Bullet(
+        this.x,
+        this.y - 6,
+        base + rng(-0.06, 0.06),
+        rng(380, 500) * state.player.shotSpeedMultiplier,
+        true,
+        6,
+        "#c45fff",
+        14 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
+      );
+      bolt.life = 2.2;
+      state.bullets.push(bolt);
+    }
+    return this.life <= 0;
+  }
+  draw(ctx) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    const rx = 36;
+    const ry = 16;
+    const g = ctx.createRadialGradient(0, 0, 2, 0, 0, rx);
+    g.addColorStop(0, "rgba(255, 252, 255, 1)");
+    g.addColorStop(0.28, "rgba(210, 150, 255, 1)");
+    g.addColorStop(0.55, "rgba(140, 60, 230, 1)");
+    g.addColorStop(0.82, "rgba(70, 20, 160, 0.98)");
+    g.addColorStop(1, "rgba(20, 0, 60, 0)");
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.98)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    const t = this.phase;
+    for (let s = 0; s < 2; s++) {
+      ctx.strokeStyle = s === 0 ? "rgba(120, 200, 255, 0.92)" : "rgba(190, 110, 255, 0.95)";
+      ctx.lineWidth = s === 0 ? 2.2 : 2;
+      ctx.beginPath();
+      const turns = 2.6 + s * 0.35;
+      const steps = 48;
+      for (let i = 0; i <= steps; i++) {
+        const u = i / steps;
+        const ang = u * turns * Math.PI * 2 + t * (s === 0 ? 1 : -1.1);
+        const rad = 4 + u * (rx * 0.82);
+        const px = Math.cos(ang) * rad * (1.05 - u * 0.12);
+        const py = Math.sin(ang) * rad * (0.42 - u * 0.08);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(160, 120, 255, 0.9)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx * 0.55, ry * 0.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+class SeraphBounceLaser {
+  constructor(x, y, angle) {
+    this.x = x;
+    this.y = y;
+    const sp = 560;
+    this.vx = Math.cos(angle) * sp;
+    this.vy = Math.sin(angle) * sp;
+    this.life = 5;
+    this.segLen = 44;
+    this.hitHalfW = 5.5;
+    this.damage =
+      28 *
+      state.player.damageMultiplier *
+      (state.player.abilityDamageMultiplier != null ? state.player.abilityDamageMultiplier : 1);
+    this.bounceCd = 0;
+  }
+  tail() {
+    const sp = Math.hypot(this.vx, this.vy) || 560;
+    return {
+      tx: this.x - (this.vx / sp) * this.segLen,
+      ty: this.y - (this.vy / sp) * this.segLen,
+    };
+  }
+  update(dt) {
+    this.life -= dt;
+    this.bounceCd = Math.max(0, this.bounceCd - dt);
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    const margin = 22;
+    if (this.x < margin) {
+      this.vx = Math.abs(this.vx);
+      this.x = margin;
+    } else if (this.x > config.width - margin) {
+      this.vx = -Math.abs(this.vx);
+      this.x = config.width - margin;
+    }
+    const topM = TOP_HUD_SAFE_Y + 18;
+    if (this.y < topM) {
+      this.vy = Math.abs(this.vy);
+      this.y = topM;
+    } else if (this.y > config.height - margin) {
+      this.vy = -Math.abs(this.vy);
+      this.y = config.height - margin;
+    }
+    const { tx, ty } = this.tail();
+    if (this.bounceCd <= 0) {
+      for (let i = state.enemies.length - 1; i >= 0; i--) {
+        const en = state.enemies[i];
+        const d = pointToSegmentDistance(en.x, en.y, this.x, this.y, tx, ty);
+        if (d > this.hitHalfW + en.size * 0.48) continue;
+        en.hp -= this.damage;
+        recordDamageDealt(this.damage);
+        if (en.hp <= 0) onEnemyDestroyed(en, i);
+        this.bounceCd = 0.12;
+        let best = null;
+        let bestD = 1e9;
+        const sp0 = Math.hypot(this.vx, this.vy) || 560;
+        for (const e2 of state.enemies) {
+          if (e2.hp <= 0) continue;
+          const dx = e2.x - this.x;
+          const dy = e2.y - this.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < 8 || dist > 540) continue;
+          const fwd = (this.vx * dx + this.vy * dy) / (sp0 * dist);
+          if (fwd > -0.35 && dist < bestD) {
+            bestD = dist;
+            best = e2;
+          }
+        }
+        const na = best
+          ? Math.atan2(best.y - this.y, best.x - this.x)
+          : Math.atan2(this.vy, this.vx) + rng(-1.0, 1.0);
+        this.vx = Math.cos(na) * sp0;
+        this.vy = Math.sin(na) * sp0;
+        break;
+      }
+    }
+    return this.life <= 0;
+  }
+  draw(ctx) {
+    const { tx, ty } = this.tail();
+    ctx.save();
+    ctx.strokeStyle = "#ff1515";
+    ctx.lineWidth = 7;
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = "#ff0000";
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(this.x, this.y);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(this.x, this.y);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
 const state = {
   stars: [],
   player: new Player(),
@@ -4497,7 +7226,21 @@ const state = {
   enemies: [],
   particles: [],
   visualBeams: [],
+  decorativeLightning: [],
+  boltCage: null,
+  emberFog: null,
+  stingerPoisonFogs: [],
+  clawPawShield: null,
+  voidTrails: [],
+  scytheSwings: [],
+  reaperPortals: [],
+  reaperMinions: [],
+  reaperChains: [],
+  solarFlares: [],
+  fireColumns: [],
+  grimstarWaves: [],
   novaAnomalies: [],
+  tempestEyeStorms: [],
   novaOrbiters: [],
   bluefallPortals: [],
   powerUps: [],
@@ -4506,6 +7249,11 @@ const state = {
   blackHoles: [],
   expandingCircles: [],
   timeDilationFields: [],
+  screenLasers: [],
+  aphelionPortalBursts: [],
+  aphelionKeelPortals: [],
+  seraphBounceLasers: [],
+  aphelionShields: [],
   wave: 1,
   score: 0,
   highScore: Number(localStorage.getItem("orbital-high-score") || 0),
@@ -4552,6 +7300,29 @@ const state = {
   enemyDamageMultiplier: 1,
   selectedCampaignLevel: 1,
   achievements: JSON.parse(localStorage.getItem("orbital-achievements") || "{}"),
+  lifetimeKills: Number(localStorage.getItem("orbital-lifetime-kills") || 0),
+  campaignLevelsCompleted: Number(localStorage.getItem("orbital-campaign-levels-completed") || 0),
+  campaignBossKills: Number(localStorage.getItem("orbital-campaign-boss-kills") || 0),
+  lifetimeBossKills: Number(localStorage.getItem("orbital-lifetime-boss-kills") || 0),
+  lifetimeDamageDealt: Number(localStorage.getItem("orbital-lifetime-dmg-dealt") || 0),
+  lifetimeDamageTaken: Number(localStorage.getItem("orbital-lifetime-dmg-taken") || 0),
+  lifetimeAbilitiesUsed: Number(localStorage.getItem("orbital-lifetime-abilities-used") || 0),
+  lifetimeHealthRegen: Number(localStorage.getItem("orbital-lifetime-health-regen") || 0),
+  lifetimeShieldRegen: Number(localStorage.getItem("orbital-lifetime-shield-regen") || 0),
+  lifetimeEnergyRegen: Number(localStorage.getItem("orbital-lifetime-energy-regen") || 0),
+  runDamageDealt: 0,
+  runDamageTaken: 0,
+  runAbilitiesUsed: 0,
+  runHealthRegen: 0,
+  runShieldRegen: 0,
+  runEnergyRegen: 0,
+  runBossKills: 0,
+  runNearDeathStart: 0,
+  runNearDeathTriggered: false,
+  runOneHpStart: 0,
+  runOneHpTriggered: false,
+  killTimestamps: [],
+  damageTakenTimestamps: [],
 };
 
 const hasShipAccess = (shipId) =>
@@ -4561,28 +7332,208 @@ const isAtlasShipId = (shipId) => typeof shipId === "string" && shipId.startsWit
 
 const ACHIEVEMENT_DEFS = [
   { id: "first-run", name: "First Sortie", desc: "Start your first mission." },
-  { id: "first-kill", name: "First Contact", desc: "Destroy your first enemy." },
-  { id: "boss-kill", name: "Boss Breaker", desc: "Defeat a boss." },
-  { id: "wave-10", name: "Wave Rider I", desc: "Reach wave 10 in a run." },
-  { id: "wave-25", name: "Wave Rider II", desc: "Reach wave 25 in a run." },
-  { id: "score-10k", name: "Five Digits", desc: "Score 10,000 points." },
-  { id: "score-50k", name: "High Orbit", desc: "Score 50,000 points." },
-  { id: "campaign-clear", name: "Cadet Graduate", desc: "Complete a campaign level." },
-  { id: "campaign-10", name: "Linebreaker", desc: "Unlock campaign level 10." },
-  { id: "campaign-25", name: "Frontline Veteran", desc: "Unlock campaign level 25." },
+  { id: "tutorial-complete", name: "Briefed and Ready", desc: "Complete the tutorial." },
+  { id: "first-kill", name: "First Contact", desc: "Defeat your first enemy." },
+  { id: "kills-10", name: "Skirmisher", desc: "Defeat 10 enemies." },
+  { id: "kills-50", name: "Interceptor", desc: "Defeat 50 enemies." },
+  { id: "kills-100", name: "Battleline", desc: "Defeat 100 enemies." },
+  { id: "kills-250", name: "Void Hunter", desc: "Defeat 250 enemies." },
+  { id: "kills-500", name: "Star Reaper", desc: "Defeat 500 enemies." },
+  { id: "boss-kill", name: "Boss Breaker", desc: "Defeat your first boss." },
+  { id: "campaign-clear", name: "Campaign Cadet", desc: "Complete your first campaign level." },
+  { id: "campaign-boss-1", name: "Conqueror I", desc: "Defeat your first campaign boss." },
+  { id: "campaign-levels-10", name: "Conqueror II", desc: "Complete 10 campaign levels." },
+  { id: "campaign-boss-3", name: "Conqueror III", desc: "Defeat 3 campaign bosses." },
+  { id: "score-500", name: "Point Pilot I", desc: "Score 500 points in a run." },
+  { id: "score-1000", name: "Point Pilot II", desc: "Score 1,000 points in a run." },
+  { id: "score-5000", name: "Point Pilot III", desc: "Score 5,000 points in a run." },
+  { id: "score-10000", name: "Point Pilot IV", desc: "Score 10,000 points in a run." },
+  { id: "score-15000", name: "Point Pilot V", desc: "Score 15,000 points in a run." },
+  { id: "cores-500", name: "Quantum Saver I", desc: "Accumulate 500 Quantum Cores." },
+  { id: "cores-1000", name: "Quantum Saver II", desc: "Accumulate 1,000 Quantum Cores." },
+  { id: "cores-5000", name: "Quantum Saver III", desc: "Accumulate 5,000 Quantum Cores." },
+  { id: "cores-10000", name: "Quantum Saver IV", desc: "Accumulate 10,000 Quantum Cores." },
+  { id: "ships-3", name: "Hangar Expansion I", desc: "Own 3 ships." },
+  { id: "ships-5", name: "Hangar Expansion II", desc: "Own 5 ships." },
+  { id: "ships-10", name: "Hangar Expansion III", desc: "Own 10 ships." },
+  { id: "ships-15", name: "Hangar Expansion IV", desc: "Own 15 ships." },
+  { id: "ships-25", name: "Hangar Expansion V", desc: "Own 25 ships." },
+  { id: "clutch-5hp", name: "Thread the Needle", desc: "Drop to 5 HP or less and survive for 10 seconds." },
+  { id: "clutch-1hp", name: "Last Pixel", desc: "Drop to 1 HP and survive for 10 seconds." },
+  { id: "kills-burst-5", name: "Cascade I", desc: "Defeat 5 enemies in 1 second." },
+  { id: "kills-burst-10", name: "Cascade II", desc: "Defeat 10 enemies in 1 second." },
+  { id: "kills-burst-20", name: "Cascade III", desc: "Defeat 20 enemies in 1 second." },
 ];
-for (let i = 1; i <= 140; i++) {
+Object.values(shipLoadouts).forEach((ship) => {
   ACHIEVEMENT_DEFS.push({
-    id: `grind-${i}`,
-    name: `Tactical Milestone ${String(i).padStart(3, "0")}`,
-    desc: `Accumulate progression milestone ${i}.`,
+    id: `own-${ship.id}`,
+    name: `Own ${ship.name}`,
+    desc: `Add ${ship.name} to your ship collection.`,
   });
-}
+});
+
+const ACHIEVEMENT_LADDERS = {
+  cores: [20000, 50000, 100000, 250000],
+  kills: [1000, 2500, 5000, 10000, 25000],
+  bosses: [5, 10, 25, 50, 100],
+  dmgDealtTotal: [100000, 500000, 1000000, 5000000, 10000000],
+  dmgDealtRun: [5000, 15000, 40000, 100000, 250000],
+  dmgTakenTotal: [50000, 150000, 500000, 1000000, 2500000],
+  dmgTakenBurst: [80, 180, 350, 600],
+  abilityTotal: [200, 1000, 3000, 7000, 15000],
+  abilityRun: [30, 80, 160, 320],
+  hpRegenTotal: [200, 1000, 3000, 8000, 20000],
+  hpRegenRun: [60, 150, 350, 700],
+  shieldRegenTotal: [500, 2000, 6000, 18000, 40000],
+  shieldRegenRun: [150, 500, 1200, 2500],
+  energyRegenTotal: [2000, 8000, 25000, 75000, 150000],
+  energyRegenRun: [500, 1500, 4000, 9000],
+};
+
+const difficultyOrder = ["recruit", "adept", "veteran", "elite", "insane", "impossible", "nightmare", "abyssal", "oblivion"];
+const difficultyDisplayNames = {
+  recruit: "Recruit",
+  adept: "Adept",
+  veteran: "Veteran",
+  elite: "Elite",
+  insane: "Insane",
+  impossible: "Impossible",
+  nightmare: "Nightmare",
+  abyssal: "Abyssal",
+  oblivion: "Oblivion",
+};
+
+Object.entries(ACHIEVEMENT_LADDERS).forEach(([key, steps]) => {
+  steps.forEach((target, idx) => {
+    const id = `${key}-${target}`;
+    let name = `${key.toUpperCase()} ${idx + 1}`;
+    let desc = `Reach ${target}.`;
+    if (key === "cores") {
+      name = `Quantum Vault ${idx + 1}`;
+      desc = `Accumulate ${target.toLocaleString()} Quantum Cores.`;
+    } else if (key === "kills") {
+      name = `Eradicator ${idx + 1}`;
+      desc = `Defeat ${target.toLocaleString()} enemies total.`;
+    } else if (key === "bosses") {
+      name = `Apex Hunter ${idx + 1}`;
+      desc = `Defeat ${target.toLocaleString()} bosses total.`;
+    } else if (key === "dmgDealtTotal") {
+      name = `Damage Ledger ${idx + 1}`;
+      desc = `Deal ${target.toLocaleString()} total damage.`;
+    } else if (key === "dmgDealtRun") {
+      name = `Burst Report ${idx + 1}`;
+      desc = `Deal ${target.toLocaleString()} damage in one run.`;
+    } else if (key === "dmgTakenTotal") {
+      name = `Scar Tissue ${idx + 1}`;
+      desc = `Take ${target.toLocaleString()} damage total.`;
+    } else if (key === "dmgTakenBurst") {
+      name = `Impact Window ${idx + 1}`;
+      desc = `Take ${target.toLocaleString()} damage within 1 second.`;
+    } else if (key === "abilityTotal") {
+      name = `Invoker ${idx + 1}`;
+      desc = `Use ${target.toLocaleString()} abilities total.`;
+    } else if (key === "abilityRun") {
+      name = `Combo Reactor ${idx + 1}`;
+      desc = `Use ${target.toLocaleString()} abilities in one run.`;
+    } else if (key === "hpRegenTotal") {
+      name = `Medic Protocol ${idx + 1}`;
+      desc = `Regenerate ${target.toLocaleString()} health total.`;
+    } else if (key === "hpRegenRun") {
+      name = `Field Surgery ${idx + 1}`;
+      desc = `Regenerate ${target.toLocaleString()} health in one run.`;
+    } else if (key === "shieldRegenTotal") {
+      name = `Shield Battery ${idx + 1}`;
+      desc = `Regenerate ${target.toLocaleString()} shield total.`;
+    } else if (key === "shieldRegenRun") {
+      name = `Aegis Runtime ${idx + 1}`;
+      desc = `Regenerate ${target.toLocaleString()} shield in one run.`;
+    } else if (key === "energyRegenTotal") {
+      name = `Capacitor Net ${idx + 1}`;
+      desc = `Regenerate ${target.toLocaleString()} energy total.`;
+    } else if (key === "energyRegenRun") {
+      name = `Overclock Loop ${idx + 1}`;
+      desc = `Regenerate ${target.toLocaleString()} energy in one run.`;
+    }
+    ACHIEVEMENT_DEFS.push({ id, name, desc });
+  });
+});
+
+difficultyOrder.forEach((k) => {
+  ACHIEVEMENT_DEFS.push({
+    id: `wave-20-${k}`,
+    name: `${difficultyDisplayNames[k]} Wavebreaker`,
+    desc: `Reach wave 20 on ${difficultyDisplayNames[k]} difficulty.`,
+  });
+  ACHIEVEMENT_DEFS.push({
+    id: `wave-40-${k}`,
+    name: `${difficultyDisplayNames[k]} Deep Run`,
+    desc: `Reach wave 40 on ${difficultyDisplayNames[k]} difficulty.`,
+  });
+});
 
 const unlockAchievement = (id) => {
   if (state.achievements[id]) return;
   state.achievements[id] = true;
   localStorage.setItem("orbital-achievements", JSON.stringify(state.achievements));
+  if (achievementToastContainer) {
+    const def = ACHIEVEMENT_DEFS.find((a) => a.id === id);
+    const toast = document.createElement("div");
+    toast.className = "achievement-toast";
+    toast.textContent = `Achievement Unlocked: ${def ? def.name : id}`;
+    achievementToastContainer.appendChild(toast);
+    setTimeout(() => {
+      toast.remove();
+    }, 3000);
+  }
+};
+
+const persistStat = (key, value) => localStorage.setItem(key, String(Math.floor(value)));
+
+const recordDamageDealt = (amount) => {
+  const val = Math.max(0, amount || 0);
+  if (val <= 0) return;
+  state.lifetimeDamageDealt += val;
+  state.runDamageDealt += val;
+  persistStat("orbital-lifetime-dmg-dealt", state.lifetimeDamageDealt);
+};
+
+const recordDamageTaken = (amount) => {
+  const val = Math.max(0, amount || 0);
+  if (val <= 0) return;
+  state.lifetimeDamageTaken += val;
+  state.runDamageTaken += val;
+  state.damageTakenTimestamps.push({ t: performance.now(), dmg: val });
+  persistStat("orbital-lifetime-dmg-taken", state.lifetimeDamageTaken);
+};
+
+const recordAbilityUse = () => {
+  state.lifetimeAbilitiesUsed += 1;
+  state.runAbilitiesUsed += 1;
+  persistStat("orbital-lifetime-abilities-used", state.lifetimeAbilitiesUsed);
+};
+
+const recordHealthRegen = (amount) => {
+  const val = Math.max(0, amount || 0);
+  if (val <= 0) return;
+  state.lifetimeHealthRegen += val;
+  state.runHealthRegen += val;
+  persistStat("orbital-lifetime-health-regen", state.lifetimeHealthRegen);
+};
+
+const recordShieldRegen = (amount) => {
+  const val = Math.max(0, amount || 0);
+  if (val <= 0) return;
+  state.lifetimeShieldRegen += val;
+  state.runShieldRegen += val;
+  persistStat("orbital-lifetime-shield-regen", state.lifetimeShieldRegen);
+};
+
+const recordEnergyRegen = (amount) => {
+  const val = Math.max(0, amount || 0);
+  if (val <= 0) return;
+  state.lifetimeEnergyRegen += val;
+  state.runEnergyRegen += val;
+  persistStat("orbital-lifetime-energy-regen", state.lifetimeEnergyRegen);
 };
 
 const renderAchievements = () => {
@@ -4594,10 +7545,66 @@ const renderAchievements = () => {
     if (unlocked) unlockedCount++;
     const row = document.createElement("div");
     row.className = `achievement-row ${unlocked ? "unlocked" : ""}`;
-    row.innerHTML = `<strong>${a.name}</strong><span>${a.desc}</span><em>${unlocked ? "Unlocked" : "Locked"}</em>`;
+    row.innerHTML = `<strong>${a.name}</strong><span>${a.desc}</span><em class="achievement-status">${unlocked ? "✓" : ""}</em>`;
     achievementsList.appendChild(row);
   });
   achievementsSummary.textContent = `${unlockedCount}/${ACHIEVEMENT_DEFS.length} unlocked`;
+};
+
+const refreshProgressAchievements = () => {
+  const ownedShips = new Set(state.unlockedShips || []);
+  ownedShips.forEach((id) => unlockAchievement(`own-${id}`));
+  const ownedCount = ownedShips.size;
+  if (ownedCount >= 3) unlockAchievement("ships-3");
+  if (ownedCount >= 5) unlockAchievement("ships-5");
+  if (ownedCount >= 10) unlockAchievement("ships-10");
+  if (ownedCount >= 15) unlockAchievement("ships-15");
+  if (ownedCount >= 25) unlockAchievement("ships-25");
+  if (state.quantumCores >= 500) unlockAchievement("cores-500");
+  if (state.quantumCores >= 1000) unlockAchievement("cores-1000");
+  if (state.quantumCores >= 5000) unlockAchievement("cores-5000");
+  if (state.quantumCores >= 10000) unlockAchievement("cores-10000");
+  if (state.score >= 500) unlockAchievement("score-500");
+  if (state.score >= 1000) unlockAchievement("score-1000");
+  if (state.score >= 5000) unlockAchievement("score-5000");
+  if (state.score >= 10000) unlockAchievement("score-10000");
+  if (state.score >= 15000) unlockAchievement("score-15000");
+  if (state.lifetimeKills >= 10) unlockAchievement("kills-10");
+  if (state.lifetimeKills >= 50) unlockAchievement("kills-50");
+  if (state.lifetimeKills >= 100) unlockAchievement("kills-100");
+  if (state.lifetimeKills >= 250) unlockAchievement("kills-250");
+  if (state.lifetimeKills >= 500) unlockAchievement("kills-500");
+  if (state.campaignLevelsCompleted >= 10) unlockAchievement("campaign-levels-10");
+  if (state.campaignBossKills >= 3) unlockAchievement("campaign-boss-3");
+  ACHIEVEMENT_LADDERS.cores.forEach((v) => state.quantumCores >= v && unlockAchievement(`cores-${v}`));
+  ACHIEVEMENT_LADDERS.kills.forEach((v) => state.lifetimeKills >= v && unlockAchievement(`kills-${v}`));
+  ACHIEVEMENT_LADDERS.bosses.forEach((v) => state.lifetimeBossKills >= v && unlockAchievement(`bosses-${v}`));
+  ACHIEVEMENT_LADDERS.dmgDealtTotal.forEach((v) => state.lifetimeDamageDealt >= v && unlockAchievement(`dmgDealtTotal-${v}`));
+  ACHIEVEMENT_LADDERS.dmgDealtRun.forEach((v) => state.runDamageDealt >= v && unlockAchievement(`dmgDealtRun-${v}`));
+  ACHIEVEMENT_LADDERS.dmgTakenTotal.forEach((v) => state.lifetimeDamageTaken >= v && unlockAchievement(`dmgTakenTotal-${v}`));
+  ACHIEVEMENT_LADDERS.abilityTotal.forEach((v) => state.lifetimeAbilitiesUsed >= v && unlockAchievement(`abilityTotal-${v}`));
+  ACHIEVEMENT_LADDERS.abilityRun.forEach((v) => state.runAbilitiesUsed >= v && unlockAchievement(`abilityRun-${v}`));
+  ACHIEVEMENT_LADDERS.hpRegenTotal.forEach((v) => state.lifetimeHealthRegen >= v && unlockAchievement(`hpRegenTotal-${v}`));
+  ACHIEVEMENT_LADDERS.hpRegenRun.forEach((v) => state.runHealthRegen >= v && unlockAchievement(`hpRegenRun-${v}`));
+  ACHIEVEMENT_LADDERS.shieldRegenTotal.forEach((v) => state.lifetimeShieldRegen >= v && unlockAchievement(`shieldRegenTotal-${v}`));
+  ACHIEVEMENT_LADDERS.shieldRegenRun.forEach((v) => state.runShieldRegen >= v && unlockAchievement(`shieldRegenRun-${v}`));
+  ACHIEVEMENT_LADDERS.energyRegenTotal.forEach((v) => state.lifetimeEnergyRegen >= v && unlockAchievement(`energyRegenTotal-${v}`));
+  ACHIEVEMENT_LADDERS.energyRegenRun.forEach((v) => state.runEnergyRegen >= v && unlockAchievement(`energyRegenRun-${v}`));
+  const now = performance.now();
+  state.damageTakenTimestamps = state.damageTakenTimestamps.filter((d) => now - d.t <= 1000);
+  const damageBurst = state.damageTakenTimestamps.reduce((s, d) => s + d.dmg, 0);
+  ACHIEVEMENT_LADDERS.dmgTakenBurst.forEach((v) => damageBurst >= v && unlockAchievement(`dmgTakenBurst-${v}`));
+  if (state.runNearDeathTriggered) unlockAchievement("clutch-5hp");
+  if (state.runOneHpTriggered) unlockAchievement("clutch-1hp");
+  state.killTimestamps = state.killTimestamps.filter((t) => now - t <= 1000);
+  const killBurst = state.killTimestamps.length;
+  if (killBurst >= 5) unlockAchievement("kills-burst-5");
+  if (killBurst >= 10) unlockAchievement("kills-burst-10");
+  if (killBurst >= 20) unlockAchievement("kills-burst-20");
+  if (state.mode === "endless") {
+    if (state.wave >= 20) unlockAchievement(`wave-20-${state.difficultyKey}`);
+    if (state.wave >= 40) unlockAchievement(`wave-40-${state.difficultyKey}`);
+  }
 };
 
 const getCampaignWaveTarget = (level) => clamp(3 + Math.floor(level / 2), 3, 15);
@@ -4628,19 +7635,41 @@ const applyUpgradeChoice = (choice) => {
   state.upgradeChoices = [];
   if (state.mode === "campaign" && state.wave >= state.campaignWaveTarget) {
     unlockAchievement("campaign-clear");
+    state.campaignLevelsCompleted += 1;
+    localStorage.setItem("orbital-campaign-levels-completed", String(state.campaignLevelsCompleted));
     state.campaignUnlockedLevel = Math.max(state.campaignUnlockedLevel, state.campaignLevel + 1);
     localStorage.setItem("orbital-campaign-unlocked-level", String(state.campaignUnlockedLevel));
-    if (state.campaignUnlockedLevel >= 10) unlockAchievement("campaign-10");
-    if (state.campaignUnlockedLevel >= 25) unlockAchievement("campaign-25");
+    refreshProgressAchievements();
     state.running = false;
     if (campaignPanel) campaignPanel.classList.remove("hidden");
-    if (mainHub) mainHub.classList.remove("hidden");
+    if (mainHub) mainHub.classList.add("hidden");
     if (instructionsEl) instructionsEl.classList.add("hidden");
+    renderCampaignLevelGrid();
     updateHud();
     return;
   }
   state.wave++;
   spawnWave();
+  updateHud();
+};
+
+const completeCampaignLevel = () => {
+  unlockAchievement("campaign-clear");
+  state.campaignLevelsCompleted += 1;
+  localStorage.setItem("orbital-campaign-levels-completed", String(state.campaignLevelsCompleted));
+  state.campaignUnlockedLevel = Math.max(state.campaignUnlockedLevel, state.campaignLevel + 1);
+  localStorage.setItem("orbital-campaign-unlocked-level", String(state.campaignUnlockedLevel));
+  refreshProgressAchievements();
+  state.running = false;
+  state.paused = false;
+  state.upgradePending = false;
+  state.awaitingUpgrade = false;
+  state.upgradeChoices = [];
+  if (upgradePanel) upgradePanel.classList.add("hidden");
+  if (campaignPanel) campaignPanel.classList.remove("hidden");
+  if (mainHub) mainHub.classList.add("hidden");
+  if (instructionsEl) instructionsEl.classList.add("hidden");
+  renderCampaignLevelGrid();
   updateHud();
 };
 
@@ -4651,19 +7680,39 @@ const openUpgradePanel = () => {
   state.enemyBullets = [];
   state.particles = [];
   state.visualBeams = [];
+  state.decorativeLightning = [];
+  state.boltCage = null;
+  state.emberFog = null;
+  state.stingerPoisonFogs = [];
+  state.clawPawShield = null;
+  state.voidTrails = [];
+  state.scytheSwings = [];
+  state.reaperPortals = [];
+  state.reaperMinions = [];
+  state.reaperChains = [];
+  state.solarFlares = [];
+  state.fireColumns = [];
+  state.grimstarWaves = [];
   state.powerUps = [];
   state.drones = [];
   state.barriers = [];
   state.blackHoles = [];
   state.expandingCircles = [];
   state.timeDilationFields = [];
+  state.screenLasers = [];
+  state.aphelionPortalBursts = [];
+  state.aphelionKeelPortals = [];
+  state.seraphBounceLasers = [];
+  state.aphelionShields = [];
   state.novaAnomalies = [];
+  state.tempestEyeStorms = [];
   state.novaOrbiters = [];
   state.bluefallPortals = [];
   
   
   state.player.x = config.width / 2;
   state.player.y = config.height - 100;
+  state.player.boltChannelLock = 0;
   
   state.upgradePending = true;
   state.paused = true;
@@ -4679,30 +7728,39 @@ const openUpgradePanel = () => {
   });
 };
 
-const onEnemyDestroyed = (enemy, index) => {
+const onEnemyDestroyed = (enemy, _index) => {
+  if (!enemy) return;
+  const killIdx = state.enemies.indexOf(enemy);
+  if (killIdx < 0) return;
   state.score += enemy.kind === "boss" ? 500 : 30;
   unlockAchievement("first-kill");
+  state.lifetimeKills += 1;
+  state.killTimestamps.push(performance.now());
+  localStorage.setItem("orbital-lifetime-kills", String(state.lifetimeKills));
+  recordDamageDealt(Math.max(0, enemy.maxHp || 0));
   
   
-  const diff = difficultyModes[state.difficultyKey] || difficultyModes.veteran;
+  const diff = getDifficulty();
   let coresAwarded = 0;
   if (enemy.kind === "boss") {
+    state.lifetimeBossKills += 1;
+    state.runBossKills += 1;
+    persistStat("orbital-lifetime-boss-kills", state.lifetimeBossKills);
     coresAwarded = Math.floor((50 + state.wave * 5) * (diff.bossHpMultiplier || 1));
+    if (state.mode === "campaign") {
+      state.campaignBossKills += 1;
+      localStorage.setItem("orbital-campaign-boss-kills", String(state.campaignBossKills));
+      unlockAchievement("campaign-boss-1");
+    }
   } else {
     const baseCores = 2 + state.wave * 0.5;
-    let multiplier = 1;
-    if (state.difficultyKey === "nightmare") {
-      multiplier = 1.5;
-    } else if (state.difficultyKey === "veteran") {
-      multiplier = 1.2;
-    } else if (state.difficultyKey === "recruit") {
-      multiplier = 0.3; 
-    }
+    const multiplier = diff.coreMultiplier || 1;
     coresAwarded = Math.floor(baseCores * multiplier);
   }
   state.quantumCores += coresAwarded;
   state.quantumCoresEarnedThisRun += coresAwarded;
   localStorage.setItem("orbital-quantum-cores", state.quantumCores);
+  refreshProgressAchievements();
   
   
   if (enemy.kind === "splitter" && !enemy.hasSplit) {
@@ -4712,7 +7770,7 @@ const onEnemyDestroyed = (enemy, index) => {
       const spawnY = enemy.y + Math.sin(angle) * 30;
       if (spawnX > 30 && spawnX < config.width - 30 && spawnY > 30 && spawnY < config.height - 80) {
         const split = new Enemy("swarm", spawnX, spawnY, enemy.wave);
-        split.hp = Math.floor(enemy.hp / 2);
+        split.hp = Math.max(1, Math.floor(Math.max(0, enemy.hp) / 2));
         split.maxHp = split.hp;
         state.enemies.push(split);
       }
@@ -4732,7 +7790,6 @@ const onEnemyDestroyed = (enemy, index) => {
       )
     );
   }
-  addEnergy(enemy.kind === "boss" ? 65 : 1);
   if (enemy.kind === "boss") {
     unlockAchievement("boss-kill");
     playSfx.bossDown();
@@ -4740,12 +7797,18 @@ const onEnemyDestroyed = (enemy, index) => {
   } else {
     playSfx.enemyDown();
   }
-  state.enemies.splice(index, 1);
+  if (state.enemies[killIdx] === enemy) {
+    state.enemies.splice(killIdx, 1);
+  } else {
+    const j = state.enemies.indexOf(enemy);
+    if (j > -1) state.enemies.splice(j, 1);
+  }
 };
 
 const consumeAbilityEnergy = (cost) => {
   if (state.player.energy < cost) return false;
   state.player.energy -= cost;
+  recordAbilityUse();
   return true;
 };
 
@@ -4815,7 +7878,106 @@ const emitNovaShellParticles = (cx, cy, colorA = "#5ec6ff", colorB = "#d9fbff", 
 
 const abilityHandlers = {
   burst: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    if (!state.running || state.upgradePending) return;
+    if (state.player.shipId === "wick" && (state.player.wickSprayTimer || 0) > 0) return;
+    if (!consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
+    if (sid === "marauder") {
+      abilityParticleBurst("#aa1122", 95, 50);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      const core = new Bullet(state.player.x, state.player.y, ang, 300 * sm, true, 7, "#cc2233", 14 * dm);
+      core.marauderPlunder = true;
+      state.bullets.push(core);
+      return;
+    }
+    if (sid === "wick") {
+      abilityParticleBurst("#ffcc55", 140, 72);
+      state.player.wickSprayTimer = 3;
+      state.player.wickSprayAcc = 0;
+      state.player.wickSprayShotsRemaining = 50;
+      return;
+    }
+    if (sid === "pebble") {
+      abilityParticleBurst("#aab4bc", 88, 50);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      for (let i = 0; i < 5; i++) {
+        const a = ang + (i - 2) * 0.2;
+        const b = new Bullet(state.player.x, state.player.y, a, 398 * sm, true, 3.5, "#aab4bc", 6.4 * dm);
+        configurePebbleRicochetOrb(b);
+        b.life = 2.4;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "ember") {
+      abilityParticleBurst("#ff5a2a", 180, 95);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      state.emberFog = {
+        life: 5.6,
+        maxLife: 5.6,
+        radius: 340,
+        dps: 7.2 * dm,
+        color: "rgba(255, 70, 40, 0.18)",
+      };
+      return;
+    }
+    if (sid === "sparrow") {
+      abilityParticleBurst("#ffdd55", 90, 55);
+      const dmg = 3.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sp = 380 * state.player.shotSpeedMultiplier;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const b = new Bullet(state.player.x, state.player.y, a, sp, true, 2.2, "#ffe566", dmg);
+        b.noTrail = true;
+        b.visualShape = "starPellet";
+        b.life = 0.55;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "tempest") {
+      abilityParticleBurst("#ffeb3b", 360, 175);
+      state.tempestEyeStorms.push(new TempestEyeStormVortex(state.player.x, state.player.y));
+      return;
+    }
+    if (sid === "aurora") {
+      abilityParticleBurst("#7dfff0", 220, 120);
+      for (let t = 0; t < 90; t++) {
+        const a = rng(0, Math.PI * 2);
+        const sp = rng(180, 520) * state.player.shotSpeedMultiplier;
+        const hues = ["#66ffe6", "#b388ff", "#7dffb3"];
+        state.bullets.push(
+          new Bullet(state.player.x, state.player.y, a, sp, true, 2.4, hues[t % 3], 4.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
+        );
+      }
+      return;
+    }
+    if (sid === "knave") {
+      abilityParticleBurst("#c86bff", 80, 45);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      const alive = state.enemies.filter((e) => e && e.hp > 0);
+      alive.sort((a, b) => dist(a.x, a.y, state.player.x, state.player.y) - dist(b.x, b.y, state.player.x, state.player.y));
+      for (let k = 0; k < 3; k++) {
+        const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+        const b = new Bullet(state.player.x, state.player.y, ang, 500 * sm, true, 3.9, "#d5a6ff", 8.5 * dm);
+        b.visualShape = "raggedShard";
+        b.wobbleAmp = 0.14;
+        b.knaveLeftCurveTimer = 0.2;
+        b.tracking = true;
+        b.trackingTarget = alive[k] || alive[k % Math.max(alive.length, 1)] || getNearestEnemy(state.player.x, state.player.y);
+        b.trackingTurnRate = 5.8;
+        b.piercing = true;
+        b.pierceCount = 3;
+        b.life = 2.2;
+        state.bullets.push(b);
+      }
+      return;
+    }
     abilityParticleBurst("#9bf5ff", 250, 100);
     const sprays = 48;
     const damage = 7 * state.player.damageMultiplier * state.player.novaDamageMultiplier * state.player.abilityDamageMultiplier;
@@ -4830,7 +7992,104 @@ const abilityHandlers = {
     }
   },
   rapidVolley: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    if (!state.running || state.upgradePending) return;
+    if (state.player.shipId === "dart" && (state.player.dartTwinPierceTimer || 0) > 0) return;
+    if (!consumeAbilityEnergy(cost)) return;
+    if (state.player.shipId === "wick") {
+      abilityParticleBurst("#ffb74d", 85, 48);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      const shell = new Bullet(state.player.x, state.player.y, ang, 410 * sm, true, 9.2, "#ffcc66", 6.2 * dm);
+      shell.wickExplosiveShot = true;
+      shell.visualShape = "heavyOrb";
+      shell.noTrail = true;
+      shell.life = 2.4;
+      state.bullets.push(shell);
+      return;
+    }
+    if (state.player.shipId === "dart") {
+      abilityParticleBurst("#f5f8ff", 95, 52);
+      state.player.dartTwinPierceTimer = 3.5;
+      return;
+    }
+    if (state.player.shipId === "bolt") {
+      abilityParticleBurst("#66a8ff", 58, 36);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const sm = state.player.shotSpeedMultiplier;
+      const ion = new Bullet(state.player.x, state.player.y, ang, 118 * sm, true, 11, "#66ccff", 0.001);
+      ion.boltIonOrb = true;
+      ion.boltIonOrbDps = 42;
+      ion.infinitePierce = true;
+      ion.life = 5.2;
+      ion.noTrail = true;
+      state.bullets.push(ion);
+      return;
+    }
+    if (state.player.shipId === "myrmidon") {
+      abilityParticleBurst("#ff4444", 80, 45);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const perp = ang + Math.PI / 2;
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      for (let i = -1; i <= 1; i++) {
+        const b = new Bullet(state.player.x + Math.cos(perp) * i * 15, state.player.y + Math.sin(perp) * i * 15, ang, 620 * sm, true, 2.7, "#ff4444", 8.2 * dm);
+        b.visualShape = "lineShot";
+        b.life = 0.5;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (state.player.shipId === "claw") {
+      abilityParticleBurst("#5cff8a", 82, 45);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const candidates = state.enemies
+        .filter((e) => e && e.hp > 0)
+        .sort((a, b) => dist(a.x, a.y, state.player.x, state.player.y) - dist(b.x, b.y, state.player.x, state.player.y))
+        .slice(0, 5);
+      for (let i = 0; i < 5; i++) {
+        const target = candidates[i] || null;
+        const ang = target
+          ? Math.atan2(target.y - state.player.y, target.x - state.player.x)
+          : Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x) + (i - 2) * 0.18;
+        const b = new Bullet(state.player.x, state.player.y, ang, 420 * state.player.shotSpeedMultiplier, true, 5.6, "#5cff8a", 1.6 * dm);
+        b.visualShape = "pawShot";
+        b.clawHoverPaw = true;
+        b.clawHoverTarget = target;
+        b.clawHoverDps = 5.2 * dm;
+        b.clawHoverStun = 0.32;
+        b.infinitePierce = true;
+        b.piercing = true;
+        b.life = 4;
+        b.noTrail = true;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (state.player.shipId === "stinger") {
+      abilityParticleBurst("#a8ff7a", 92, 52);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const centerX = state.player.x;
+      const centerY = state.player.y;
+      const total = 10;
+      for (let i = 0; i < total; i++) {
+        const baseAng = (i / total) * Math.PI * 2;
+        const b = new Bullet(centerX, centerY, baseAng, 1, true, 4.9, "#9dff71", 5.9 * dm);
+        b.visualShape = "clawHook";
+        b.stingerSpiral = true;
+        b.stingerSpiralCx = centerX;
+        b.stingerSpiralCy = centerY;
+        b.stingerSpiralStart = baseAng;
+        b.stingerSpiralOutSpin = i % 2 === 0 ? 1 : -1;
+        b.stingerSpiralInSpin = i % 2 === 0 ? -1 : 1;
+        b.stingerSpiralMaxR = 240;
+        b.stingerSpiralTurnRate = 6.6;
+        b.life = 1.8;
+        b.noTrail = true;
+        state.bullets.push(b);
+      }
+      return;
+    }
     const rvCol = {
       sparrow: "#7dffb3",
       vanguard: "#ffd48a",
@@ -4847,6 +8106,39 @@ const abilityHandlers = {
   energySurge: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const sid = state.player.shipId;
+    if (sid === "sparrow") {
+      abilityParticleBurst("#ffe566", 85, 48);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      for (let i = -2; i <= 2; i++) {
+        const b = new Bullet(state.player.x, state.player.y, ang + i * 0.11, 520 * sm, true, 2.2, "#ffd54a", 7.2 * dm);
+        b.lineShot = true;
+        b.life = 0.32;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "ember") {
+      abilityParticleBurst("#ff2a2a", 120, 70);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      const b = new Bullet(state.player.x, state.player.y, ang, 250 * sm, true, 16, "#ff2a2a", 18 * dm);
+      b.life = 4.6;
+      b.emberInfernoOrb = true;
+      b.emberTrailDps = 12 * dm;
+      b.knockback = 110;
+      b.noTrail = true;
+      state.bullets.push(b);
+      return;
+    }
+    if (sid === "gallant") {
+      abilityParticleBurst("#d0e8ff", 110, 60);
+      state.player.rapidTimer = Math.max(state.player.rapidTimer, 3.2);
+      state.player.burstTimer = Math.max(state.player.burstTimer, 2.4);
+      return;
+    }
     const pal = {
       striker: { c: "#74ffce", mul: 1 },
       sparrow: { c: "#ff9de2", mul: 1.02 },
@@ -4880,6 +8172,59 @@ const abilityHandlers = {
   shockwave: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const sid = state.player.shipId;
+    if (sid === "bolt") {
+      abilityParticleBurst("#a8d8ff", 92, 54);
+      state.player.boltChannelLock = 6;
+      state.boltCage = {
+        startMs: performance.now(),
+        rays: 15,
+        footYOffset: 24,
+        innerRadius: 18,
+        outerRadius: 142,
+        hitBand: 26,
+      };
+      return;
+    }
+    if (sid === "titan") {
+      abilityParticleBurst("#ff7722", 210, 100);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const baseDamage = (120 + state.wave * 2) * dm;
+      const circle = new ExpandingCircle(config.width * 0.5, config.height - 52, config.width * 0.52, "#ff6622", 1.05, baseDamage, null, true);
+      state.expandingCircles.push(circle);
+      return;
+    }
+    if (sid === "buckler") {
+      abilityParticleBurst("#ffb347", 100, 55);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const c = new ExpandingCircle(state.player.x, state.player.y, 140, "#ffaa66", 0.85, 55 * dm, null, true);
+      state.expandingCircles.push(c);
+      for (const enemy of state.enemies) {
+        const d = dist(enemy.x, enemy.y, state.player.x, state.player.y);
+        if (d < 160) {
+          const push = Math.atan2(enemy.y - state.player.y, enemy.x - state.player.x);
+          enemy.x += Math.cos(push) * 36;
+          enemy.y += Math.sin(push) * 36;
+        }
+      }
+      return;
+    }
+    if (sid === "aegis") {
+      abilityParticleBurst("#78c0ff", 210, 100);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      state.expandingCircles.push(new ExpandingCircle(state.player.x, state.player.y, 270, "#78c0ff", 1.35, 84 * dm, null, true));
+      state.visualBeams.push({
+        x1: state.player.x,
+        y1: state.player.y,
+        x2: state.player.x,
+        y2: TOP_HUD_SAFE_Y,
+        color: "rgba(160, 220, 255, 0.95)",
+        width: 42,
+        life: 0.48,
+        maxLife: 0.48,
+        phase: 0,
+      });
+      return;
+    }
     const skin = {
       aegis: { p: "#ffe29b", ring: "#ffd27a" },
       bulwark: { p: "#d4a574", ring: "#c49a6c" },
@@ -4914,13 +8259,75 @@ const abilityHandlers = {
   },
   fortify: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const col = { aegis: "#ffe8b0", bulwark: "#c4b28a", halberd: "#e8d4a8", myrmidon: "#f0d060" }[state.player.shipId] || "#ffe29b";
+    const sid = state.player.shipId;
+    if (sid === "pebble") {
+      abilityParticleBurst("#8899aa", 120, 72);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      const sp = 320 * sm;
+      const b = new Bullet(state.player.x, state.player.y, ang, sp, true, 30, "#6a7580", 22 * dm);
+      b.pebbleBoulder = true;
+      b.visualShape = "spikedBoulder";
+      b.wallBounceInfinite = true;
+      b.maxRebounds = 1;
+      b.rebounds = 0;
+      b.verticalReboundOnly = false;
+      b.gravityDrop = 0;
+      b.infinitePierce = true;
+      b.life = 5;
+      b.noTrail = true;
+      b._pebbleNextDmg = 0;
+      state.bullets.push(b);
+      return;
+    }
+    if (sid === "buckler") {
+      abilityParticleBurst("#ffb347", 100, 55);
+      state.player.fortifyActive = true;
+      state.player.fortifyTimer = 1.05;
+      state.player.rapidVolleyActive = true;
+      state.player.rapidVolleyTimer = 1.05;
+      state.player.shoot(state.bullets);
+      return;
+    }
+    if (sid === "bulwark") {
+      abilityParticleBurst("#ff8c42", 130, 70);
+      state.player.fortifyActive = true;
+      state.player.fortifyTimer = 1.05;
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let ring = 0; ring < 3; ring++) {
+        for (let i = 0; i < 28; i++) {
+          const a = (i / 28) * Math.PI * 2 + ring * 0.07;
+          const b = new Bullet(state.player.x, state.player.y, a, (145 + ring * 35) * state.player.shotSpeedMultiplier, true, 6.5, "#ff8c42", 6.5 * dm);
+          b.visualShape = "heavyOrb";
+          b.life = 1.4;
+          state.bullets.push(b);
+        }
+      }
+      return;
+    }
+    if (sid === "myrmidon") {
+      abilityParticleBurst("#ff4444", 92, 52);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const axes = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+      for (const a of axes) {
+        for (let i = 0; i < 5; i++) {
+          const b = new Bullet(state.player.x, state.player.y, a, (360 + i * 32) * state.player.shotSpeedMultiplier, true, 3.2, "#ff4444", 5.8 * dm);
+          b.visualShape = "lineShot";
+          b.life = 0.9;
+          state.bullets.push(b);
+        }
+      }
+      return;
+    }
+    const col = { aegis: "#ffe8b0", bulwark: "#c4b28a", halberd: "#e8d4a8", myrmidon: "#f0d060" }[sid] || "#ffe29b";
     abilityParticleBurst(col, 180, 80);
     state.player.fortifyActive = true;
-    state.player.fortifyTimer = 10;
+    state.player.fortifyTimer = sid === "myrmidon" ? 1.05 : 10;
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    for (let i = 0; i < 8; i++) {
-      const spread = (i - 4) * 0.2;
+    const count = sid === "myrmidon" ? 20 : 8;
+    for (let i = 0; i < count; i++) {
+      const spread = (i / count) * Math.PI * 2;
       state.bullets.push(
         new Bullet(state.player.x, state.player.y, angle + spread, 400 * state.player.shotSpeedMultiplier, true, 4, col, 5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
       );
@@ -4928,33 +8335,177 @@ const abilityHandlers = {
   },
   blink: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
     const oldX = state.player.x;
     const oldY = state.player.y;
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    const dashDistance = 180;
-    
-    abilityParticleBurst("#d1afff", 100, 50);
+    const dashDistance = sid === "sparrow" ? 115 : sid === "vanguard" || sid === "lancer" || sid === "gallant" ? 135 : 180;
+    const col = sid === "sparrow" ? "#ffe566" : "#d1afff";
+    abilityParticleBurst(col, 100, 50);
     state.player.x = clamp(state.player.x + Math.cos(angle) * dashDistance, 20, config.width - 20);
     state.player.y = clamp(state.player.y + Math.sin(angle) * dashDistance, 20, config.height - 20);
-    
-    abilityParticleBurst("#d1afff", 100, 50);
-    
+    abilityParticleBurst(col, 100, 50);
+    const x1 = oldX;
+    const y1 = oldY;
+    const x2 = state.player.x;
+    const y2 = state.player.y;
+    if (sid === "sparrow" || sid === "vanguard" || sid === "lancer" || sid === "gallant") {
+      const lineDps = 52 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (const enemy of state.enemies) {
+        const d = pointToSegmentDistance(enemy.x, enemy.y, x1, y1, x2, y2);
+        if (d < 12 + enemy.size * 0.42) {
+          enemy.hp -= lineDps * 0.06;
+          recordDamageDealt(lineDps * 0.06);
+          enemy.fireTimer += 0.08;
+        }
+      }
+      state.visualBeams.push({
+        x1,
+        y1,
+        x2,
+        y2,
+        color: sid === "sparrow" ? "rgba(255,230,120,0.95)" : "rgba(160,210,255,0.92)",
+        width: sid === "sparrow" ? 3 : 5,
+        life: 0.22,
+        maxLife: 0.22,
+        phase: 0,
+      });
+    }
     for (let i = 0; i < 30; i++) {
       const t = i / 30;
       const x = oldX + (state.player.x - oldX) * t;
       const y = oldY + (state.player.y - oldY) * t;
-      const p = new Particle(x, y, "#d1afff");
+      const p = new Particle(x, y, col);
       p.life = 0.3;
       state.particles.push(p);
     }
-    const bolts = 18;
+    const bolts = sid === "sparrow" ? 6 : 18;
     for (let i = 0; i < bolts; i++) {
       const spread = (i / bolts) * Math.PI * 2;
-      state.bullets.push(new Bullet(state.player.x, state.player.y, spread, 360, true, 4, "#d1afff", 7 * state.player.damageMultiplier * state.player.abilityDamageMultiplier));
+      state.bullets.push(new Bullet(state.player.x, state.player.y, spread, 360, true, 4, col, 7 * state.player.damageMultiplier * state.player.abilityDamageMultiplier));
     }
   },
   ghostfire: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    if (!state.running || state.upgradePending) return;
+    if (state.player.shipId === "dart" && (state.player.dartFlockWavesLeft || 0) > 0) return;
+    if (!consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
+    if (sid === "phantom") {
+      abilityParticleBurst("#dcd0ff", 90, 50);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const b = new Bullet(state.player.x, state.player.y, ang, 520 * state.player.shotSpeedMultiplier, true, 7, "rgba(200,190,255,0.55)", 4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+      b.piercing = true;
+      b.pierceCount = 14;
+      b.phasePassthrough = true;
+      b.life = 1.1;
+      state.bullets.push(b);
+      return;
+    }
+    if (sid === "dart") {
+      abilityParticleBurst("#f5f8ff", 75, 44);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const sm = state.player.shotSpeedMultiplier;
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let i = 0; i < 6; i++) {
+        const a = ang + (i - 2.5) * 0.085;
+        const b = new Bullet(state.player.x, state.player.y, a, 455 * sm, true, 2.25, "#f5f8ff", 5.1 * dm);
+        b.noTrail = true;
+        b.visualShape = "needle";
+        b.life = 1.05;
+        state.bullets.push(b);
+      }
+      state.player.dartFlockWavesLeft = 2;
+      state.player.dartFlockWaveAcc = 0;
+      return;
+    }
+    if (sid === "knave") {
+      abilityParticleBurst("#c89bff", 70, 40);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const speed = 500 * state.player.shotSpeedMultiplier;
+      const dmg = 6.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let burst = 0; burst < 3; burst++) {
+        const bx = state.player.x + Math.cos(ang) * burst * 12;
+        const by = state.player.y + Math.sin(ang) * burst * 12;
+        for (const config of [
+          { color: "#c86bff", phase: 0 },
+          { color: "#66a8ff", phase: Math.PI },
+        ]) {
+          const b = new Bullet(bx, by, ang, speed, true, 4.2, config.color, dmg);
+          b.visualShape = "lineShot";
+          b.sinePath = true;
+          b.sineOrigin = { x: bx, y: by };
+          b.sineAngle = ang;
+          b.sineSpeed = speed;
+          b.sineAmplitude = 10;
+          b.sineFrequency = 12;
+          b.sinePhase = config.phase;
+          b.piercing = true;
+          b.pierceCount = 6;
+          b.life = 1.45;
+          b.noTrail = true;
+          state.bullets.push(b);
+        }
+      }
+      return;
+    }
+    if (sid === "claw") {
+      abilityParticleBurst("#7dffb3", 80, 48);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const a0 = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      for (const d of [-Math.PI / 4, Math.PI / 4]) {
+        const len = 380;
+        const ex = state.player.x + Math.cos(a0 + d) * len;
+        const ey = state.player.y + Math.sin(a0 + d) * len;
+        for (const enemy of state.enemies) {
+          const distSeg = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
+          if (distSeg < 14 + enemy.size * 0.42) {
+            enemy.hp -= 22 * dm;
+            recordDamageDealt(22 * dm);
+          }
+        }
+        state.visualBeams.push({
+          x1: state.player.x,
+          y1: state.player.y,
+          x2: ex,
+          y2: ey,
+          color: "rgba(100, 255, 160, 0.9)",
+          width: 10,
+          life: 0.28,
+          maxLife: 0.28,
+          phase: 0,
+        });
+      }
+      return;
+    }
+    if (sid === "marauder") {
+      abilityParticleBurst("#cc3344", 85, 48);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const sm = state.player.shotSpeedMultiplier;
+      for (let i = 0; i < 4; i++) {
+        const b = new Bullet(state.player.x, state.player.y, ang + (i - 1.5) * 0.06, 440 * sm, true, 3.4, "#ee4455", 7 * dm);
+        b.maxRebounds = 1;
+        b.rebounds = 0;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "raven") {
+      abilityParticleBurst("#4a2a6a", 100, 55);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let i = 0; i < 6; i++) {
+        const a = rng(0, Math.PI * 2);
+        const b = new Bullet(state.player.x, state.player.y, a, 320 * state.player.shotSpeedMultiplier, true, 3.4, "#6b4a9a", 6.5 * dm);
+        const near = getNearestEnemy(b.x, b.y);
+        if (near) {
+          b.tracking = true;
+          b.trackingTarget = near;
+          b.trackingTurnRate = 22;
+        }
+        state.bullets.push(b);
+      }
+      return;
+    }
     abilityParticleBurst("#d1afff", 100, 50);
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     for (let i = 0; i < 12; i++) {
@@ -4966,13 +8517,49 @@ const abilityHandlers = {
   phaseShift: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const sid = state.player.shipId;
-    const col = { oracle: "#d4b8ff", aurora: "#7dfff0", phantom: "#9b7fff" }[sid] || "#9b7fff";
+    const col = { oracle: "#d4b8ff", aurora: "#7dfff0", phantom: "#9b7fff", voidwalker: "#6a4a9a", eclipse: "#e8e0ff" }[sid] || "#9b7fff";
     const oldX = state.player.x;
     const oldY = state.player.y;
     abilityParticleBurst(col, 120, 60);
-    state.player.x = clamp(state.player.x + rng(-200, 200), 20, config.width - 20);
-    state.player.y = clamp(state.player.y + rng(-200, 200), 20, config.height - 20);
+    if (sid === "voidwalker") {
+      state.player.x = clamp(state.player.x + rng(-120, 120), 20, config.width - 20);
+      state.player.y = clamp(state.player.y + rng(-120, 120), 20, config.height - 20);
+    } else if (sid === "eclipse") {
+      state.player.x = clamp(state.player.x + rng(-220, 220), 20, config.width - 20);
+      state.player.y = clamp(state.player.y + rng(-220, 220), 20, config.height - 20);
+    } else {
+      state.player.x = clamp(state.player.x + rng(-200, 200), 20, config.width - 20);
+      state.player.y = clamp(state.player.y + rng(-200, 200), 20, config.height - 20);
+    }
     abilityParticleBurst(col, 120, 60);
+    if (sid === "oracle") {
+      state.player.foresightTimer = 5;
+    }
+    if (sid === "phantom") {
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const back = ang + Math.PI;
+      for (let k = 0; k < 16; k++) {
+        const t = k / 16;
+        const px = oldX + (state.player.x - oldX) * t;
+        const py = oldY + (state.player.y - oldY) * t;
+        state.particles.push(new Particle(px, py, "rgba(200,180,255,0.45)"));
+      }
+      for (let i = 0; i < 5; i++) {
+        state.bullets.push(
+          new Bullet(state.player.x, state.player.y, back + (i - 2) * 0.12, 280 * state.player.shotSpeedMultiplier, true, 3, "rgba(180,160,255,0.5)", 4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
+        );
+      }
+      return;
+    }
+    if (sid === "eclipse") {
+      for (let ring = 0; ring < 22; ring++) {
+        const a = (ring / 22) * Math.PI * 2;
+        state.bullets.push(
+          new Bullet(state.player.x, state.player.y, a, 340 * state.player.shotSpeedMultiplier, true, 3.2, "#f0f0ff", 5.5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
+        );
+      }
+      return;
+    }
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     for (let i = 0; i < 6; i++) {
       const spread = (i - 3) * 0.15;
@@ -4988,6 +8575,7 @@ const abilityHandlers = {
       tempest: { burst: "#fff44d", c0: "#ffffff", c1: "#ffff00", c2: "#ffaa00", hit: "#ffff00", top: 0, bolts: 12 },
       oracle: { burst: "#e0c8ff", c0: "#ffffff", c1: "#d4a8ff", c2: "#b070ff", hit: "#e6c6ff", top: 42, bolts: 14 },
       aurora: { burst: "#8ffff0", c0: "#e8ffff", c1: "#66ffe6", c2: "#3dd4ff", hit: "#7dfff4", top: 12, bolts: 11 },
+      warden: { burst: "#ffe9a8", c0: "#fffacd", c1: "#ffd700", c2: "#daa520", hit: "#fff8dc", top: 0, bolts: 10 },
     }[sid] || { burst: "#ffff00", c0: "#ffffff", c1: "#ffff00", c2: "#ffaa00", hit: "#ffff00", top: 0, bolts: 12 };
     abilityParticleBurst(prof.burst, 150, 70);
     const boltCount = Math.min(prof.bolts, state.enemies.length + 5);
@@ -5035,7 +8623,8 @@ const abilityHandlers = {
           state.particles.push(new Particle(target.enemy.x, target.enemy.y, prof.hit));
         }
         if (target.enemy.hp <= 0) {
-          onEnemyDestroyed(target.enemy, target.index);
+          const killI = state.enemies.indexOf(target.enemy);
+          if (killI > -1) onEnemyDestroyed(target.enemy, killI);
         }
       }
     }
@@ -5051,6 +8640,45 @@ const abilityHandlers = {
       }
       return;
     }
+    if (state.player.shipId === "specter") {
+      abilityParticleBurst("#f0f0ff", 160, 80);
+      for (let i = 0; i < 10; i++) {
+        const orb = new NovaOrbiter((i / 10) * Math.PI * 2, rng(42, 118));
+        orb.specterDecoy = true;
+        orb.life = 6.5;
+        orb.maxLife = 6.5;
+        state.novaOrbiters.push(orb);
+      }
+      return;
+    }
+    if (state.player.shipId === "inferno") {
+      abilityParticleBurst("#ff4500", 200, 95);
+      for (let i = 0; i < 18; i++) {
+        const orb = new NovaOrbiter((i / 18) * Math.PI * 2, rng(36, 90));
+        orb.infernoSwarm = true;
+        orb.tightOrbit = true;
+        orb.life = 5.5;
+        orb.maxLife = 5.5;
+        state.novaOrbiters.push(orb);
+      }
+      return;
+    }
+    if (state.player.shipId === "picket") {
+      abilityParticleBurst("#f0f6ff", 95, 50);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      for (const side of [-1, 1]) {
+        for (let t = 0; t < 12; t++) {
+          const orbit = (t / 12) * Math.PI * 2 * side;
+          const sx = state.player.x + Math.cos(orbit) * 38;
+          const sy = state.player.y + Math.sin(orbit) * 24;
+          const b = new Bullet(sx, sy, ang + side * 0.05, 260 * state.player.shotSpeedMultiplier, true, 3.1, "#f0f6ff", 3.6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+          b.picketTri = true;
+          b.life = 0.35 + t * 0.02;
+          state.bullets.push(b);
+        }
+      }
+      return;
+    }
     abilityParticleBurst("#5ec6ff", 200, 90);
     for (let i = 0; i < 12; i++) {
       const orb = new NovaOrbiter((i / 12) * Math.PI * 2, rng(40, 145));
@@ -5059,8 +8687,282 @@ const abilityHandlers = {
   },
   chainBolt: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
+    const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+    const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+    const sm = state.player.shotSpeedMultiplier;
+    if (sid === "pebble") {
+      abilityParticleBurst("#aab4bc", 95, 52);
+      const perp = ang + Math.PI / 2;
+      const step = 7;
+      for (let i = 0; i < 8; i++) {
+        const t = (i - 3.5) * step;
+        const bx = state.player.x + Math.cos(perp) * t;
+        const by = state.player.y + Math.sin(perp) * t;
+        const b = new Bullet(bx, by, ang, 455 * sm, true, 4.1, "#aab4bc", 6.2 * dm);
+        configurePebbleRicochetOrb(b);
+        b.life = 2.2;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "dart") {
+      abilityParticleBurst("#d8ecff", 88, 48);
+      for (let i = 0; i < 4; i++) {
+        const a = ang + (i - 1.5) * 0.19;
+        const b = new Bullet(state.player.x, state.player.y, a, 400 * sm, true, 2.2, "#f7fbff", 6.4 * dm);
+        b.visualShape = "needle";
+        b.noTrail = true;
+        b.life = 1.45;
+        b.dartHomingPending = true;
+        b.dartHomingArmDelay = 0.5;
+        b.trackingTurnRate = 11;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "bolt") {
+      abilityParticleBurst("#88ccff", 72, 42);
+      const base = 24 * dm;
+      const hit = [];
+      let lx = state.player.x;
+      let ly = state.player.y;
+      const maxFirst = 540;
+      const maxHop = 400;
+      for (let hop = 0; hop < 10; hop++) {
+        let best = null;
+        let bestD = 1e9;
+        const limit = hop === 0 ? maxFirst : maxHop;
+        for (const en of state.enemies) {
+          if (!en || en.hp <= 0 || hit.includes(en)) continue;
+          const d = dist(lx, ly, en.x, en.y);
+          if (d < bestD && d <= limit) {
+            bestD = d;
+            best = en;
+          }
+        }
+        if (!best) break;
+        hit.push(best);
+        const mult = Math.pow(0.9, hop);
+        const dmg = base * mult;
+        best.hp -= dmg;
+        recordDamageDealt(dmg);
+        const poly = buildLightningPolyline(lx, ly, best.x, best.y, 11, hop * 7919 + (best.x | 0) * 13 + (best.y | 0));
+        pushDecorativeLightning(poly, hop === 0 ? "rgba(170, 220, 255, 0.95)" : "rgba(130, 200, 255, 0.94)", 1.5, hop === 0 ? 3.1 : 2.9);
+        lx = best.x;
+        ly = best.y;
+        if (best.hp <= 0) {
+          const idx = state.enemies.indexOf(best);
+          if (idx > -1) onEnemyDestroyed(best, idx);
+        }
+      }
+      return;
+    }
+    if (sid === "wick") {
+      abilityParticleBurst("#ff9a3c", 130, 68);
+      const dash = 205;
+      const ox = state.player.x;
+      const oy = state.player.y;
+      const nx = clamp(ox + Math.cos(ang) * dash, 22, config.width - 22);
+      const ny = clamp(oy + Math.sin(ang) * dash, TOP_HUD_SAFE_Y + 22, config.height - 22);
+      const steps = 12;
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps;
+        state.voidTrails.push({
+          x: ox + (nx - ox) * t,
+          y: oy + (ny - oy) * t,
+          radius: 22 + t * 20,
+          life: 0.62,
+          maxLife: 0.62,
+          color: "rgba(255, 150, 70, 0.82)",
+        });
+      }
+      state.player.x = nx;
+      state.player.y = ny;
+      for (let k = 0; k < 13; k++) {
+        const a = (k / 13) * Math.PI * 2;
+        const ring = new Bullet(nx, ny, a, 395 * sm, true, 2.65, "#ffe0a0", 5.4 * dm);
+        ring.noTrail = true;
+        ring.lineShot = true;
+        ring.life = 0.88;
+        state.bullets.push(ring);
+      }
+      return;
+    }
+    if (sid === "bulwark") {
+      abilityParticleBurst("#ff8c42", 90, 50);
+      for (let i = -3; i <= 3; i++) {
+        const a = ang + i * 0.09;
+        const b = new Bullet(state.player.x, state.player.y, a, 420 * sm, true, 5.5, "#ffaa55", 10 * dm);
+        b.life = 0.22;
+        b.lineShot = true;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "myrmidon") {
+      abilityParticleBurst("#ff8844", 72, 44);
+      const b = new Bullet(state.player.x, state.player.y, ang, 380 * sm, true, 5, "#ff5533", 11 * dm);
+      b.maxRebounds = 2;
+      b.rebounds = 0;
+      b.visualShape = "shieldDisc";
+      state.bullets.push(b);
+      return;
+    }
+    if (sid === "ember") {
+      abilityParticleBurst("#ff8844", 70, 42);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const shotSpeed = 500 * state.player.shotSpeedMultiplier;
+      const baseDamage = 5.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let i = 0; i < 5; i++) {
+        const a = ang + (i - 2) * 0.075;
+        const b = new Bullet(state.player.x, state.player.y, a, shotSpeed, true, 4.2, "#ff7a45", baseDamage);
+        b.burnDamage = baseDamage * 0.3;
+        b.visualShape = "spark";
+        b.emberEnhancedBurst = true;
+        b.emberPuddle = true;
+        b.life = 1.05;
+        state.bullets.push(b);
+      }
+      return;
+    }
+    if (sid === "stinger") {
+      abilityParticleBurst("#a8ff7a", 85, 48);
+      const oldX = state.player.x;
+      const oldY = state.player.y;
+      state.player.x = clamp(input.mouse.x, 24, config.width - 24);
+      state.player.y = clamp(input.mouse.y, TOP_HUD_SAFE_Y + 24, config.height - 24);
+      const burstClaws = (cx, cy) => {
+        for (let i = 0; i < 10; i++) {
+          const a = (i / 10) * Math.PI * 2;
+          const b = new Bullet(cx, cy, a, 440 * sm, true, 4.8, "#9dff71", 6.8 * dm);
+          b.visualShape = "clawHook";
+          b.knockback = 54;
+          b.stingerPoison = true;
+          b.stingerPoisonPerTick = 1.4 * dm;
+          b.life = 1.1;
+          state.bullets.push(b);
+        }
+      };
+      burstClaws(oldX, oldY);
+      burstClaws(state.player.x, state.player.y);
+      return;
+    }
+    if (sid === "claw") {
+      abilityParticleBurst("#5cff8a", 75, 45);
+      const b = new Bullet(state.player.x, state.player.y, ang, 390 * sm, true, 13.5, "#66ff99", 14 * dm);
+      b.clawTear = true;
+      b.clawStun = 3.5;
+      b.visualShape = "pawShot";
+      b.knockback = 120;
+      b.life = 1.35;
+      state.bullets.push(b);
+      return;
+    }
+    if (sid === "lancer") {
+      abilityParticleBurst("#66ff99", 85, 48);
+      const b = new Bullet(state.player.x, state.player.y, ang, 720 * sm, true, 2.8, "#66ff99", 16 * dm);
+      b.piercing = true;
+      b.pierceCount = 5;
+      let target = null;
+      let minD = 1e9;
+      for (const enemy of state.enemies) {
+        const d = dist(state.player.x, state.player.y, enemy.x, enemy.y);
+        if (d < minD && d < 420) {
+          minD = d;
+          target = enemy;
+        }
+      }
+      if (target) {
+        target.fireTimer += 1.05;
+      }
+      state.bullets.push(b);
+      return;
+    }
+    if (sid === "warden") {
+      abilityParticleBurst("#ffe9a8", 100, 55);
+      const len = 420;
+      const ex = state.player.x + Math.cos(ang) * len;
+      const ey = state.player.y + Math.sin(ang) * len;
+      for (const enemy of state.enemies) {
+        const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
+        if (d < 22 + enemy.size * 0.45) {
+          enemy.fireTimer += 0.45;
+          enemy.hp -= 42 * dm;
+          recordDamageDealt(42 * dm);
+        }
+      }
+      state.visualBeams.push({
+        x1: state.player.x,
+        y1: state.player.y,
+        x2: ex,
+        y2: ey,
+        color: "rgba(255, 230, 160, 0.92)",
+        width: 16,
+        life: 0.35,
+        maxLife: 0.35,
+        phase: 0,
+      });
+      return;
+    }
+    if (sid === "glacier") {
+      abilityParticleBurst("#e0ffff", 110, 58);
+      const len = 520;
+      const ex = state.player.x + Math.cos(ang) * len;
+      const ey = state.player.y + Math.sin(ang) * len;
+      for (const enemy of state.enemies) {
+        const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
+        if (d < 20 + enemy.size * 0.45) {
+          enemy.fireTimer += 0.55;
+          enemy.hp -= 38 * dm;
+          recordDamageDealt(38 * dm);
+        }
+      }
+      state.visualBeams.push({
+        x1: state.player.x,
+        y1: state.player.y,
+        x2: ex,
+        y2: ey,
+        color: "rgba(200, 250, 255, 0.95)",
+        width: 18,
+        life: 0.4,
+        maxLife: 0.4,
+        phase: 0,
+      });
+      return;
+    }
+    if (sid === "vanguard") {
+      abilityParticleBurst("#9fd4ff", 95, 52);
+      let w = 14;
+      const grow = 18;
+      const len = 480;
+      for (let step = 0; step < 6; step++) {
+        const ex = state.player.x + Math.cos(ang) * len;
+        const ey = state.player.y + Math.sin(ang) * len;
+        for (const enemy of state.enemies) {
+          const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
+          if (d < w + enemy.size * 0.45) {
+            enemy.hp -= 22 * dm;
+            recordDamageDealt(22 * dm);
+          }
+        }
+        state.visualBeams.push({
+          x1: state.player.x,
+          y1: state.player.y,
+          x2: ex,
+          y2: ey,
+          color: "rgba(120, 200, 255, 0.9)",
+          width: w,
+          life: 0.12,
+          maxLife: 0.12,
+          phase: step,
+        });
+        w += grow;
+      }
+      return;
+    }
     abilityParticleBurst("#ffff00", 80, 40);
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+    const angle = ang;
     let target = null;
     let minDist = Infinity;
     for (const enemy of state.enemies) {
@@ -5093,10 +8995,54 @@ const abilityHandlers = {
       state.expandingCircles.push(circle);
       return;
     }
+    if (sid === "aurora") {
+      abilityParticleBurst("#7dfff0", 200, 95);
+      for (let ring = 0; ring < 3; ring++) {
+        const circle = new ExpandingCircle(
+          state.player.x,
+          state.player.y,
+          160 + ring * 70,
+          ring === 0 ? "#66ffe6" : ring === 1 ? "#b388ff" : "#7dffb3",
+          1.05,
+          (55 - ring * 8) * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          null,
+          true
+        );
+        state.expandingCircles.push(circle);
+      }
+      return;
+    }
+    if (sid === "grimstar") {
+      abilityParticleBurst("#8b62ff", 190, 90);
+      state.grimstarWaves.push(new GrimstarWave());
+      return;
+    }
+    if (sid === "aegis") {
+      abilityParticleBurst("#78c0ff", 175, 85);
+      for (let i = 0; i < 6; i++) {
+        state.aphelionShields.push(new OrbitalAegisShield(i, 6, 3));
+      }
+      const pulse = new ExpandingCircle(state.player.x, state.player.y, 230, "#78c0ff", 1.05, 62 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, null, true);
+      state.expandingCircles.push(pulse);
+      return;
+    }
     if (sid === "helios") {
-      abilityParticleBurst("#fff8dc", 200, 90);
-      const circle = new ExpandingCircle(state.player.x, state.player.y, 205, "#ffec80", 1.25, 85 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, null, true);
-      state.expandingCircles.push(circle);
+      abilityParticleBurst("#ffbd45", 260, 120);
+      for (let i = 0; i < 5; i++) {
+        const x = ((i + 1) / 6) * config.width;
+        state.fireColumns.push(new FireColumn(x, 46, 2.1));
+        state.visualBeams.push({
+          x1: x,
+          y1: config.height,
+          x2: x,
+          y2: TOP_HUD_SAFE_Y,
+          color: "rgba(255, 180, 55, 0.88)",
+          width: 32,
+          life: 2.1,
+          maxLife: 2.1,
+          phase: i,
+        });
+      }
       return;
     }
     abilityParticleBurst("#e8ff44", 200, 90);
@@ -5108,7 +9054,34 @@ const abilityHandlers = {
   siegeCannon: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    
+    if (state.player.shipId === "titan") {
+      abilityParticleBurst("#ff8f2a", 220, 110);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      const len = config.width * 0.92;
+      const ex = state.player.x + Math.cos(angle) * len;
+      const ey = state.player.y + Math.sin(angle) * len;
+      const w = 48;
+      for (const enemy of state.enemies) {
+        const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
+        if (d < w * 0.5 + enemy.size * 0.42) {
+          const chunk = 95 * dm;
+          enemy.hp -= chunk;
+          recordDamageDealt(chunk);
+        }
+      }
+      state.visualBeams.push({
+        x1: state.player.x,
+        y1: state.player.y,
+        x2: ex,
+        y2: ey,
+        color: "rgba(255, 140, 60, 0.92)",
+        width: w,
+        life: 0.45,
+        maxLife: 0.45,
+        phase: 0,
+      });
+      return;
+    }
     for (let i = 0; i < 250; i++) {
       const spread = rng(-0.4, 0.4);
       const dist = rng(15, 50);
@@ -5128,6 +9101,53 @@ const abilityHandlers = {
   },
   energyBarrier: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
+    const aim = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+    if (sid === "bulwark") {
+      abilityParticleBurst("#ffaa55", 110, 60);
+      const centerX = state.player.x + Math.cos(aim) * 55;
+      const centerY = state.player.y + Math.sin(aim) * 55;
+      const wall = new Barrier(centerX, centerY, aim);
+      wall.length = 155;
+      wall.width = 18;
+      wall.life = 2;
+      wall.maxLife = 2;
+      wall.color = "#ffaa55";
+      state.barriers.push(wall);
+      state.player.infiniteShield = true;
+      state.player.infiniteShieldTimer = 2.2;
+      state.player.shieldColorOverride = "rgba(255, 170, 80, 0.85)";
+      state.player.shieldColorTimer = 2.2;
+      return;
+    }
+    if (sid === "aegis") {
+      abilityParticleBurst("#78c0ff", 150, 75);
+      const wall = new Barrier(state.player.x, state.player.y + 32, 0);
+      wall.length = 340;
+      wall.width = 22;
+      wall.life = 4.9;
+      wall.maxLife = 4.9;
+      wall.color = "#78c0ff";
+      wall.riseVy = -200;
+      wall.aegisBulwark = true;
+      state.barriers.push(wall);
+      state.player.shieldColorOverride = "rgba(120, 192, 255, 0.9)";
+      state.player.shieldColorTimer = 2;
+      return;
+    }
+    if (sid === "picket") {
+      abilityParticleBurst("#f0f6ff", 90, 50);
+      const centerX = state.player.x + Math.cos(aim) * 40;
+      const centerY = state.player.y + Math.sin(aim) * 40;
+      const tri = new Barrier(centerX, centerY, aim);
+      tri.length = 56;
+      tri.width = 18;
+      tri.life = 2;
+      tri.maxLife = 2;
+      tri.color = "#f0f6ff";
+      state.barriers.push(tri);
+      return;
+    }
     abilityParticleBurst("#00ffff", 150, 70);
     
     
@@ -5175,6 +9195,17 @@ const abilityHandlers = {
   },
   rampage: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    if (state.player.shipId === "titan") {
+      abilityParticleBurst("#ff6622", 200, 95);
+      state.player.titanFuryTimer = 5;
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let i = 0; i < 24; i++) {
+        const a = ang + (i / 24) * Math.PI * 2;
+        state.bullets.push(new Bullet(state.player.x, state.player.y, a, 340 * state.player.shotSpeedMultiplier, true, 5, "#ff8844", 8 * dm));
+      }
+      return;
+    }
     abilityParticleBurst("#ff4444", 200, 90);
     
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
@@ -5189,6 +9220,67 @@ const abilityHandlers = {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const sid = state.player.shipId;
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+    if (sid === "seraph") {
+      abilityParticleBurst("#ff2a2a", 150, 80);
+      const base = angle;
+      for (let k = 0; k < 4; k++) {
+        const a = base + (k / 4) * Math.PI * 2 + rng(-0.12, 0.12);
+        state.seraphBounceLasers.push(
+          new SeraphBounceLaser(
+            state.player.x + Math.cos(a) * 14,
+            state.player.y + Math.sin(a) * 14,
+            a
+          )
+        );
+      }
+      return;
+    }
+    if (sid === "aphelion") {
+      const holeX = state.player.x + Math.cos(angle) * 175;
+      const holeY = state.player.y + Math.sin(angle) * 175;
+      emitSpiralInwardParticles(holeX, holeY, "#8d4dff", 10, 82, 205, 1.2, 0.82);
+      emitSpiralInwardParticles(holeX, holeY, "#bb85ff", 8, 72, 182, -1.05, 0.75);
+      state.novaAnomalies.push(
+        new NovaAnomaly(holeX, holeY, {
+          maxRadius: 270,
+          duration: 3.4,
+          pullStrength: 460,
+          damagePerSecond: 128 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          pullEnabled: true,
+          explodeAtEnd: true,
+          explosionDamage: 340 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          explosionKnockback: 520,
+          knockbackRadius: 430,
+          color: "#7e42ff",
+          stunWhilePulled: true,
+          azureVortex: true,
+          aphelionCollapse: true,
+          streamColors: ["#a36cff", "#c291ff", "#7c4cff"],
+        })
+      );
+      return;
+    }
+    if (sid === "voidwalker") {
+      const holeX = state.player.x + Math.cos(angle) * 130;
+      const holeY = state.player.y + Math.sin(angle) * 130;
+      emitSpiralInwardParticles(holeX, holeY, "#4a2080", 8, 64, 200, 1.1, 0.7);
+      state.novaAnomalies.push(
+        new NovaAnomaly(holeX, holeY, {
+          maxRadius: 300,
+          duration: 2.85,
+          pullStrength: 480,
+          damagePerSecond: 88 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          pullEnabled: true,
+          explodeAtEnd: true,
+          explosionDamage: 265 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          explosionKnockback: 440,
+          knockbackRadius: 360,
+          color: "#2a1040",
+          stunWhilePulled: true,
+        })
+      );
+      return;
+    }
     const distance = sid === "aphelion" ? 175 : 150;
     const holeX = state.player.x + Math.cos(angle) * distance;
     const holeY = state.player.y + Math.sin(angle) * distance;
@@ -5211,10 +9303,33 @@ const abilityHandlers = {
   },
   shadowStep: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    if (state.player.shipId === "knave") {
+      abilityParticleBurst("#c86bff", 105, 58);
+      const count = 6;
+      const x = config.width * 0.5;
+      const baseY = config.height - 20;
+      const spacing = 18;
+      const a = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const speed = 420 * state.player.shotSpeedMultiplier;
+      const dmg = 7.6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let i = 0; i < count; i++) {
+        const y = baseY - i * spacing;
+        const b = new Bullet(x, y, a, speed, true, 5.8, "#bf83ff", dmg);
+        b.wobbleAmp = 0.14;
+        b.visualShape = "raggedShard";
+        b.knaveSteal = true;
+        b.life = 2.6;
+        state.bullets.push(b);
+      }
+      return;
+    }
     const oldX = state.player.x;
     const oldY = state.player.y;
     abilityParticleBurst("#9b7fff", 100, 50);
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+    const angle =
+      state.player.shipId === "knave"
+        ? Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x) + Math.PI
+        : Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     state.player.x = clamp(state.player.x + Math.cos(angle) * 120, 20, config.width - 20);
     state.player.y = clamp(state.player.y + Math.sin(angle) * 120, 20, config.height - 20);
     abilityParticleBurst("#9b7fff", 100, 50);
@@ -5229,7 +9344,8 @@ const abilityHandlers = {
   },
   deathMark: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#8b0000", 150, 70);
+    const sid = state.player.shipId;
+    abilityParticleBurst(sid === "specter" ? "#f0f0ff" : "#8b0000", 150, 70);
     
     let target = null;
     let minDist = Infinity;
@@ -5240,23 +9356,115 @@ const abilityHandlers = {
         target = enemy;
       }
     }
+    if (sid === "reaper") {
+      const a = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      abilityParticleBurst("#ff2222", 120, 60);
+      applyScytheSwing(
+        state.player.x,
+        state.player.y,
+        a,
+        340,
+        (Math.PI * 2) / 3,
+        118 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+        95,
+        "#ff2222",
+        null,
+        {
+          showHandle: true,
+          handleLength: 58,
+          pivotArcBlendRadius: 200,
+        }
+      );
+      return;
+    }
+    if (sid === "claw") {
+      abilityParticleBurst("#66ff99", 95, 54);
+      state.clawPawShield = {
+        life: 4,
+        maxLife: 4,
+        radius: 72,
+        yOffset: 76,
+      };
+      return;
+    }
     if (target) {
-      
+      if (sid === "stinger") {
+        abilityParticleBurst("#9dff71", 110, 60);
+        state.stingerPoisonFogs = state.stingerPoisonFogs || [];
+        state.stingerPoisonFogs.push({
+          x: state.player.x,
+          y: state.player.y,
+          life: 16,
+          maxLife: 16,
+          radius: 120,
+          maxRadius: 900,
+          tick: 0,
+          tickRate: 0.5,
+          damagePerTick: 4.4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+        });
+        return;
+      }
       target.deathMarked = true;
-      target.deathMarkTimer = 8; 
-      
+      target.deathMarkTimer = sid === "specter" ? 10 : sid === "stinger" ? 6 : 8;
       const angle = Math.atan2(target.y - state.player.y, target.x - state.player.x);
-      for (let i = 0; i < 8; i++) {
-        const spread = (i - 4) * 0.15;
-        const bullet = new Bullet(state.player.x, state.player.y, angle + spread, 500 * state.player.shotSpeedMultiplier, true, 5, "#8b0000", 10 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+      const count = sid === "specter" ? 0 : sid === "stinger" ? 4 : 8;
+      for (let i = 0; i < count; i++) {
+        const spread = (i - (count - 1) / 2) * 0.16;
+        const bullet = new Bullet(
+          state.player.x,
+          state.player.y,
+          angle + spread,
+          500 * state.player.shotSpeedMultiplier,
+          true,
+          5,
+          sid === "stinger" ? "#88ff66" : "#8b0000",
+          10 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
+        );
         bullet.tracking = true;
         bullet.trackingTarget = target;
+        if (sid === "stinger") {
+          bullet.burnDamage = 4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+        }
         state.bullets.push(bullet);
       }
     }
   },
   soulHarvest: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    if (state.player.shipId === "reaper") {
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      abilityParticleBurst("#660022", 170, 85);
+      for (const offset of [-72, 72]) {
+        const px = state.player.x + Math.cos(ang + Math.PI / 2) * offset + Math.cos(ang) * 80;
+        const py = state.player.y + Math.sin(ang + Math.PI / 2) * offset + Math.sin(ang) * 80;
+        state.reaperPortals.push(new ReaperPortal(px, py, offset < 0 ? -1 : 1));
+      }
+      return;
+    }
+    if (state.player.shipId === "marauder") {
+      abilityParticleBurst("#cc3344", 100, 55);
+      let target = null;
+      let minD = 1e9;
+      for (const enemy of state.enemies) {
+        const d = dist(state.player.x, state.player.y, enemy.x, enemy.y);
+        if (d < minD && d < 320) {
+          minD = d;
+          target = enemy;
+        }
+      }
+      if (target) {
+        const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+        const steal = 18 * dm;
+        target.hp -= steal;
+        recordDamageDealt(steal);
+        state.player.hp = Math.min(state.player.maxHp, state.player.hp + 4);
+        if (target.hp <= 0) {
+          const idx = state.enemies.indexOf(target);
+          if (idx > -1) onEnemyDestroyed(target, idx);
+        }
+      }
+      return;
+    }
     abilityParticleBurst("#8b0000", 120, 60);
     
     let nearbyEnemies = 0;
@@ -5280,26 +9488,124 @@ const abilityHandlers = {
     
     const energyRestore = Math.min(40 + nearbyEnemies * 5, 80);
     const shieldRestore = Math.min(20 + nearbyEnemies * 3, 50);
+    const prevEnergy = state.player.energy;
+    const prevShield = state.player.shield;
     state.player.energy = Math.min(state.player.energy + energyRestore, state.player.maxEnergy);
     state.player.shield = Math.min(state.player.shield + shieldRestore, state.player.maxShield);
+    recordEnergyRegen(state.player.energy - prevEnergy);
+    recordShieldRegen(state.player.shield - prevShield);
   },
   supernova: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const sid = state.player.shipId;
     if (sid === "seraph") {
-      emitNovaShellParticles(state.player.x, state.player.y, "#ff62d8", "#ffd0ff", 8, 80);
+      const vCount = 4;
+      const xStep = config.width / (vCount + 1);
+      for (let i = 1; i <= vCount; i++) {
+        state.screenLasers.push(
+          new ScreenLaser({
+            orientation: "vertical",
+            x: i * xStep,
+            width: 18,
+            life: 2.5,
+            color: "rgba(255, 40, 40, 1)",
+            damagePerSecond: 220,
+          })
+        );
+      }
+      const hCount = 3;
+      const yStep = (config.height - TOP_HUD_SAFE_Y) / (hCount + 1);
+      for (let j = 1; j <= hCount; j++) {
+        state.screenLasers.push(
+          new ScreenLaser({
+            orientation: "horizontal",
+            y: TOP_HUD_SAFE_Y + j * yStep,
+            width: 26,
+            life: 2.5,
+            delay: 1,
+            color: "rgba(255, 55, 55, 1)",
+            damagePerSecond: 300,
+          })
+        );
+      }
+      abilityParticleBurst("#ff3d3d", 220, 120);
+      return;
+    }
+    if (sid === "nova") {
+      emitNovaShellParticles(state.player.x, state.player.y, "#ffffff", "#e8ffff", 10, 88);
       state.novaAnomalies.push(
         new NovaAnomaly(state.player.x, state.player.y, {
-          maxRadius: 255,
-          duration: 2.05,
-          pullStrength: 300,
-          damagePerSecond: 78 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          maxRadius: 300,
+          duration: 2.35,
+          pullStrength: 290,
+          damagePerSecond: 88 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
           pullEnabled: true,
           explodeAtEnd: true,
-          explosionDamage: 235 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          explosionKnockback: 210,
+          explosionDamage: 260 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          explosionKnockback: 420,
+          knockbackRadius: 360,
+          color: "#ffffff",
+          stunWhilePulled: true,
+        })
+      );
+      abilityParticleBurst("#ffffff", 200, 110);
+      return;
+    }
+    if (sid === "eclipse") {
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (const enemy of state.enemies) {
+        enemy.hp -= 32 * dm;
+        recordDamageDealt(32 * dm);
+        enemy.fireTimer += 0.35;
+      }
+      state.enemyBullets.length = 0;
+      abilityParticleBurst("#f0f0ff", 220, 120);
+      return;
+    }
+    if (sid === "oracle") {
+      emitNovaShellParticles(state.player.x, state.player.y, "#d4b8ff", "#ffffff", 9, 80);
+      state.novaAnomalies.push(
+        new NovaAnomaly(state.player.x, state.player.y, {
+          maxRadius: 295,
+          duration: 2.2,
+          pullStrength: 240,
+          damagePerSecond: 95 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          pullEnabled: true,
+          explodeAtEnd: true,
+          explosionDamage: 270 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          explosionKnockback: 380,
+          knockbackRadius: 340,
+          color: "#e8d4ff",
+          stunWhilePulled: true,
+        })
+      );
+      abilityParticleBurst("#ffffff", 180, 100);
+      return;
+    }
+    if (sid === "helios") {
+      abilityParticleBurst("#fff4c2", 300, 135);
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4 - 0.5;
+        const x = clamp(state.player.x + t * 260, 55, config.width - 55);
+        const y = clamp(state.player.y + Math.sin(i * 1.7) * 48, TOP_HUD_SAFE_Y + 55, config.height - 55);
+        state.solarFlares.push(new SolarFlareEmitter(x, y));
+      }
+      return;
+    }
+    if (sid === "glacier") {
+      emitNovaShellParticles(state.player.x, state.player.y, "#b8ecff", "#ffffff", 9, 78);
+      state.novaAnomalies.push(
+        new NovaAnomaly(state.player.x, state.player.y, {
+          maxRadius: 280,
+          duration: 2.45,
+          pullStrength: 200,
+          damagePerSecond: 70 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          pullEnabled: true,
+          explodeAtEnd: true,
+          explosionDamage: 210 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          explosionKnockback: 260,
           knockbackRadius: 300,
-          color: "#ff49c4",
+          color: "#c8f4ff",
           stunWhilePulled: true,
         })
       );
@@ -5364,6 +9670,78 @@ const abilityHandlers = {
   starfall: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const sid = state.player.shipId;
+    if (sid === "aphelion") {
+      abilityParticleBurst("#e8d4ff", 120, 70);
+      const bottomY = config.height - 26;
+      const span = config.width - 200;
+      const count = 5;
+      for (let i = 0; i < count; i++) {
+        const t = count === 1 ? 0.5 : i / (count - 1);
+        const px = 100 + t * span + rng(-14, 14);
+        state.aphelionKeelPortals.push(new AphelionKeelPortal(clamp(px, 72, config.width - 72), bottomY));
+      }
+      return;
+    }
+    if (sid === "helios") {
+      abilityParticleBurst("#ffb347", 220, 110);
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const px = clamp(state.player.x + Math.cos(ang) * 150, 65, config.width - 65);
+      const py = clamp(state.player.y + Math.sin(ang) * 150, TOP_HUD_SAFE_Y + 65, config.height - 65);
+      state.novaAnomalies.push(
+        new NovaAnomaly(px, py, {
+          maxRadius: 310,
+          duration: 4.4,
+          pullStrength: 0,
+          damagePerSecond: 54 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          pullEnabled: false,
+          explodeAtEnd: false,
+          color: "#ff5a2a",
+          opacityScale: 0.62,
+          stunWhilePulled: false,
+        })
+      );
+      for (let i = 0; i < 180; i++) {
+        const a = rng(0, Math.PI * 2);
+        const p = new Particle(px + Math.cos(a) * rng(12, 190), py + Math.sin(a) * rng(12, 150), Math.random() < 0.5 ? "#ff4a1f" : "#ffbd45");
+        p.life = rng(0.35, 0.9);
+        state.particles.push(p);
+      }
+      return;
+    }
+    if (sid === "inferno") {
+      abilityParticleBurst("#ff7a2a", 170, 90);
+      state.player.infernoPyroTimer = Math.max(state.player.infernoPyroTimer || 0, 5);
+      return;
+    }
+    if (sid === "grimstar") {
+      abilityParticleBurst("#c9a6ff", 150, 85);
+      const cx = clamp(input.mouse.x, 70, config.width - 70);
+      const cy = clamp(input.mouse.y, TOP_HUD_SAFE_Y + 70, config.height - 70);
+      state.novaAnomalies.push(
+        new NovaAnomaly(cx, cy, {
+          maxRadius: 155,
+          duration: 1.45,
+          pullStrength: 110,
+          damagePerSecond: 42 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          pullEnabled: true,
+          explodeAtEnd: true,
+          explosionDamage: 110 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+          explosionKnockback: 180,
+          knockbackRadius: 220,
+          color: "#4a2080",
+          stunWhilePulled: true,
+        })
+      );
+      for (let i = 0; i < 28; i++) {
+        const a = (i / 28) * Math.PI * 2;
+        const shard = new Bullet(cx + Math.cos(a) * 36, cy + Math.sin(a) * 36, a + rng(-0.14, 0.14), rng(250, 430) * state.player.shotSpeedMultiplier, true, rng(3.5, 7), "#8b62ff", 8.5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+        shard.visualShape = "starShot";
+        shard.grimstarTrail = true;
+        shard.life = 1.75;
+        state.bullets.push(shard);
+      }
+      return;
+    }
     const profiles = {
       helios: { burst: "#ffdca8", color: "#ffcc66", count: 48, yMin: 20, yMax: 220, spread: 50 },
       inferno: { burst: "#ff9a4d", color: "#ff5c2e", count: 58, yMin: 30, yMax: 280, spread: 62 },
@@ -5399,6 +9777,15 @@ const abilityHandlers = {
   voidRift: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+    if (state.player.shipId === "voidwalker") {
+      abilityParticleBurst("#6a3d9a", 140, 75);
+      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      for (let i = -8; i <= 8; i++) {
+        state.bullets.push(
+          new Bullet(state.player.x, state.player.y, angle + (i / 20) * 0.95, 440 * state.player.shotSpeedMultiplier, true, 4.2, "#b27bff", 6.5 * dm)
+        );
+      }
+    }
     const distance = 200;
     const riftX = state.player.x + Math.cos(angle) * distance;
     const riftY = state.player.y + Math.sin(angle) * distance;
@@ -5413,6 +9800,46 @@ const abilityHandlers = {
   },
   dimensionalSlash: (cost) => {
     if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
+    const sid = state.player.shipId;
+    if (sid === "specter") {
+      abilityParticleBurst("#f8f8ff", 200, 100);
+      const y0 = TOP_HUD_SAFE_Y + 80;
+      const y1 = config.height - 70;
+      state.screenLasers.push(
+        new ScreenLaser({
+          orientation: "horizontal",
+          y: (y0 + y1) / 2,
+          width: 28,
+          life: 0.75,
+          color: "rgba(255,255,255,0.94)",
+          damagePerSecond: 520 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+        })
+      );
+      return;
+    }
+    if (sid === "reaper") {
+      abilityParticleBurst("#ff2222", 180, 100);
+      const targets = [...state.enemies]
+        .filter((enemy) => enemy.hp > 0)
+        .sort((a, b) => dist(state.player.x, state.player.y, a.x, a.y) - dist(state.player.x, state.player.y, b.x, b.y));
+      for (const target of targets) {
+        state.reaperChains.push(new ReaperChain(target));
+      }
+      return;
+    }
+    if (sid === "seraph") {
+      state.player.seraphSweepTimer = 6;
+      abilityParticleBurst("#ff4f4f", 180, 90);
+      return;
+    }
+    if (sid === "aphelion") {
+      abilityParticleBurst("#b480ff", 170, 80);
+      state.aphelionShields = [];
+      for (let i = 0; i < 5; i++) {
+        state.aphelionShields.push(new OrbitalAegisShield(i, 5, 6.75));
+      }
+      return;
+    }
     abilityParticleBurst("#4a0080", 150, 70);
     const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     
@@ -5491,7 +9918,7 @@ const spawnStars = () => {
 
 const spawnWave = () => {
   tone(300, 0.08, "sine", audio.sfxVolume * 0.12);
-  const diff = difficultyModes[state.difficultyKey] || difficultyModes.veteran;
+  const diff = getDifficulty();
   state.enemyDamageMultiplier = state.mode === "campaign" ? 1 + state.campaignLevel * 0.05 : 1;
   
   state.maxEnemiesOnScreen = Math.floor(15 + state.wave * 0.5);
@@ -5505,7 +9932,13 @@ const spawnWave = () => {
   state.blackHoles = [];
   state.expandingCircles = [];
   state.timeDilationFields = [];
+  state.screenLasers = [];
+  state.aphelionPortalBursts = [];
+  state.aphelionKeelPortals = [];
+  state.seraphBounceLasers = [];
+  state.aphelionShields = [];
   state.novaAnomalies = [];
+  state.tempestEyeStorms = [];
   state.novaOrbiters = [];
   state.bluefallPortals = [];
   state.boss = null;
@@ -5550,22 +9983,9 @@ const spawnWave = () => {
     
     
     const waveIndex = Math.max(0, state.wave - 1);
-    let baseEnemyCount;
-    let waveMultiplier;
-    let waveRampBonus;
-    if (state.difficultyKey === "recruit") {
-      baseEnemyCount = 4;
-      waveMultiplier = 3;
-      waveRampBonus = 0.7;
-    } else if (state.difficultyKey === "nightmare") {
-      baseEnemyCount = 15;
-      waveMultiplier = 6.5;
-      waveRampBonus = 1.15;
-    } else {
-      baseEnemyCount = 10;
-      waveMultiplier = 4.8;
-      waveRampBonus = 0.95;
-    }
+    const baseEnemyCount = diff.spawnBase || 10;
+    const waveMultiplier = diff.spawnWaveMultiplier || 4.8;
+    const waveRampBonus = diff.spawnRampBonus || 0.95;
     const enemyCount =
       baseEnemyCount +
       Math.floor(waveIndex * waveMultiplier + (waveIndex * waveIndex) * waveRampBonus * 0.08);
@@ -5576,8 +9996,7 @@ const spawnWave = () => {
     
     
     
-    const baseMaxPerSegment = state.difficultyKey === "nightmare" ? 20 :
-                              state.difficultyKey === "veteran" ? 15 : 10;
+    const baseMaxPerSegment = diff.maxPerSegment || 15;
     const maxEnemiesPerSegment = baseMaxPerSegment + Math.floor(state.wave * 0.3);
     
     
@@ -5649,6 +10068,7 @@ const tutorialSteps = [
     title: "Movement",
     text: "Use <kbd>WASD</kbd> or <kbd>Arrow Keys</kbd> to move your ship. Try moving around!",
     checkComplete: () => state.tutorialProgress.moved,
+    waitForManualAdvance: true,
   },
   {
     title: "Aiming and Shooting",
@@ -5660,16 +10080,19 @@ const tutorialSteps = [
     title: "Ability 1",
     text: "Use your first ability (default <kbd>1</kbd>).",
     checkComplete: () => state.tutorialProgress.usedAbility1,
+    waitForManualAdvance: true,
   },
   {
     title: "Ability 2",
     text: "Use your second ability (default <kbd>2</kbd>).",
     checkComplete: () => state.tutorialProgress.usedAbility2,
+    waitForManualAdvance: true,
   },
   {
     title: "Ability 3",
     text: "Use your third ability (default <kbd>3</kbd>).",
     checkComplete: () => state.tutorialProgress.usedAbility3,
+    waitForManualAdvance: true,
   },
   {
     title: "HUD Elements",
@@ -5680,7 +10103,8 @@ const tutorialSteps = [
   {
     title: "Test Wave",
     text: "Now let's test your skills! A wave of enemies will spawn. Clear them to complete the tutorial.",
-    checkComplete: () => false, 
+    checkComplete: () => true,
+    waitForManualAdvance: true,
   },
 ];
 
@@ -5709,18 +10133,50 @@ const startTutorial = () => {
   state.enemies = [];
   state.particles = [];
   state.visualBeams = [];
+  state.decorativeLightning = [];
+  state.boltCage = null;
+  state.emberFog = null;
+  state.stingerPoisonFogs = [];
+  state.clawPawShield = null;
+  state.voidTrails = [];
+  state.scytheSwings = [];
+  state.reaperPortals = [];
+  state.reaperMinions = [];
+  state.reaperChains = [];
+  state.solarFlares = [];
+  state.fireColumns = [];
+  state.grimstarWaves = [];
   state.powerUps = [];
   state.drones = [];
   state.barriers = [];
   state.blackHoles = [];
   state.expandingCircles = [];
   state.timeDilationFields = [];
+  state.screenLasers = [];
+  state.aphelionPortalBursts = [];
+  state.aphelionKeelPortals = [];
+  state.seraphBounceLasers = [];
+  state.aphelionShields = [];
   state.novaAnomalies = [];
+  state.tempestEyeStorms = [];
   state.novaOrbiters = [];
   state.bluefallPortals = [];
   state.wave = 1;
   state.score = 0;
   state.quantumCoresEarnedThisRun = 0;
+  state.runDamageDealt = 0;
+  state.runDamageTaken = 0;
+  state.runAbilitiesUsed = 0;
+  state.runHealthRegen = 0;
+  state.runShieldRegen = 0;
+  state.runEnergyRegen = 0;
+  state.runBossKills = 0;
+  state.runNearDeathStart = 0;
+  state.runNearDeathTriggered = false;
+  state.runOneHpStart = 0;
+  state.runOneHpTriggered = false;
+  state.killTimestamps = [];
+  state.damageTakenTimestamps = [];
   state.lastBossType = null;
   state.running = true;
   state.paused = false;
@@ -5777,13 +10233,6 @@ const checkTutorialStepCompletion = () => {
       step.pendingComplete = false;
       step.completed = true;
       updateTutorialDisplay();
-      if (!step.waitForManualAdvance) {
-        setTimeout(() => {
-          if (state.tutorialMode && !state.tutorialTestWave && tutorialSteps[state.tutorialStep] === step) {
-            advanceTutorialStep();
-          }
-        }, 250);
-      }
     }, 1000);
   } else {
     updateTutorialDisplay();
@@ -5791,6 +10240,10 @@ const checkTutorialStepCompletion = () => {
 };
 
 const advanceTutorialStep = () => {
+  if (state.tutorialStep >= tutorialSteps.length - 1) {
+    startTutorialTestWave();
+    return;
+  }
   if (state.tutorialStep < tutorialSteps.length - 1) {
     state.tutorialStep++;
     
@@ -5806,14 +10259,6 @@ const advanceTutorialStep = () => {
     }
     updateTutorialDisplay();
     
-    if (state.tutorialStep === tutorialSteps.length - 1) {
-      
-      setTimeout(() => {
-        if (state.tutorialMode) {
-          startTutorialTestWave();
-        }
-      }, 2000);
-    }
   }
 };
 
@@ -5874,29 +10319,34 @@ const startTutorialTestWave = () => {
 };
 
 const endTutorial = () => {
+  unlockAchievement("tutorial-complete");
+  refreshProgressAchievements();
   state.tutorialMode = false;
   state.tutorialTestWave = false;
   if (tutorialOverlay) tutorialOverlay.classList.add("hidden");
   if (tutorialNextStepButton) tutorialNextStepButton.classList.add("hidden");
-  if (mainHub) mainHub.classList.remove("hidden");
-  instructionsEl.classList.add("hidden");
-  if (instructionsPanel) instructionsPanel.classList.add("hidden");
-  if (campaignPanel) campaignPanel.classList.add("hidden");
-  if (achievementsPanel) achievementsPanel.classList.add("hidden");
+  const splash = document.createElement("div");
+  splash.className = "tutorial-complete-splash";
+  splash.innerHTML = `<div class="tutorial-complete-splash__inner"><div class="tutorial-complete-splash__check">&#10003;</div><h2>Tutorial Complete!</h2><p>You&rsquo;re ready to fly, pilot.</p></div>`;
+  document.body.appendChild(splash);
   state.running = false;
   if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
   if (abilityIcons) abilityIcons.classList.add("hidden");
-  updateHud(); 
-  
-  
   clearCanvas();
-  
-  
   if (state.player) {
     const loadout = shipLoadouts[state.shipKey] || shipLoadouts.striker;
     state.player.maxEnergy = loadout.maxEnergy;
     state.player.energy = Math.min(state.player.energy, state.player.maxEnergy);
   }
+  setTimeout(() => {
+    splash.remove();
+    if (mainHub) mainHub.classList.remove("hidden");
+    instructionsEl.classList.add("hidden");
+    if (instructionsPanel) instructionsPanel.classList.add("hidden");
+    if (campaignPanel) campaignPanel.classList.add("hidden");
+    if (achievementsPanel) achievementsPanel.classList.add("hidden");
+    updateHud();
+  }, 2500);
 };
 
 const resetGame = () => {
@@ -5914,13 +10364,32 @@ const resetGame = () => {
   state.enemies = [];
   state.particles = [];
   state.visualBeams = [];
+  state.decorativeLightning = [];
+  state.boltCage = null;
+  state.emberFog = null;
+  state.stingerPoisonFogs = [];
+  state.clawPawShield = null;
+  state.voidTrails = [];
+  state.scytheSwings = [];
+  state.reaperPortals = [];
+  state.reaperMinions = [];
+  state.reaperChains = [];
+  state.solarFlares = [];
+  state.fireColumns = [];
+  state.grimstarWaves = [];
   state.powerUps = [];
   state.drones = [];
   state.barriers = [];
   state.blackHoles = [];
   state.expandingCircles = [];
   state.timeDilationFields = [];
+  state.screenLasers = [];
+  state.aphelionPortalBursts = [];
+  state.aphelionKeelPortals = [];
+  state.seraphBounceLasers = [];
+  state.aphelionShields = [];
   state.novaAnomalies = [];
+  state.tempestEyeStorms = [];
   state.novaOrbiters = [];
   state.bluefallPortals = [];
   state.wave = 1;
@@ -5946,37 +10415,138 @@ const resetGame = () => {
   requestAnimationFrame(gameLoop);
 };
 
-const getAbilityIcon = (abilityType) => {
-  const iconMap = {
-    burst: "💥",
-    rapidVolley: "⚡",
-    energySurge: "🔋",
-    shockwave: "🌊",
-    shieldOvercharge: "🛡️",
-    fortify: "💎",
-    blink: "✨",
-    ghostfire: "👻",
-    phaseShift: "🌀",
-    lightningStorm: "⚡",
-    combatDrone: "🤖",
-    overload: "🔥",
-    siegeCannon: "💣",
-    energyBarrier: "🔷",
-    rampage: "⚔️",
-    blackHole: "🕳️",
-    shadowStep: "🌑",
-    ethereal: "👁️",
-    deathMark: "💀",
-    soulHarvest: "⚰️",
-    supernova: "⭐",
-    azureCataclysm: "🌊",
-    bluefallBarrage: "🌀",
-    novaSwarmDrones: "✦",
-    starfall: "✨",
-    voidRift: "🌀",
-    dimensionalSlash: "⚔️",
+const escapeHtml = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+
+const describeAbility = (ship, ability) => {
+  if (ship.id === "pebble") {
+    const pebbleHelp = {
+      chainBolt: "Rapid line of 8 pebbles; each ricochets off the HUD bar and arena walls.",
+      burst: "Five pebbles in a forward cone; each bounces off the HUD bar and all walls.",
+      fortify: "Huge spiked boulder for 5s—infinite screen bounces, damage, and knockback.",
+    }[ability.type];
+    if (pebbleHelp) return `${ability.name} (${ability.cost} energy): ${pebbleHelp}`;
+  }
+  if (ship.id === "bolt") {
+    const boltHelp = {
+      rapidVolley: "Launches a slow ion orb forward: crackling blue lightning, constant contact damage.",
+      chainBolt: "Jagged lightning to the nearest foe, chaining up to 10 times (−10% damage each hop); bolts linger ~1.5s.",
+      shockwave:
+        "6s lock-in: 15 rotating spokes from beneath your hull—damage + stun only if a foe touches a bolt; enemy bullets freeze only in that same bolt zone; you cannot move.",
+    }[ability.type];
+    if (boltHelp) return `${ability.name} (${ability.cost} energy): ${boltHelp}`;
+  }
+  const textByType = {
+    burst: "Area burst or explosive projectile pattern for clearing clustered enemies.",
+    rapidVolley: "Short burst of extra shots or faster fire for immediate pressure.",
+    energySurge: "Temporary ship buff that improves firing or resource flow.",
+    shockwave: "Close-range pulse that controls nearby enemies and projectiles.",
+    shieldOvercharge: "Defensive surge that improves shields or creates protective fields.",
+    fortify: "Defensive stance or barrier effect that trades movement for control.",
+    blink: "Dash, lunge, or teleport movement with a follow-up attack.",
+    ghostfire: "Spectral projectile pattern with unusual movement or delayed pressure.",
+    phaseShift: "Phase movement or illusion effect that disrupts enemy aim.",
+    lightningStorm: "Targeted lightning strikes or chained electric damage.",
+    combatDrone: "Summons allies or orbiters that attack alongside the ship.",
+    overload: "Major tier-defining power effect with strong area damage.",
+    siegeCannon: "Heavy aimed attack with high damage over a narrow line.",
+    energyBarrier: "Protective orbit, wall, or crown that blocks incoming fire.",
+    rampage: "Aggressive temporary weapon boost.",
+    blackHole: "Gravity well that pulls enemies and disrupts movement.",
+    shadowStep: "Dark repositioning effect with burst damage.",
+    ethereal: "Intangible or fake-ship effect that confuses enemies.",
+    deathMark: "Marks, harvests, or slashes enemies for focused damage.",
+    soulHarvest: "Summons or life-steal effect tied to nearby enemies.",
+    supernova: "Large radiant detonation or sweeping ultimate.",
+    azureCataclysm: "Massive azure collapse with pull, damage, and knockback.",
+    bluefallBarrage: "Portal barrage that floods the screen with falling shots.",
+    novaSwarmDrones: "Summons star-like orbiters that fire independently.",
+    starfall: "Targeted falling, puddle, or mouse-centered impact attack.",
+    voidRift: "Void tear that pulls enemies and spawns rift damage.",
+    dimensionalSlash: "Screen-cutting slash or chain effect with high burst value.",
   };
-  return iconMap[abilityType] || "⭐";
+  return `${ability.name} (${ability.cost} energy): ${textByType[ability.type] || "Special ship ability."}`;
+};
+
+const describeShip = (ship) => {
+  const tier = getTierInfo(ship.tier || "common").name;
+  const abilityText = (ship.abilities || []).map((a) => describeAbility(ship, a)).join("\n");
+  return `${ship.name} - ${tier}\nSpeed ${ship.speed}, HP ${ship.maxHp}, Shield ${ship.maxShield}, Energy ${ship.maxEnergy}.\nBasic attack scales with the ship's tier and unique weapon pattern.\n\nAbilities:\n${abilityText}`;
+};
+
+const abilityHelpHtml = (ship, ability) =>
+  `<span class="ability-help" aria-label="Ability details">?</span>`;
+
+const tooltipAttr = (text) => `data-tooltip="${escapeHtml(text)}"`;
+
+let activeTooltipTarget = null;
+let neonTooltipEl = null;
+
+const ensureNeonTooltip = () => {
+  if (neonTooltipEl) return neonTooltipEl;
+  neonTooltipEl = document.createElement("div");
+  neonTooltipEl.className = "neon-tooltip hidden";
+  document.body.appendChild(neonTooltipEl);
+  return neonTooltipEl;
+};
+
+const positionNeonTooltip = (event) => {
+  if (!activeTooltipTarget || !neonTooltipEl) return;
+  const pad = 14;
+  const rect = neonTooltipEl.getBoundingClientRect();
+  let x = event.clientX + 18;
+  let y = event.clientY + 18;
+  if (x + rect.width + pad > window.innerWidth) x = event.clientX - rect.width - 18;
+  if (y + rect.height + pad > window.innerHeight) y = event.clientY - rect.height - 18;
+  neonTooltipEl.style.left = `${Math.max(pad, x)}px`;
+  neonTooltipEl.style.top = `${Math.max(pad, y)}px`;
+};
+
+document.addEventListener("mouseover", (event) => {
+  const target = event.target.closest("[data-tooltip]");
+  if (!target) return;
+  activeTooltipTarget = target;
+  const tip = ensureNeonTooltip();
+  tip.textContent = target.dataset.tooltip || "";
+  tip.classList.remove("hidden");
+  positionNeonTooltip(event);
+});
+
+document.addEventListener("mousemove", (event) => {
+  const target = event.target.closest("[data-tooltip]");
+  if (!target || target !== activeTooltipTarget) return;
+  positionNeonTooltip(event);
+});
+
+document.addEventListener("mouseout", (event) => {
+  if (!activeTooltipTarget || activeTooltipTarget.contains(event.relatedTarget)) return;
+  activeTooltipTarget = null;
+  if (neonTooltipEl) neonTooltipEl.classList.add("hidden");
+});
+
+const getAbilityIcon = (abilityType) => {
+  const typeClass = `ability-glyph--${String(abilityType || "default").replace(/[^a-z0-9-]/gi, "")}`;
+  const shape =
+    abilityType === "energyBarrier" || abilityType === "shieldOvercharge" || abilityType === "fortify"
+      ? '<path d="M16 3 L27 8 V17 C27 24 22 28 16 31 C10 28 5 24 5 17 V8 Z" />'
+      : abilityType === "blink" || abilityType === "phaseShift" || abilityType === "shadowStep"
+        ? '<path d="M6 23 C13 7 22 8 27 6 C22 13 24 20 12 27 L16 18 Z" />'
+        : abilityType === "blackHole" || abilityType === "voidRift"
+          ? '<circle cx="16" cy="16" r="10" /><path d="M5 16 C9 5 24 5 27 16 C23 27 8 27 5 16 Z" />'
+          : abilityType === "deathMark" || abilityType === "soulHarvest" || abilityType === "dimensionalSlash"
+            ? '<path d="M6 24 L25 5" /><path d="M9 8 C16 2 27 6 26 16 C24 25 13 29 6 22" />'
+            : abilityType === "supernova" || abilityType === "starfall"
+              ? '<path d="M16 3 L19 12 L29 12 L21 18 L24 29 L16 22 L8 29 L11 18 L3 12 L13 12 Z" />'
+              : abilityType === "overload" || abilityType === "burst"
+                ? '<circle cx="16" cy="16" r="5" /><path d="M16 2 V10 M16 22 V30 M2 16 H10 M22 16 H30 M6 6 L11 11 M21 21 L26 26 M26 6 L21 11 M11 21 L6 26" />'
+                : '<path d="M5 20 L16 4 L27 20 L18 19 L16 29 L14 19 Z" />';
+  return `<svg class="ability-glyph ${typeClass}" viewBox="0 0 32 32" aria-hidden="true">${shape}</svg>`;
 };
 
 const getKeyDisplay = (binding) => {
@@ -6011,9 +10581,11 @@ const updateAbilityIcons = () => {
     const keyDisplay = getKeyDisplay(binding);
     const isReady = currentEnergy >= ability.cost;
     const energyPercent = Math.min((currentEnergy / ability.cost) * 100, 100);
+    const ship = shipLoadouts[state.player.shipId] || shipLoadouts[state.shipKey];
     
     const iconDiv = document.createElement("div");
     iconDiv.className = `ability-icon ${isReady ? "ready" : "not-ready"}`;
+    iconDiv.dataset.tooltip = describeAbility(ship, ability);
     iconDiv.innerHTML = `
       <div class="ability-icon__symbol">${getAbilityIcon(ability.type)}</div>
       <div class="ability-icon__key">${keyDisplay}</div>
@@ -6073,14 +10645,37 @@ const updateHud = () => {
   hud.score.textContent = state.score;
   hud.wave.textContent = state.wave;
   hud.highScore.textContent = state.highScore;
-  if (state.wave >= 10) unlockAchievement("wave-10");
-  if (state.wave >= 25) unlockAchievement("wave-25");
-  if (state.score >= 10000) unlockAchievement("score-10k");
-  if (state.score >= 50000) unlockAchievement("score-50k");
+  refreshProgressAchievements();
   if (hud.quantumCores) {
     hud.quantumCores.textContent = state.quantumCores;
   }
   updateAbilityIcons();
+};
+
+const enemyFlankedByAim = (enemy) => {
+  const p = state.player;
+  const forward = Math.atan2(input.mouse.y - p.y, input.mouse.x - p.x);
+  const toEnemy = Math.atan2(enemy.y - p.y, enemy.x - p.x);
+  let diff = toEnemy - forward;
+  while (diff > Math.PI) diff -= Math.PI * 2;
+  while (diff < -Math.PI) diff += Math.PI * 2;
+  return Math.abs(diff) > 1.12;
+};
+
+const friendlyBulletTouchesEnemy = (bullet, enemy) => {
+  if (bullet.hitEllipseW != null && bullet.hitEllipseH != null) {
+    const ang = Math.atan2(bullet.vy, bullet.vx);
+    const cos = Math.cos(-ang);
+    const sin = Math.sin(-ang);
+    const dx = enemy.x - bullet.x;
+    const dy = enemy.y - bullet.y;
+    const lx = dx * cos - dy * sin;
+    const ly = dx * sin + dy * cos;
+    const hw = bullet.hitEllipseW + enemy.size;
+    const hh = bullet.hitEllipseH + enemy.size;
+    return (lx * lx) / (hw * hw) + (ly * ly) / (hh * hh) <= 1;
+  }
+  return dist(enemy.x, enemy.y, bullet.x, bullet.y) < enemy.size + bullet.size;
 };
 
 const handleCollisions = (dt) => {
@@ -6090,28 +10685,365 @@ const handleCollisions = (dt) => {
       const bullet = state.bullets[j];
       if (
         bullet.friendly &&
-        dist(enemy.x, enemy.y, bullet.x, bullet.y) < enemy.size + bullet.size
+        friendlyBulletTouchesEnemy(bullet, enemy)
       ) {
-        enemy.hp -= bullet.damage;
-        if (bullet.freezeFactor) {
+        if (bullet.clawHoverPaw) {
+          continue;
+        }
+        if (bullet.boltIonOrb) {
+          continue;
+        }
+        if (bullet.pebbleBoulder && performance.now() < (bullet._pebbleNextDmg || 0)) {
+          continue;
+        }
+        bullet.hitSomething = true;
+        if (bullet.voidwalkerMicro) {
+          const dx = enemy.x - bullet.x;
+          const dy = enemy.y - bullet.y;
+          const d = Math.hypot(dx, dy) || 1;
+          if (d < 120 && enemy.size < 28) {
+            enemy.x += (dx / d) * 28 * dt;
+            enemy.y += (dy / d) * 28 * dt;
+          }
+        }
+        let hitDamage = bullet.damage;
+        if (bullet.phantomPhaseBasic && !bullet.phaseConsumed) {
+          bullet.phaseConsumed = true;
+          hitDamage *= 0.3;
+          bullet.piercing = true;
+          bullet.pierceCount = Math.max(bullet.pierceCount || 0, 1);
+        }
+        if (bullet.voidwalkerSlash) {
+          hitDamage *= bullet.voidwalkerScale || 1;
+          bullet.voidwalkerScale = (bullet.voidwalkerScale || 1) * 0.8;
+          bullet.size = Math.max(1.6, bullet.size * 0.9);
+        }
+        if (enemy.picketShred && !bullet.picketTri) {
+          hitDamage *= 1 + enemy.picketShred * 0.1;
+        }
+        if (bullet.sparrowFeather) {
+          enemy.sparrowFeatherHits = enemy.sparrowFeatherHits || {};
+          const hits = (enemy.sparrowFeatherHits[bullet.volleyId] || 0) + 1;
+          enemy.sparrowFeatherHits[bullet.volleyId] = hits;
+          if (hits >= 5) {
+            hitDamage *= 2;
+            playSfx.ability();
+            for (let c = 0; c < 10; c++) state.particles.push(new Particle(enemy.x, enemy.y, "#ffe680"));
+          }
+        }
+        if (bullet.specterNeedle && enemyFlankedByAim(enemy)) {
+          hitDamage *= 1.55;
+        }
+        if (bullet.chainArc && !bullet._chainDone) {
+          bullet._chainDone = true;
+          let best = null;
+          let bestD = 1e9;
+          for (const e2 of state.enemies) {
+            if (e2 === enemy || e2.hp <= 0) continue;
+            const d = dist(e2.x, e2.y, enemy.x, enemy.y);
+            if (d < bestD && d < 200) {
+              bestD = d;
+              best = e2;
+            }
+          }
+          if (best) {
+            const chainDamage = hitDamage * (bullet.chainDamagePct || 0.42);
+            best.hp -= chainDamage;
+            recordDamageDealt(chainDamage);
+            drawInstantArc(enemy.x, enemy.y, best.x, best.y, bullet.chainDamagePct === 0.15 ? "#66a8ff" : "#fff176", 0.18);
+            for (let c = 0; c < 6; c++) {
+              state.particles.push(new Particle((enemy.x + best.x) / 2 + rng(-10, 10), (enemy.y + best.y) / 2 + rng(-10, 10), "#fff176"));
+            }
+            if (best.hp <= 0) {
+              const idx = state.enemies.indexOf(best);
+              if (idx > -1) onEnemyDestroyed(best, idx);
+            }
+          }
+        }
+        let skipPrimaryDamage = false;
+        if (bullet.phasePassthrough && !bullet.phaseConsumed) {
+          bullet.phaseConsumed = true;
+          skipPrimaryDamage = true;
+        }
+        if (bullet.staticPop) {
+          for (let f = 0; f < 8; f++) {
+            state.particles.push(new Particle(enemy.x, enemy.y, "#88ccff"));
+          }
+          hitDamage = 0;
+        }
+        if (bullet.shieldBreakBonus && enemy.maxHp > 80) {
+          hitDamage *= 1.35;
+        }
+        if (state.player.foresightTimer > 0 && !skipPrimaryDamage) {
+          hitDamage *= 1.22;
+        }
+        if (enemy.deathMarked && !skipPrimaryDamage) {
+          hitDamage *= 1.28;
+        }
+        if (bullet.clawBasic && !skipPrimaryDamage) {
+          if (bullet.vy > 0) {
+            hitDamage *= 2;
+          } else {
+            enemy.fireTimer += 0.65;
+          }
+        }
+        if (bullet.clawTear && !skipPrimaryDamage) {
+          const pull = Math.atan2(state.player.y - enemy.y, state.player.x - enemy.x);
+          enemy.x += Math.cos(pull) * 20;
+          enemy.y += Math.sin(pull) * 20;
+        }
+        if (bullet.slowOnHit && !skipPrimaryDamage) {
+          enemy.fireTimer += 1.05;
+        }
+        if (!skipPrimaryDamage) {
+          enemy.hp -= hitDamage;
+          recordDamageDealt(hitDamage);
+        }
+        if (bullet.myrmidonDot && !skipPrimaryDamage) {
+          enemy.myrmidonDots = (enemy.myrmidonDots || 0) + 1;
+          enemy.myrmidonGlowTimer = 2;
+          for (let p = 0; p < 3; p++) state.particles.push(new Particle(enemy.x + rng(-5, 5), enemy.y + rng(-5, 5), "#ff3333"));
+          if (enemy.myrmidonDots >= 6) {
+            enemy.myrmidonDots = 0;
+            const blast = 34 * state.player.damageMultiplier;
+            for (const e2 of state.enemies) {
+              if (dist(e2.x, e2.y, enemy.x, enemy.y) < 70 + e2.size) {
+                e2.hp -= blast;
+                recordDamageDealt(blast);
+              }
+            }
+            state.expandingCircles.push(new ExpandingCircle(enemy.x, enemy.y, 70, "#ff3333", 0.45, blast, null, true));
+          }
+        }
+        if (bullet.knaveSteal && !skipPrimaryDamage) {
+          const steal = Math.max(0.4, enemy.hp * 0.01);
+          enemy.hp -= steal;
+          recordDamageDealt(steal);
+          state.player.shield = Math.min(state.player.maxShield * 1.1, state.player.shield + steal * 0.35);
+        }
+        if (bullet.stingerPoison && !skipPrimaryDamage) {
+          enemy.stingerPoisonStacks = Math.min(3, (enemy.stingerPoisonStacks || 0) + 1);
+          enemy.stingerPoisonTimer = 3;
+          enemy.stingerPoisonTick = 0;
+          enemy.stingerPoisonBase = Math.max(enemy.stingerPoisonBase || 0, bullet.stingerPoisonPerTick || 0.6);
+          enemy.stingerPoisonPerTick = enemy.stingerPoisonBase * enemy.stingerPoisonStacks;
+        }
+        if (bullet.clawStun && !skipPrimaryDamage) {
+          enemy.stunTimer = Math.max(enemy.stunTimer || 0, bullet.clawStun);
+        }
+        if (bullet.picketTri && !skipPrimaryDamage) {
+          enemy.picketShred = Math.min(3, (enemy.picketShred || 0) + 1);
+          enemy.picketShredTimer = 2;
+        }
+        if (bullet.emberPuddle && !bullet.puddleSpawned && !skipPrimaryDamage) {
+          bullet.puddleSpawned = true;
+          createFirePuddle(bullet.x, bullet.y, "#ff7a45", 0.5);
+        }
+        if (bullet.emberEnhancedBurst && !skipPrimaryDamage) {
+          for (let fp = 0; fp < 18; fp++) {
+            const p = new Particle(enemy.x + rng(-10, 10), enemy.y + rng(-10, 10), fp % 2 ? "#ff5a2a" : "#ffb347");
+            p.life = rng(0.16, 0.42);
+            p.size = rng(2, 4.4);
+            state.particles.push(p);
+          }
+        }
+        if (bullet.infernoGlob && !bullet.puddleSpawned && !skipPrimaryDamage) {
+          bullet.puddleSpawned = true;
+          createFirePuddle(bullet.x, bullet.y, "#ff4a1f", 2);
+        }
+        if (bullet.emberInfernoOrb && !skipPrimaryDamage) {
+          for (let fp = 0; fp < 26; fp++) {
+            const p = new Particle(enemy.x + rng(-14, 14), enemy.y + rng(-14, 14), fp % 2 ? "#ff5a2a" : "#ffcf6b");
+            p.life = rng(0.18, 0.45);
+            p.size = rng(2.4, 5.2);
+            state.particles.push(p);
+          }
+        }
+        if (bullet.halberdBlade && !skipPrimaryDamage) {
+          const centerHit = Math.abs(bullet.y - enemy.y) < enemy.size * 0.35;
+          if (centerHit) enemy.y -= 42;
+          else enemy.x += Math.sign(enemy.x - bullet.x || 1) * 42;
+        }
+        if (bullet.ravenBird && !skipPrimaryDamage) {
+          let target = null;
+          let bestD = 240;
+          for (const e2 of state.enemies) {
+            if (e2 === enemy || e2.hp <= 0) continue;
+            const d = dist(enemy.x, enemy.y, e2.x, e2.y);
+            if (d < bestD) {
+              bestD = d;
+              target = e2;
+            }
+          }
+          if (target) {
+            const feather = new Bullet(enemy.x, enemy.y, Math.atan2(target.y - enemy.y, target.x - enemy.x), 440 * state.player.shotSpeedMultiplier, true, 2.1, "#6b4a9a", bullet.damage * 0.35);
+            feather.visualShape = "needle";
+            feather.tracking = true;
+            feather.trackingTarget = target;
+            feather.trackingTurnRate = 18;
+            feather.life = 1.1;
+            state.bullets.push(feather);
+          }
+        }
+        if (bullet.reaperCrescent && !bullet.reaperMiniSwingDone && !skipPrimaryDamage) {
+          bullet.reaperMiniSwingDone = true;
+          const a = Math.atan2(enemy.y - state.player.y, enemy.x - state.player.x);
+          applyScytheSwing(enemy.x - Math.cos(a) * 34, enemy.y - Math.sin(a) * 34, a, 104, Math.PI * 0.72, 20 * state.player.damageMultiplier, 28, "#ff2222");
+        }
+        if (bullet.gallantHeal && !skipPrimaryDamage) {
+          state.player.hp = Math.min(state.player.maxHp, state.player.hp + state.player.maxHp * 0.01);
+          state.expandingCircles.push(new ExpandingCircle(enemy.x, enemy.y, 48, "#c8e0ff", 0.35, 12 * state.player.damageMultiplier, null, true));
+        }
+        if (bullet.eclipseHeal && !skipPrimaryDamage) {
+          state.player.hp = Math.min(state.player.maxHp, state.player.hp + hitDamage * 0.01);
+        }
+        if (bullet.eclipseBlind && !skipPrimaryDamage) {
+          enemy.fireTimer += 1;
+        }
+        if (bullet.auroraColor && !skipPrimaryDamage) {
+          if (bullet.auroraColor === "green") enemy.hp -= 5 * state.player.damageMultiplier;
+          if (bullet.auroraColor === "cyan") enemy.fireTimer += 0.45;
+          if (bullet.auroraColor === "purple") enemy.fireTimer += 0.8;
+        }
+        if (bullet.freezeFactor && !skipPrimaryDamage) {
           enemy.fireTimer += 0.25 + bullet.freezeFactor * 0.4;
           enemy.hp -= bullet.damage * 0.15;
+          recordDamageDealt(bullet.damage * 0.15);
           for (let p = 0; p < 8; p++) {
             state.particles.push(new Particle(enemy.x + rng(-8, 8), enemy.y + rng(-8, 8), "#8be7ff"));
           }
         }
-        if (bullet.burnDamage) {
+        if (bullet.wickExplosiveShot && !bullet.wickExploded && !skipPrimaryDamage) {
+          bullet.wickExploded = true;
+          const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+          state.novaAnomalies.push(
+            new NovaAnomaly(bullet.x, bullet.y, {
+              maxRadius: 118,
+              duration: 0.52,
+              pullStrength: 140,
+              damagePerSecond: 58 * dm,
+              pullEnabled: true,
+              explodeAtEnd: true,
+              explosionDamage: 36 * dm,
+              explosionKnockback: 95,
+              knockbackRadius: 112,
+              color: "#ffd54a",
+              stunWhilePulled: false,
+            })
+          );
+          for (let p = 0; p < 28; p++) {
+            const pa = (p / 28) * Math.PI * 2;
+            state.particles.push(
+              new Particle(bullet.x + Math.cos(pa) * 8, bullet.y + Math.sin(pa) * 8, p % 2 ? "#fff8e1" : "#ff9800")
+            );
+          }
+        }
+        if (bullet.marauderPlunder && !bullet.marauderPop && !skipPrimaryDamage) {
+          bullet.marauderPop = true;
+          const ba = Math.atan2(bullet.vy, bullet.vx);
+          const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+          for (let k = 0; k < 8; k++) {
+            const a = ba + (k / 8) * Math.PI * 2;
+            const ch = new Bullet(bullet.x, bullet.y, a, 260 * state.player.shotSpeedMultiplier, true, 2.2, "#ff6677", 3.2 * dm);
+            ch.life = 0.55;
+            state.bullets.push(ch);
+          }
+        }
+        if (bullet.novaPrimaryPop && !skipPrimaryDamage) {
+          state.novaAnomalies.push(
+            new NovaAnomaly(bullet.x, bullet.y, {
+              maxRadius: 72,
+              duration: 0.55,
+              pullStrength: 120,
+              damagePerSecond: 52 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+              pullEnabled: true,
+              explodeAtEnd: true,
+              explosionDamage: 38 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
+              explosionKnockback: 90,
+              knockbackRadius: 100,
+              color: "#ffffff",
+              stunWhilePulled: false,
+            })
+          );
+        }
+        if (bullet.titanMegaOrb && !bullet.titanChildSpawned && !skipPrimaryDamage) {
+          bullet.titanChildSpawned = true;
+          const ba = Math.atan2(bullet.vy, bullet.vx);
+          for (let k = -1; k <= 1; k++) {
+            const ch = new Bullet(bullet.x, bullet.y, ba + k * 0.35, 280 * state.player.shotSpeedMultiplier, true, 5.5, "#ff8f2a", bullet.damage * 0.42);
+            ch.life = 0.55;
+            ch.burnDamage = ch.damage * 0.4;
+            state.bullets.push(ch);
+          }
+        }
+        if (bullet.marauderShard && !bullet.marauderSplit && !skipPrimaryDamage) {
+          bullet.marauderSplit = true;
+          const ba = Math.atan2(bullet.vy, bullet.vx);
+          const nextGen = (bullet.marauderGeneration || 0) + 1;
+          for (let k = 0; k < 2; k++) {
+            const ch = new Bullet(bullet.x, bullet.y, ba + (k - 0.5) * 0.5, 360 * state.player.shotSpeedMultiplier, true, Math.max(1.8, bullet.size * 0.68), "#ee5566", bullet.damage * 0.7);
+            ch.marauderShard = nextGen < 2;
+            ch.visualShape = "raggedShard";
+            ch.marauderGeneration = nextGen;
+            ch.life = 0.45;
+            state.bullets.push(ch);
+          }
+        }
+        if (bullet.glacierPrimary && !skipPrimaryDamage) {
+          enemy.glacierFreezeTimer = bullet.glacierFreezeDuration || 3;
+          enemy.glacierBurstPending = true;
+          enemy.glacierBurstDamage = bullet.damage;
+          enemy.glacierChildFreeze = 1.5;
+        } else if (bullet.glacierShard && !bullet.glacierFractured && !skipPrimaryDamage) {
+          bullet.glacierFractured = true;
+          const ba = Math.atan2(bullet.vy, bullet.vx);
+          for (let k = 0; k < 3; k++) {
+            const ch = new Bullet(bullet.x, bullet.y, ba + (k - 1) * 0.42, 340 * state.player.shotSpeedMultiplier, true, 2.4, "#b8ecff", bullet.damage * 0.32);
+            ch.freezeFactor = 0.35;
+            ch.life = 0.4;
+            state.bullets.push(ch);
+          }
+        }
+        if (bullet.lifeSteal && !skipPrimaryDamage && state.player) {
+          state.player.hp = Math.min(state.player.hp + bullet.lifeSteal, state.player.maxHp);
+        }
+        if (bullet.burnDamage && !skipPrimaryDamage) {
           enemy.hp -= bullet.burnDamage;
+          recordDamageDealt(bullet.burnDamage);
           for (let p = 0; p < 8; p++) {
             state.particles.push(new Particle(enemy.x + rng(-8, 8), enemy.y + rng(-8, 8), "#ff8f2a"));
           }
         }
-        if (bullet.knockback) {
+        if (bullet.knockback && !skipPrimaryDamage) {
           const impactAngle = Math.atan2(enemy.y - state.player.y, enemy.x - state.player.x);
           enemy.x += Math.cos(impactAngle) * bullet.knockback * 0.15;
           enemy.y += Math.sin(impactAngle) * bullet.knockback * 0.15;
         }
-        if (bullet.novaAzureMini) {
+        if (bullet.pebbleBoulder && !skipPrimaryDamage) {
+          const dx = enemy.x - bullet.x;
+          const dy = enemy.y - bullet.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const push = 42;
+          enemy.x += (dx / len) * push;
+          enemy.y += (dy / len) * push;
+          bullet._pebbleNextDmg = performance.now() + 95;
+        }
+        if (bullet.bulwarkPush && !skipPrimaryDamage) {
+          const pushAngle = Math.atan2(enemy.y - state.player.y, enemy.x - state.player.x);
+          enemy.x += Math.cos(pushAngle) * 44;
+          enemy.y += Math.sin(pushAngle) * 44;
+          for (const e2 of state.enemies) {
+            if (e2 === enemy || e2.hp <= 0) continue;
+            if (dist(enemy.x, enemy.y, e2.x, e2.y) < enemy.size + e2.size + 8) {
+              const bonus = 8 * state.player.damageMultiplier;
+              enemy.hp -= bonus;
+              e2.hp -= bonus;
+              recordDamageDealt(bonus * 2);
+              break;
+            }
+          }
+        }
+        if (bullet.novaAzureMini && !skipPrimaryDamage) {
           state.novaAnomalies.push(
             new NovaAnomaly(bullet.x, bullet.y, {
               maxRadius: 76,
@@ -6129,7 +11061,7 @@ const handleCollisions = (dt) => {
               stunWhilePulled: true,
             })
           );
-        } else if (bullet.novaMini) {
+        } else if (bullet.novaMini && !skipPrimaryDamage) {
           state.novaAnomalies.push(
             new NovaAnomaly(bullet.x, bullet.y, {
               maxRadius: 90,
@@ -6143,7 +11075,7 @@ const handleCollisions = (dt) => {
             })
           );
         }
-        if (bullet.novaBurst) {
+        if (bullet.novaBurst && !skipPrimaryDamage) {
           state.novaAnomalies.push(
             new NovaAnomaly(bullet.x, bullet.y, {
               maxRadius: bullet.novaBurstRadius || 90,
@@ -6157,14 +11089,29 @@ const handleCollisions = (dt) => {
             })
           );
         }
-        if (bullet.piercing && bullet.pierceCount && bullet.pierceCount > 0) {
-          bullet.pierceCount -= 1;
+        if (skipPrimaryDamage) {
+          break;
+        }
+        if (enemy.hp <= 0 && bullet.reaperBoomerang && (bullet.reaperReturns || 0) < 3) {
+          const target = getNearestEnemy(state.player.x, state.player.y);
+          if (target) {
+            const a = Math.atan2(target.y - state.player.y, target.x - state.player.x);
+            const free = new Bullet(state.player.x, state.player.y, a, 420 * state.player.shotSpeedMultiplier, true, 5.4, "#4a0018", bullet.damage * 0.9);
+            free.reaperCrescent = true;
+            free.reaperBoomerang = true;
+            free.reaperReturns = (bullet.reaperReturns || 0) + 1;
+            state.bullets.push(free);
+          }
+        }
+        if (bullet.infinitePierce || (bullet.piercing && bullet.pierceCount && bullet.pierceCount > 0)) {
+          if (bullet.pierceCount) bullet.pierceCount -= 1;
         } else {
           state.bullets.splice(j, 1);
         }
-        state.particles.push(new Particle(bullet.x, bullet.y, "#f5f285"));
+        if (!bullet.noHitParticle) state.particles.push(new Particle(bullet.x, bullet.y, "#f5f285"));
         if (enemy.hp <= 0) {
-          onEnemyDestroyed(enemy, i);
+          const killIdx = state.enemies.indexOf(enemy);
+          if (killIdx > -1) onEnemyDestroyed(enemy, killIdx);
         }
         break;
       }
@@ -6185,13 +11132,7 @@ const handleCollisions = (dt) => {
         ? bullet.damage * 0.1  
         : bullet.damage;        
       
-      const shieldAbsorb = Math.min(state.player.shield, drainAmount);
-      state.player.shield = Math.max(0, state.player.shield - shieldAbsorb);
-      const remainingDamage = drainAmount - shieldAbsorb;
-      if (remainingDamage > 0) {
-        state.player.hp = Math.max(0, state.player.hp - remainingDamage);
-        if (state.player.hp <= 0) endGame();
-      }
+      absorbDamage(drainAmount);
       
       for (let j = 0; j < 5; j++) {
         state.particles.push(new Particle(bullet.x, bullet.y, state.player.shieldColorOverride || "#74ffce"));
@@ -6300,7 +11241,14 @@ const absorbDamage = (amount) => {
   const remainingDamage = amount - shieldAbsorb;
   if (remainingDamage > 0) {
     p.hp = Math.max(0, p.hp - remainingDamage);
+    if (p.hp <= 5 && !state.runNearDeathTriggered) {
+      state.runNearDeathStart = performance.now();
+    }
+    if (p.hp <= 1 && !state.runOneHpTriggered) {
+      state.runOneHpStart = performance.now();
+    }
   }
+  recordDamageTaken(amount);
   state.particles.push(new Particle(p.x, p.y, "#74ffce"));
   if (p.hp <= 0) endGame();
 };
@@ -6309,12 +11257,18 @@ const applyPowerUp = (kind) => {
   const p = state.player;
   playSfx.powerUp();
   if (kind === "heal") {
+    const prevHp = p.hp;
+    const prevShield = p.shield;
     p.hp = p.maxHp;
     p.shield = Math.min(p.maxShield, p.shield + 60);
     addEnergy(20);
+    recordHealthRegen(p.hp - prevHp);
+    recordShieldRegen(p.shield - prevShield);
   }
   if (kind === "shield") {
+    const prevShield = p.shield;
     p.shield = Math.min(p.maxShield, p.shield + 50);
+    recordShieldRegen(p.shield - prevShield);
   }
   if (kind === "rapid") {
     p.rapidTimer = Math.min(p.rapidTimer + 6, 10);
@@ -6325,12 +11279,32 @@ const applyPowerUp = (kind) => {
 };
 
 const updateEntities = (dt) => {
+  if (!state.player) return;
   state.player.update(dt);
+  if (state.emberFog && state.emberFog.life > 0) {
+    state.emberFog.life = Math.max(0, state.emberFog.life - dt);
+    state.emberFog.x = state.player.x;
+    state.emberFog.y = state.player.y;
+    for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+      const enemy = state.enemies[ei];
+      if (!enemy || enemy.hp <= 0) continue;
+      if (dist(enemy.x, enemy.y, state.emberFog.x, state.emberFog.y) <= state.emberFog.radius + enemy.size) {
+        const dmg = state.emberFog.dps * dt;
+        enemy.hp -= dmg;
+        recordDamageDealt(dmg);
+        if (Math.random() < 0.22) state.particles.push(new Particle(enemy.x + rng(-6, 6), enemy.y + rng(-6, 6), "#ff5a2a"));
+        if (enemy.hp <= 0) onEnemyDestroyed(enemy, ei);
+      }
+    }
+  } else {
+    state.emberFog = null;
+  }
   
   state.player.shoot(state.bullets);
   state.bullets = state.bullets.filter((b) => {
     b.update(dt);
     const alive = b.life > 0 && b.x >= -20 && b.x <= config.width + 20 && b.y >= -20 && b.y <= config.height + 20;
+    if (!alive) handleBasicBulletExpired(b);
     if (!alive && b.novaBurst) {
       state.novaAnomalies.push(
         new NovaAnomaly(b.x, b.y, {
@@ -6365,6 +11339,43 @@ const updateEntities = (dt) => {
   state.blackHoles = state.blackHoles.filter((hole) => {
     hole.update(dt);
     return hole.life > 0;
+  });
+  state.screenLasers = state.screenLasers.filter((laser) => {
+    laser.update(dt);
+    return laser.life > 0;
+  });
+  state.aphelionPortalBursts = state.aphelionPortalBursts.filter((burst) => {
+    burst.delay -= dt;
+    if (burst.delay > 0) return true;
+    for (let p = 0; p < 36; p++) {
+      const a = (p / 36) * Math.PI * 2;
+      const ring = 18 + Math.sin(performance.now() / 220 + p) * 4;
+      const part = new Particle(burst.x + Math.cos(a) * ring, burst.y + Math.sin(a) * ring, p % 2 ? "#b785ff" : "#8f56ff");
+      part.life = rng(0.15, 0.35);
+      part.size = rng(2, 4.5);
+      state.particles.push(part);
+    }
+    const base = burst.baseAngle || rng(0, Math.PI * 2);
+    for (let i = 0; i < 6; i++) {
+      const a = base + (i - 2.5) * 0.2 + rng(-0.05, 0.05);
+      const orb = new Bullet(
+        burst.x,
+        burst.y,
+        a,
+        rng(230, 320) * state.player.shotSpeedMultiplier,
+        true,
+        6,
+        "#a96cff",
+        14 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
+      );
+      orb.life = rng(2.2, 3.2);
+      orb.novaBurst = true;
+      orb.novaNoPull = true;
+      orb.novaBurstRadius = 95;
+      orb.novaBurstDamage = 84 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
+      state.bullets.push(orb);
+    }
+    return false;
   });
 
   
@@ -6408,6 +11419,25 @@ const updateEntities = (dt) => {
   
   state.timeDilationFields = state.timeDilationFields.filter((field) => field.life > 0);
 
+  if (state.clawPawShield && state.player) {
+    state.clawPawShield.life = Math.max(0, state.clawPawShield.life - dt);
+    const sx = state.player.x;
+    const sy = state.player.y - (state.clawPawShield.yOffset || 76);
+    for (let i = 0; i < state.enemyBullets.length; i++) {
+      const eb = state.enemyBullets[i];
+      const d = dist(eb.x, eb.y, sx, sy);
+      if (d <= (state.clawPawShield.radius || 72) + (eb.size || 4)) {
+        const a = Math.atan2(eb.y - sy, eb.x - sx);
+        const sp = Math.hypot(eb.vx, eb.vy) || 140;
+        eb.vx = Math.cos(a) * sp;
+        eb.vy = Math.sin(a) * sp;
+        eb.x = sx + Math.cos(a) * ((state.clawPawShield.radius || 72) + (eb.size || 4) + 2);
+        eb.y = sy + Math.sin(a) * ((state.clawPawShield.radius || 72) + (eb.size || 4) + 2);
+      }
+    }
+    if (state.clawPawShield.life <= 0) state.clawPawShield = null;
+  }
+
   state.enemyBullets = state.enemyBullets.filter((b) => {
     b.update(dt);
     if (b.owner === "boss" || b.owner === "shooter") {
@@ -6421,6 +11451,13 @@ const updateEntities = (dt) => {
       b.y <= config.height + 30
     );
   });
+
+  state.aphelionShields = state.aphelionShields.filter((shield) => {
+    shield.update(dt);
+    return shield.life > 0;
+  });
+  state.aphelionKeelPortals = state.aphelionKeelPortals.filter((portal) => !portal.update(dt));
+  state.seraphBounceLasers = state.seraphBounceLasers.filter((laser) => !laser.update(dt));
 
   
   
@@ -6496,16 +11533,70 @@ const updateEntities = (dt) => {
     
     
     if (state.enemiesToSpawn.length === 0 && state.enemies.length === 0 && !state.waveComplete) {
-      
-      if (state.segmentsSpawned >= state.maxSegmentsThisWave) {
-        state.waveComplete = true;
-      }
+      state.waveComplete = true;
+      state.segmentsSpawned = Math.max(state.segmentsSpawned || 0, state.maxSegmentsThisWave || 1);
     }
   }
 
   
   if (!state.tutorialMode || state.tutorialTestWave) {
+    applyBoltChannelStorm(dt);
     state.enemies.forEach((enemy) => enemy.update(dt, state.player, state.enemyBullets));
+  }
+  state.enemies.forEach((enemy) => {
+    if (enemy.myrmidonGlowTimer) enemy.myrmidonGlowTimer = Math.max(0, enemy.myrmidonGlowTimer - dt);
+    if (enemy.myrmidonGlowTimer <= 0) enemy.myrmidonDots = 0;
+    if (enemy.picketShredTimer) enemy.picketShredTimer = Math.max(0, enemy.picketShredTimer - dt);
+    if (enemy.picketShredTimer <= 0) enemy.picketShred = 0;
+    if (enemy.glacierFreezeTimer) {
+      enemy.glacierFreezeTimer = Math.max(0, enemy.glacierFreezeTimer - dt);
+      enemy.fireTimer += dt * 1.8;
+      if (enemy.glacierFreezeTimer <= 0 && enemy.glacierBurstPending) {
+        enemy.glacierBurstPending = false;
+        spawnGlacierBurst(enemy, enemy.glacierBurstDamage || 10, enemy.glacierChildFreeze || 1.5);
+      }
+    }
+    if ((enemy.stingerPoisonTimer || 0) > 0 && (enemy.stingerPoisonStacks || 0) > 0) {
+      enemy.stingerPoisonTimer = Math.max(0, enemy.stingerPoisonTimer - dt);
+      enemy.stingerPoisonTick = (enemy.stingerPoisonTick || 0) + dt;
+      while (enemy.stingerPoisonTick >= 0.5 && enemy.hp > 0) {
+        enemy.stingerPoisonTick -= 0.5;
+        const tickDamage = Math.max(0.2, enemy.stingerPoisonPerTick || 0.5);
+        enemy.hp -= tickDamage;
+        recordDamageDealt(tickDamage);
+        state.particles.push(new Particle(enemy.x + rng(-6, 6), enemy.y + rng(-6, 6), "#8dff88"));
+      }
+      if (enemy.stingerPoisonTimer <= 0) {
+        enemy.stingerPoisonStacks = 0;
+        enemy.stingerPoisonBase = 0;
+        enemy.stingerPoisonPerTick = 0;
+        enemy.stingerPoisonTick = 0;
+      }
+    }
+  });
+  if (state.stingerPoisonFogs && state.stingerPoisonFogs.length > 0) {
+    state.stingerPoisonFogs = state.stingerPoisonFogs.filter((fog) => {
+      fog.life -= dt;
+      fog.x = state.player.x;
+      fog.y = state.player.y;
+      const grow = (fog.maxRadius - 40) / fog.maxLife;
+      fog.radius = Math.min(fog.maxRadius, fog.radius + grow * dt);
+      fog.tick = (fog.tick || 0) + dt;
+      while (fog.tick >= fog.tickRate) {
+        fog.tick -= fog.tickRate;
+        for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+          const enemy = state.enemies[ei];
+          if (!enemy || enemy.hp <= 0) continue;
+          if (dist(enemy.x, enemy.y, fog.x, fog.y) <= fog.radius + enemy.size) {
+            enemy.hp -= fog.damagePerTick;
+            recordDamageDealt(fog.damagePerTick);
+            state.particles.push(new Particle(enemy.x + rng(-4, 4), enemy.y + rng(-4, 4), "#96ff8a"));
+            if (enemy.hp <= 0) onEnemyDestroyed(enemy, ei);
+          }
+        }
+      }
+      return fog.life > 0;
+    });
   }
   state.powerUps = state.powerUps.filter((p) => {
     p.update(dt);
@@ -6515,9 +11606,37 @@ const updateEntities = (dt) => {
     particle.update(dt);
     return particle.life > 0;
   });
+  state.voidTrails = state.voidTrails.filter((trail) => {
+    trail.life -= dt;
+    for (const enemy of state.enemies) {
+      if (dist(enemy.x, enemy.y, trail.x, trail.y) < trail.radius + enemy.size) {
+        enemy.fireTimer += dt * 0.2;
+        if (trail.emberTrail && enemy.hp > 0) {
+          const td = (trail.dps || 16) * dt;
+          enemy.hp -= td;
+          recordDamageDealt(td);
+        }
+      }
+    }
+    return trail.life > 0;
+  });
+  state.scytheSwings = state.scytheSwings.filter((swing) => {
+    swing.life -= dt;
+    return swing.life > 0;
+  });
+  state.reaperPortals = state.reaperPortals.filter((portal) => !portal.update(dt));
+  state.reaperMinions = state.reaperMinions.filter((minion) => !minion.update(dt));
+  state.reaperChains = state.reaperChains.filter((chain) => !chain.update(dt));
+  state.solarFlares = state.solarFlares.filter((flare) => !flare.update(dt));
+  state.fireColumns = state.fireColumns.filter((column) => !column.update(dt));
+  state.grimstarWaves = state.grimstarWaves.filter((wave) => !wave.update(dt));
   state.novaAnomalies = state.novaAnomalies.filter((anomaly) => {
     anomaly.update(dt);
     return anomaly.life > 0 || (anomaly.explodeAtEnd && !anomaly.exploded);
+  });
+  state.tempestEyeStorms = state.tempestEyeStorms.filter((storm) => {
+    storm.update(dt);
+    return storm.life > 0;
   });
   state.novaOrbiters = state.novaOrbiters.filter((orb) => {
     orb.update(dt);
@@ -6529,7 +11648,25 @@ const updateEntities = (dt) => {
     beam.phase += dt * 10;
     return beam.life > 0;
   });
+  if (state.decorativeLightning) {
+    state.decorativeLightning = state.decorativeLightning.filter((L) => {
+      L.life -= dt;
+      return L.life > 0;
+    });
+  }
   handleCollisions(dt);
+  for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+    const en = state.enemies[ei];
+    if (en.hp <= 0) onEnemyDestroyed(en, ei);
+  }
+  if (state.player && state.player.hp > 0 && state.runNearDeathStart > 0) {
+    if (!state.runNearDeathTriggered && performance.now() - state.runNearDeathStart >= 10000) {
+      state.runNearDeathTriggered = true;
+    }
+    if (!state.runOneHpTriggered && state.runOneHpStart > 0 && performance.now() - state.runOneHpStart >= 10000) {
+      state.runOneHpTriggered = true;
+    }
+  }
 
   
   if (state.tutorialMode && state.tutorialTestWave) {
@@ -6549,6 +11686,10 @@ const updateEntities = (dt) => {
       !state.awaitingUpgrade &&
       !state.tutorialTestWave
     ) {
+      if (state.mode === "campaign" && state.wave >= state.campaignWaveTarget) {
+        completeCampaignLevel();
+        return;
+      }
       state.awaitingUpgrade = true;
       openUpgradePanel();
     }
@@ -6564,20 +11705,179 @@ const drawBackground = (dt) => {
     ctx.fillStyle = `rgba(255,255,255,${0.5 + star.size / 2})`;
     ctx.fillRect(star.x, star.y, star.size, star.size);
   });
+  const fx = getDifficulty().fx;
+  if (fx) {
+    ctx.fillStyle = `rgba(${fx.tint}, ${fx.tintAlpha})`;
+    ctx.fillRect(0, 0, config.width, config.height);
+    const gradient = ctx.createRadialGradient(
+      config.width * 0.5,
+      config.height * 0.5,
+      config.height * 0.2,
+      config.width * 0.5,
+      config.height * 0.5,
+      config.height * 0.72
+    );
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(1, `rgba(0,0,0,${fx.vignette})`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, config.width, config.height);
+  }
 };
 
 const drawEntities = () => {
+  if (state.stingerPoisonFogs && state.stingerPoisonFogs.length > 0) {
+    state.stingerPoisonFogs.forEach((fog) => {
+      const alpha = clamp(fog.life / fog.maxLife, 0, 1);
+      ctx.save();
+      const grad = ctx.createRadialGradient(fog.x, fog.y, fog.radius * 0.2, fog.x, fog.y, fog.radius);
+      grad.addColorStop(0, `rgba(110, 210, 90, ${0.2 * alpha})`);
+      grad.addColorStop(0.7, `rgba(70, 160, 60, ${0.14 * alpha})`);
+      grad.addColorStop(1, "rgba(40, 100, 35, 0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(fog.x, fog.y, fog.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+  if (state.clawPawShield && state.player) {
+    const alpha = clamp(state.clawPawShield.life / state.clawPawShield.maxLife, 0, 1);
+    const x = state.player.x;
+    const y = state.player.y - (state.clawPawShield.yOffset || 76);
+    const r = state.clawPawShield.radius || 72;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.shadowBlur = 22;
+    ctx.shadowColor = "#7dffb3";
+    ctx.fillStyle = "rgba(80, 255, 160, 0.2)";
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(170, 255, 210, 0.82)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (state.emberFog && state.emberFog.life > 0) {
+    const alpha = clamp(state.emberFog.life / state.emberFog.maxLife, 0, 1);
+    const r = state.emberFog.radius;
+    ctx.save();
+    const grad = ctx.createRadialGradient(state.emberFog.x, state.emberFog.y, r * 0.2, state.emberFog.x, state.emberFog.y, r);
+    grad.addColorStop(0, `rgba(255, 75, 45, ${0.26 * alpha})`);
+    grad.addColorStop(0.55, `rgba(220, 40, 25, ${0.16 * alpha})`);
+    grad.addColorStop(1, "rgba(120, 20, 15, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(state.emberFog.x, state.emberFog.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
   state.powerUps.forEach((p) => p.draw(ctx));
   state.enemies.forEach((enemy) => enemy.draw(ctx));
+  state.enemies.forEach((enemy) => drawEnemyPoisonStacks(ctx, enemy));
+  state.enemies.forEach((enemy) => drawEnemyDizzyStars(ctx, enemy));
   state.blackHoles.forEach((hole) => hole.draw(ctx));
   state.bluefallPortals.forEach((portal) => portal.draw(ctx));
+  state.aphelionKeelPortals.forEach((portal) => portal.draw(ctx));
+  state.seraphBounceLasers.forEach((laser) => laser.draw(ctx));
   state.novaAnomalies.forEach((anomaly) => anomaly.draw(ctx));
+  state.tempestEyeStorms.forEach((storm) => storm.draw(ctx));
   state.barriers.forEach((barrier) => barrier.draw(ctx));
+  state.aphelionShields.forEach((shield) => shield.draw(ctx));
   state.expandingCircles.forEach((circle) => circle.draw(ctx));
+  state.screenLasers.forEach((laser) => laser.draw(ctx));
+  state.fireColumns.forEach((column) => column.draw(ctx));
+  state.solarFlares.forEach((flare) => flare.draw(ctx));
+  state.grimstarWaves.forEach((wave) => wave.draw(ctx));
+  state.reaperPortals.forEach((portal) => portal.draw(ctx));
+  state.voidTrails.forEach((trail) => {
+    const alpha = clamp(trail.life / trail.maxLife, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.24 * alpha;
+    ctx.fillStyle = trail.color || "#4a2080";
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = trail.color || "#4a2080";
+    ctx.beginPath();
+    ctx.arc(trail.x, trail.y, trail.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
   
   state.timeDilationFields.forEach((field) => field.draw(ctx));
   state.enemyBullets.forEach((bullet) => bullet.draw(ctx));
   state.bullets.forEach((bullet) => bullet.draw(ctx));
+  state.scytheSwings.forEach((swing) => {
+    const alpha = clamp(swing.life / swing.maxLife, 0, 1);
+    const progress = 1 - alpha;
+    const bladeAngle = swing.angle - swing.arc / 2 + swing.arc * progress;
+    const hx = swing.x + Math.cos(bladeAngle) * swing.radius * 0.78;
+    const hy = swing.y + Math.sin(bladeAngle) * swing.radius * 0.78;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (swing.showHandle) {
+      const hlen = swing.handleLength || 52;
+      const gripAng = swing.angle + Math.PI;
+      const gx0 = swing.x;
+      const gy0 = swing.y;
+      const gx1 = swing.x + Math.cos(gripAng) * hlen;
+      const gy1 = swing.y + Math.sin(gripAng) * hlen;
+      ctx.strokeStyle = "#1a0d0d";
+      ctx.lineWidth = 7;
+      ctx.lineCap = "round";
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.moveTo(gx0, gy0);
+      ctx.lineTo(gx1, gy1);
+      ctx.stroke();
+      ctx.strokeStyle = "#3d2520";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(gx0, gy0);
+      ctx.lineTo(gx1, gy1);
+      ctx.stroke();
+      const gxp = gx1 - Math.cos(gripAng) * 10;
+      const gyp = gy1 - Math.sin(gripAng) * 10;
+      ctx.fillStyle = "#2a1815";
+      ctx.beginPath();
+      ctx.arc(gxp, gyp, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.22)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+    ctx.strokeStyle = swing.color;
+    ctx.shadowBlur = 26;
+    ctx.shadowColor = swing.color;
+    ctx.lineCap = "round";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(swing.x, swing.y, swing.radius * 0.76, swing.angle - swing.arc / 2, bladeAngle);
+    ctx.stroke();
+    ctx.translate(hx, hy);
+    ctx.rotate(bladeAngle + Math.PI / 2);
+    ctx.strokeStyle = swing.color;
+    ctx.fillStyle = "rgba(255, 35, 35, 0.24)";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(0, 28);
+    ctx.lineTo(0, -38);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -36);
+    ctx.quadraticCurveTo(42, -42, 54, -8);
+    ctx.quadraticCurveTo(24, -22, 0, -12);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.82)";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(4, -34);
+    ctx.quadraticCurveTo(34, -35, 48, -10);
+    ctx.stroke();
+    ctx.restore();
+  });
+  state.reaperChains.forEach((chain) => chain.draw(ctx));
   state.visualBeams.forEach((beam) => {
     ctx.save();
     ctx.globalAlpha = Math.max(beam.life / beam.maxLife, 0);
@@ -6598,9 +11898,36 @@ const drawEntities = () => {
     ctx.stroke();
     ctx.restore();
   });
+  if (state.decorativeLightning) {
+    state.decorativeLightning.forEach((L) => {
+      if (!L.points || L.points.length < 2) return;
+      const alpha = clamp(L.life / L.maxLife, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.96;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = L.color;
+      ctx.lineWidth = L.width;
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = "#88ccff";
+      ctx.beginPath();
+      ctx.moveTo(L.points[0].x, L.points[0].y);
+      for (let i = 1; i < L.points.length; i++) ctx.lineTo(L.points[i].x, L.points[i].y);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(255,255,255,0.82)";
+      ctx.lineWidth = Math.max(1, L.width * 0.42);
+      ctx.beginPath();
+      ctx.moveTo(L.points[0].x, L.points[0].y);
+      for (let i = 1; i < L.points.length; i++) ctx.lineTo(L.points[i].x, L.points[i].y);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
   state.drones.forEach((drone) => drone.draw(ctx));
   state.novaOrbiters.forEach((orb) => orb.draw(ctx));
-  state.player.draw(ctx);
+  state.reaperMinions.forEach((minion) => minion.draw(ctx));
+  drawBoltCageLightning(ctx);
+  if (state.player) state.player.draw(ctx);
   state.particles.forEach((particle) => particle.draw(ctx));
   
 };
@@ -6639,40 +11966,31 @@ const gameLoop = (timestamp) => {
   
   const active = !state.paused && !state.upgradePending && !settingsOpen;
 
-  if (active) {
-    
+  try {
     if (state.running) {
-      drawBackground(dt);
-      updateEntities(dt);
+      if (active) {
+        drawBackground(dt);
+        updateEntities(dt);
+      } else {
+        drawBackground(dt);
+      }
       drawEntities();
       if (!state.tutorialMode || state.tutorialTestWave) {
         drawWaveBanner();
       }
       updateHud();
     }
-    state.waveAnnouncementTimer = Math.max(
-      state.waveAnnouncementTimer - dt,
-      0
-    );
-    
-    
+    state.waveAnnouncementTimer = Math.max(state.waveAnnouncementTimer - dt, 0);
+
     if (state.tutorialMode) {
       updateTutorialDisplay();
-      
-      checkTutorialStepCompletion();
+      if (active) checkTutorialStepCompletion();
     }
-  } else if (state.paused && !state.upgradePending && !settingsOpen) {
-    ctx.save();
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
-    ctx.fillRect(0, 0, config.width, config.height);
-    ctx.fillStyle = "#fff";
-    ctx.font = "24px Space Grotesk";
-    ctx.textAlign = "center";
-    ctx.fillText("Paused - Press P for settings", config.width / 2, config.height / 2);
-    ctx.restore();
-  }
 
-  updateBossBar();
+    updateBossBar();
+  } catch (err) {
+    console.error("Orbital Barrage frame error", err);
+  }
   requestAnimationFrame(gameLoop);
 };
 
@@ -6827,6 +12145,8 @@ const showEndlessSetup = () => {
   if (campaignPanel) campaignPanel.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (instructionsEl) instructionsEl.classList.remove("hidden");
+  const selectedDifficulty = document.querySelector(`input[name="difficulty"][value="${state.difficultyKey}"]`);
+  if (selectedDifficulty) selectedDifficulty.checked = true;
   updateShipSelection();
 };
 
@@ -6838,24 +12158,74 @@ const showInstructionsScreen = () => {
 };
 
 const renderCampaignLevelGrid = () => {
-  if (!campaignLevelGrid) return;
-  campaignLevelGrid.innerHTML = "";
+  if (!campaignConstellation) return;
+  campaignConstellation.innerHTML = "";
+  const TRACK_W = 1000;
+  const TRACK_H = 1400;
+  const track = document.createElement("div");
+  track.style.position = "relative";
+  track.style.height = `${TRACK_H}px`;
+  track.style.width = `${TRACK_W}px`;
+  track.style.minWidth = `${TRACK_W}px`;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "campaign-path-svg");
+  svg.setAttribute("width", String(TRACK_W));
+  svg.setAttribute("height", String(TRACK_H));
+  svg.setAttribute("viewBox", `0 0 ${TRACK_W} ${TRACK_H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  track.appendChild(svg);
+  const points = [];
   for (let level = 1; level <= 40; level++) {
-    const button = document.createElement("button");
-    button.className = "campaign-level-btn";
-    const unlocked = level <= state.campaignUnlockedLevel;
-    if (!unlocked) button.classList.add("locked");
-    if (level === state.selectedCampaignLevel) button.classList.add("selected");
-    const isBossLevel = level % 5 === 0;
-    button.innerHTML = `<strong>${level}</strong><span>${!unlocked ? "LOCKED" : isBossLevel ? "BOSS" : "OPEN"}</span>`;
-    if (isBossLevel) button.classList.add("boss-level");
-    button.disabled = !unlocked;
-    button.addEventListener("click", () => {
-      state.selectedCampaignLevel = level;
-      renderCampaignLevelGrid();
-    });
-    campaignLevelGrid.appendChild(button);
+    const row = Math.floor((level - 1) / 4);
+    const col = (level - 1) % 4;
+    const x = 120 + col * 240 + (row % 2 ? (col % 2 ? 35 : -35) : (col % 2 ? -25 : 25));
+    const y = 90 + row * 135 + (col % 2 ? 30 : -20);
+    points.push({ level, x, y });
   }
+  for (let i = 1; i < points.length; i++) {
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", String(points[i - 1].x));
+    line.setAttribute("y1", String(points[i - 1].y));
+    line.setAttribute("x2", String(points[i].x));
+    line.setAttribute("y2", String(points[i].y));
+    line.setAttribute("class", "campaign-path-line");
+    svg.appendChild(line);
+  }
+  points.forEach((pt) => {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "campaign-star-node";
+    const unlocked = pt.level <= state.campaignUnlockedLevel;
+    const isBoss = pt.level % 5 === 0;
+    if (!unlocked) node.classList.add("locked");
+    if (isBoss) node.classList.add("boss-level");
+    if (pt.level === state.selectedCampaignLevel) node.classList.add("selected");
+    node.style.left = `${pt.x - (isBoss ? 27 : 20)}px`;
+    node.style.top = `${pt.y - (isBoss ? 27 : 20)}px`;
+    if (isBoss) {
+      const skull = document.createElement("span");
+      skull.className = "boss-skull";
+      skull.textContent = "\u2620";
+      const num = document.createElement("span");
+      num.className = "boss-level-num";
+      num.textContent = String(pt.level);
+      node.appendChild(skull);
+      node.appendChild(num);
+    } else {
+      node.textContent = String(pt.level);
+    }
+    if (unlocked) {
+      node.addEventListener("click", () => {
+        state.selectedCampaignLevel = pt.level;
+        renderCampaignLevelGrid();
+      });
+    }
+    track.appendChild(node);
+  });
+  campaignConstellation.appendChild(track);
+  const selectedUnlocked = state.selectedCampaignLevel <= state.campaignUnlockedLevel;
+  if (campaignStartButton) campaignStartButton.classList.toggle("hidden", !selectedUnlocked);
+  if (campaignSwitchShipButton) campaignSwitchShipButton.classList.toggle("hidden", !selectedUnlocked);
 };
 
 const showCampaignScreen = () => {
@@ -6863,6 +12233,7 @@ const showCampaignScreen = () => {
   if (instructionsEl) instructionsEl.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.remove("hidden");
+  if (campaignShipPanel) campaignShipPanel.classList.add("hidden");
   renderCampaignLevelGrid();
 };
 
@@ -6875,6 +12246,17 @@ if (backToHubButton) backToHubButton.addEventListener("click", showHub);
 if (backFromInstructions) backFromInstructions.addEventListener("click", showHub);
 if (campaignCloseButton) campaignCloseButton.addEventListener("click", showHub);
 if (campaignBackButton) campaignBackButton.addEventListener("click", showHub);
+if (campaignSwitchShipButton) {
+  campaignSwitchShipButton.addEventListener("click", () => {
+    if (campaignShipPanel) campaignShipPanel.classList.remove("hidden");
+    renderCampaignShipPanel();
+  });
+}
+if (campaignShipCloseButton) {
+  campaignShipCloseButton.addEventListener("click", () => {
+    if (campaignShipPanel) campaignShipPanel.classList.add("hidden");
+  });
+}
 if (campaignStartButton) {
   campaignStartButton.addEventListener("click", () => {
     state.mode = "campaign";
@@ -6882,6 +12264,7 @@ if (campaignStartButton) {
     state.campaignWaveTarget = getCampaignWaveTarget(state.campaignLevel);
     state.wave = 1;
     if (campaignPanel) campaignPanel.classList.add("hidden");
+    if (campaignShipPanel) campaignShipPanel.classList.add("hidden");
     if (instructionsEl) instructionsEl.classList.add("hidden");
     if (mainHub) mainHub.classList.add("hidden");
     resetGame();
@@ -6900,10 +12283,42 @@ if (challengeButton) challengeButton.classList.add("hidden");
 if (fxLabButton) fxLabButton.classList.add("hidden");
 if (mapRegistryButton) mapRegistryButton.classList.add("hidden");
 
-if (advancedCodexButton) advancedCodexButton.addEventListener("click", () => codexButton && codexButton.click());
-if (advancedChallengeButton) advancedChallengeButton.addEventListener("click", () => challengeButton && challengeButton.click());
-if (advancedFxLabButton) advancedFxLabButton.addEventListener("click", () => fxLabButton && fxLabButton.click());
-if (advancedMapRegistryButton) advancedMapRegistryButton.addEventListener("click", () => mapRegistryButton && mapRegistryButton.click());
+if (advancedCodexButton) advancedCodexButton.addEventListener("click", () => {
+  closeMetaPanels();
+  if (codexPanel) codexPanel.classList.remove("hidden");
+});
+if (advancedChallengeButton) advancedChallengeButton.addEventListener("click", () => {
+  closeMetaPanels();
+  if (challengePanel) challengePanel.classList.remove("hidden");
+});
+if (advancedFxLabButton) advancedFxLabButton.addEventListener("click", () => {
+  closeMetaPanels();
+  if (fxLabPanel) fxLabPanel.classList.remove("hidden");
+});
+if (advancedMapRegistryButton) advancedMapRegistryButton.addEventListener("click", () => {
+  closeMetaPanels();
+  if (mapRegistryPanel) mapRegistryPanel.classList.remove("hidden");
+});
+if (musicVolume) {
+  musicVolume.addEventListener("input", () => {
+    audio.musicVolume = Number(musicVolume.value) / 100;
+    applyMusicVolume();
+    updateMusic();
+  });
+  musicVolume.addEventListener("change", () => {
+    audio.musicVolume = Number(musicVolume.value) / 100;
+    applyMusicVolume();
+    updateMusic();
+  });
+}
+if (sfxVolume) {
+  sfxVolume.addEventListener("input", () => {
+    audio.sfxVolume = Number(sfxVolume.value) / 100;
+  });
+}
+if (quitToMenuButton) {
+  quitToMenuButton.addEventListener("click", () => quitToMainMenu());
+}
 
 
 
@@ -6948,29 +12363,16 @@ if (shopCloseButton) {
 }
 
 restartButton.addEventListener("click", () => {
-  
   state.running = false;
-  
-  
   clearCanvas();
-  
-  
   gameOverEl.classList.add("hidden");
   upgradePanel.classList.add("hidden");
   bossBar.classList.add("hidden");
   bossBar.style.display = "none";
   if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
   if (abilityIcons) abilityIcons.classList.add("hidden");
-  
-  
-  if (mainHub) {
-    showHub();
-  } else {
-    instructionsEl.classList.remove("hidden");
-  }
-  updateHud(); 
-  
-  
+  const hudEl = document.getElementById("hud");
+  if (hudEl) hudEl.classList.add("hidden");
   state.bullets = [];
   state.enemyBullets = [];
   state.enemies = [];
@@ -6981,10 +12383,18 @@ restartButton.addEventListener("click", () => {
   state.blackHoles = [];
   state.expandingCircles = [];
   state.timeDilationFields = [];
+  state.screenLasers = [];
+  state.aphelionPortalBursts = [];
+  state.aphelionKeelPortals = [];
+  state.seraphBounceLasers = [];
+  state.aphelionShields = [];
   state.novaAnomalies = [];
+  state.tempestEyeStorms = [];
   state.novaOrbiters = [];
   state.bluefallPortals = [];
   state.boss = null;
+  showHub();
+  updateHud();
 });
 
 
@@ -7034,6 +12444,7 @@ const openShipShop = () => {
     const tierInfo = getTierInfo(ship.tier || "common");
     const card = document.createElement("div");
     card.className = `ship-card ship-card--tier-${ship.tier || "common"} ${isUnlocked || isTrialUnlocked ? "unlocked" : ""} ${!isUnlocked && !isTrialUnlocked && canAfford ? "affordable" : ""} ${isSelected ? "selected" : ""}`;
+    card.dataset.tooltip = describeShip(ship);
     card.innerHTML = `
       <div class="ship-card__header">
         <div class="ship-card__name-section">
@@ -7052,7 +12463,7 @@ const openShipShop = () => {
         <span>Energy: ${ship.maxEnergy}</span>
       </div>
       <div class="ship-card__abilities">
-        ${ship.abilities.map(a => `<div><kbd>${a.key.toUpperCase()}</kbd> ${a.name} (${a.cost} energy)</div>`).join("")}
+        ${ship.abilities.map(a => `<div class="ability-detail-row" ${tooltipAttr(describeAbility(ship, a))}><kbd>${a.key.toUpperCase()}</kbd> ${a.name} (${a.cost} energy) ${abilityHelpHtml(ship, a)}</div>`).join("")}
       </div>
       ${!isUnlocked && !isTrialUnlocked ? `<button class="ship-card__buy" ${!canAfford ? "disabled" : ""}>Purchase</button>` : `<button class="ship-card__select" ${isSelected ? "disabled" : ""}>${isSelected ? "Selected" : "Select"}</button>`}
     `;
@@ -7065,6 +12476,7 @@ const openShipShop = () => {
           state.unlockedShips.push(ship.id);
           localStorage.setItem("orbital-quantum-cores", state.quantumCores);
           localStorage.setItem("orbital-unlocked-ships", JSON.stringify(state.unlockedShips));
+          refreshProgressAchievements();
           openShipShop();
           updateHud();
           updateShipSelection(); 
@@ -7107,7 +12519,8 @@ const updateShipSelection = () => {
     const tierInfo = getTierInfo(ship.tier || "common");
     
     const label = document.createElement("label");
-    label.className = `option-card ship-option ship-option--tier-${ship.tier || "common"} ${isAccessible ? "" : "locked"}`;
+    label.className = `option-card ship-option ship-card ship-card--selection ship-card--tier-${ship.tier || "common"} ${isAccessible ? "" : "locked"} ${state.shipKey === shipId ? "selected" : ""}`;
+    label.dataset.tooltip = describeShip(ship);
     
     const radio = document.createElement("input");
     radio.type = "radio";
@@ -7118,20 +12531,22 @@ const updateShipSelection = () => {
       radio.checked = true;
     }
     
-    const strong = document.createElement("strong");
-    strong.textContent = ship.name;
-    
-    const tierSpan = document.createElement("span");
-    tierSpan.className = "ship-tier";
-    tierSpan.textContent = tierInfo.name;
-    tierSpan.style.color = tierInfo.color;
-    tierSpan.style.fontSize = "0.75rem";
-    tierSpan.style.marginLeft = "8px";
-    
-    const span = document.createElement("span");
-    const lockPrefix = !isAccessible ? "LOCKED 🔒 · " : "";
-    const trialPrefix = isAccessible && !isOwned ? "TRIAL · " : "";
-    span.textContent = `${lockPrefix}${trialPrefix}${ship.abilities.map(a => `${a.name} (${a.cost} energy)`).join(" · ")}`;
+    const body = document.createElement("div");
+    body.className = "ship-card__selection-body";
+    body.innerHTML = `
+      <div class="ship-card__header">
+        <div class="ship-card__name-section">
+          <strong>${escapeHtml(ship.name)}</strong>
+          <span class="ship-card__tier" style="color: ${tierInfo.color}">${tierInfo.name}</span>
+        </div>
+        <div class="ship-card__badges">
+          ${isOwned ? '<span class="ship-card__badge">OWNED</span>' : isAccessible ? '<span class="ship-card__badge selected-badge">TRIAL</span>' : '<span class="ship-card__badge">LOCKED</span>'}
+        </div>
+      </div>
+      <div class="ship-card__abilities ship-option__abilities">
+        ${(ship.abilities || []).map(a => `<div class="ability-detail-row" ${tooltipAttr(describeAbility(ship, a))}><kbd>${a.key.toUpperCase()}</kbd> ${escapeHtml(a.name)} (${a.cost} energy) ${abilityHelpHtml(ship, a)}</div>`).join("")}
+      </div>
+    `;
     if (!isAccessible) {
       label.style.opacity = "0.62";
       label.style.filter = "grayscale(0.55)";
@@ -7139,14 +12554,13 @@ const updateShipSelection = () => {
     }
     
     label.appendChild(radio);
-    label.appendChild(strong);
-    strong.appendChild(tierSpan);
-    label.appendChild(span);
+    label.appendChild(body);
     
     
     radio.addEventListener("change", () => {
       if (radio.checked) {
         state.shipKey = shipId;
+        updateShipSelection();
       }
     });
     
@@ -7162,9 +12576,48 @@ const updateShipSelection = () => {
   }
 };
 
+const renderCampaignShipPanel = () => {
+  if (!campaignShipCards) return;
+  campaignShipCards.innerHTML = "";
+  const allShipIds = Object.keys(shipLoadouts).sort((a, b) => (shipLoadouts[a].price || 0) - (shipLoadouts[b].price || 0));
+  allShipIds.forEach((shipId) => {
+    const ship = shipLoadouts[shipId];
+    if (!ship) return;
+    const owned = state.unlockedShips.includes(shipId);
+    const tier = getTierInfo(ship.tier || "common");
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `campaign-ship-card ship-card ship-card--selection ship-card--tier-${ship.tier || "common"} ${state.shipKey === shipId ? "selected" : ""} ${owned ? "" : "locked"}`;
+    card.dataset.tooltip = describeShip(ship);
+    card.innerHTML = `
+      <div class="ship-card__header">
+        <div class="ship-card__name-section">
+          <strong>${escapeHtml(ship.name)}</strong>
+          <span class="ship-card__tier" style="color:${tier.color}">${tier.name}</span>
+        </div>
+        <div class="ship-card__badges">
+          <span class="ship-card__badge">${owned ? "OWNED" : "LOCKED"}</span>
+        </div>
+      </div>
+      <div class="campaign-ship-card__abilities ship-card__abilities">
+        ${(ship.abilities || []).map(a => `<div class="ability-detail-row" ${tooltipAttr(describeAbility(ship, a))}><kbd>${a.key.toUpperCase()}</kbd> ${escapeHtml(a.name)} (${a.cost} energy) ${abilityHelpHtml(ship, a)}</div>`).join("")}
+      </div>
+    `;
+    if (!owned) {
+      card.setAttribute("aria-disabled", "true");
+    } else {
+      card.addEventListener("click", () => {
+        state.shipKey = shipId;
+        renderCampaignShipPanel();
+      });
+    }
+    campaignShipCards.appendChild(card);
+  });
+};
+
 if (endlessShipScroll && endlessShipNext) {
   endlessShipNext.addEventListener("click", () => {
-    endlessShipScroll.scrollBy({ left: 260, behavior: "smooth" });
+    endlessShipScroll.scrollBy({ left: 780, behavior: "smooth" });
   });
   endlessShipScroll.addEventListener(
     "wheel",
@@ -7177,6 +12630,21 @@ if (endlessShipScroll && endlessShipNext) {
   );
 }
 
+if (endlessDifficultyScroll && endlessDifficultyNext) {
+  endlessDifficultyNext.addEventListener("click", () => {
+    endlessDifficultyScroll.scrollBy({ left: 780, behavior: "smooth" });
+  });
+  endlessDifficultyScroll.addEventListener(
+    "wheel",
+    (e) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      endlessDifficultyScroll.scrollLeft += e.deltaY;
+    },
+    { passive: false }
+  );
+}
+
 let listeningToKey = null; 
 let wasPausedBeforeSettings = false; 
 
@@ -7184,6 +12652,8 @@ const openSettings = () => {
   settingsPanel.classList.remove("hidden");
   updateKeyBindingDisplay();
   updateShipLoadoutDisplay();
+  if (musicVolume) musicVolume.value = String(Math.round(audio.musicVolume * 100));
+  if (sfxVolume) sfxVolume.value = String(Math.round(audio.sfxVolume * 100));
   
   if (state.running && !state.upgradePending) {
     wasPausedBeforeSettings = state.paused;
@@ -7204,6 +12674,29 @@ const closeSettings = () => {
   }
 };
 
+const quitToMainMenu = () => {
+  state.running = false;
+  state.paused = false;
+  if (gameOverEl) gameOverEl.classList.add("hidden");
+  if (upgradePanel) upgradePanel.classList.add("hidden");
+  if (bossBar) {
+    bossBar.classList.add("hidden");
+    bossBar.style.display = "none";
+  }
+  if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
+  if (abilityIcons) abilityIcons.classList.add("hidden");
+  const hudEl = document.getElementById("hud");
+  if (hudEl) hudEl.classList.add("hidden");
+  state.bullets = [];
+  state.enemyBullets = [];
+  state.enemies = [];
+  state.boss = null;
+  closeSettings();
+  clearCanvas();
+  showHub();
+  updateHud();
+};
+
 const updateKeyBindingDisplay = () => {
   const keyNames = {
     "1": "1", "2": "2", "3": "3",
@@ -7211,12 +12704,18 @@ const updateKeyBindingDisplay = () => {
   };
   if (keyBinding1 && state.abilityKeys[0]) {
     keyBinding1.textContent = keyNames[state.abilityKeys[0]] || state.abilityKeys[0].toUpperCase();
+    const ship = shipLoadouts[state.player ? state.player.shipId : state.shipKey];
+    if (ship && ship.abilities[0]) keyBinding1.dataset.tooltip = describeAbility(ship, ship.abilities[0]);
   }
   if (keyBinding2 && state.abilityKeys[1]) {
     keyBinding2.textContent = keyNames[state.abilityKeys[1]] || state.abilityKeys[1].toUpperCase();
+    const ship = shipLoadouts[state.player ? state.player.shipId : state.shipKey];
+    if (ship && ship.abilities[1]) keyBinding2.dataset.tooltip = describeAbility(ship, ship.abilities[1]);
   }
   if (keyBinding3 && state.abilityKeys[2]) {
     keyBinding3.textContent = keyNames[state.abilityKeys[2]] || state.abilityKeys[2].toUpperCase();
+    const ship = shipLoadouts[state.player ? state.player.shipId : state.shipKey];
+    if (ship && ship.abilities[2]) keyBinding3.dataset.tooltip = describeAbility(ship, ship.abilities[2]);
   }
 };
 
@@ -7257,7 +12756,7 @@ const updateShipLoadoutDisplay = () => {
     return `
       <div class="ship-loadout__ability">
         <kbd>${keyDisplay}</kbd>
-        <span class="ability-name">${ability.name}</span>
+        <span class="ability-name" ${tooltipAttr(describeAbility(ship, ability))}>${ability.name} ${abilityHelpHtml(ship, ability)}</span>
         <span class="ability-cost">${ability.cost} energy</span>
       </div>
     `;
@@ -7417,6 +12916,7 @@ const closeAllPanels = () => {
   if (fxLabPanel) fxLabPanel.classList.add("hidden");
   if (mapRegistryPanel) mapRegistryPanel.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.add("hidden");
+  if (campaignShipPanel) campaignShipPanel.classList.add("hidden");
   if (achievementsPanel) achievementsPanel.classList.add("hidden");
 };
 
@@ -7431,6 +12931,7 @@ window.addEventListener("mousedown", (event) => {
     fxLabPanel,
     mapRegistryPanel,
     campaignPanel,
+    campaignShipPanel,
     achievementsPanel,
   ].filter(Boolean);
   const clickedInside = targets.some((panel) => panel && !panel.classList.contains("hidden") && panel.contains(event.target));
@@ -7527,6 +13028,7 @@ if (mapRegistryCloseButton) mapRegistryCloseButton.addEventListener("click", () 
 
 updateHud(); 
 updateShipSelection();
+refreshProgressAchievements();
 if (mainHub) {
   showHub();
 }
@@ -7540,266 +13042,266 @@ if (typeof updateKeyBindingDisplay === 'function') {
 
 // MEGA_RUNTIME_CONTENT_V2
 const MEGA_SHIP_CATALOG_V2 = [
-  { id: 'atlas-001', name: 'Atlas 001', tier: 'uncommon', speed: 221, maxHp: 91, maxShield: 21, maxEnergy: 71, baseCooldown: 0.67, damageMultiplier: 0.73, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 2140, unlocked: false },
-  { id: 'atlas-002', name: 'Atlas 002', tier: 'rare', speed: 222, maxHp: 92, maxShield: 22, maxEnergy: 72, baseCooldown: 0.66, damageMultiplier: 0.74, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 2780, unlocked: false },
-  { id: 'atlas-003', name: 'Atlas 003', tier: 'mythic', speed: 223, maxHp: 93, maxShield: 23, maxEnergy: 73, baseCooldown: 0.65, damageMultiplier: 0.76, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 3420, unlocked: false },
-  { id: 'atlas-004', name: 'Atlas 004', tier: 'legendary', speed: 224, maxHp: 94, maxShield: 24, maxEnergy: 74, baseCooldown: 0.64, damageMultiplier: 0.77, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4060, unlocked: false },
-  { id: 'atlas-005', name: 'Atlas 005', tier: 'exotic', speed: 225, maxHp: 95, maxShield: 25, maxEnergy: 75, baseCooldown: 0.63, damageMultiplier: 0.78, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4700, unlocked: false },
-  { id: 'atlas-006', name: 'Atlas 006', tier: 'common', speed: 226, maxHp: 96, maxShield: 26, maxEnergy: 76, baseCooldown: 0.62, damageMultiplier: 0.79, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5340, unlocked: false },
-  { id: 'atlas-007', name: 'Atlas 007', tier: 'uncommon', speed: 227, maxHp: 97, maxShield: 27, maxEnergy: 77, baseCooldown: 0.61, damageMultiplier: 0.8, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5980, unlocked: false },
-  { id: 'atlas-008', name: 'Atlas 008', tier: 'rare', speed: 228, maxHp: 98, maxShield: 28, maxEnergy: 78, baseCooldown: 0.6, damageMultiplier: 0.82, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6620, unlocked: false },
-  { id: 'atlas-009', name: 'Atlas 009', tier: 'mythic', speed: 229, maxHp: 99, maxShield: 29, maxEnergy: 79, baseCooldown: 0.59, damageMultiplier: 0.83, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7260, unlocked: false },
-  { id: 'atlas-010', name: 'Atlas 010', tier: 'legendary', speed: 230, maxHp: 100, maxShield: 30, maxEnergy: 80, baseCooldown: 0.58, damageMultiplier: 0.84, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7900, unlocked: false },
-  { id: 'atlas-011', name: 'Atlas 011', tier: 'exotic', speed: 231, maxHp: 101, maxShield: 31, maxEnergy: 81, baseCooldown: 0.57, damageMultiplier: 0.85, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8540, unlocked: false },
-  { id: 'atlas-012', name: 'Atlas 012', tier: 'common', speed: 232, maxHp: 102, maxShield: 32, maxEnergy: 82, baseCooldown: 0.56, damageMultiplier: 0.86, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9180, unlocked: false },
-  { id: 'atlas-013', name: 'Atlas 013', tier: 'uncommon', speed: 233, maxHp: 103, maxShield: 33, maxEnergy: 83, baseCooldown: 0.55, damageMultiplier: 0.88, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9820, unlocked: false },
-  { id: 'atlas-014', name: 'Atlas 014', tier: 'rare', speed: 234, maxHp: 104, maxShield: 34, maxEnergy: 84, baseCooldown: 0.54, damageMultiplier: 0.89, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 10460, unlocked: false },
-  { id: 'atlas-015', name: 'Atlas 015', tier: 'mythic', speed: 235, maxHp: 105, maxShield: 35, maxEnergy: 85, baseCooldown: 0.53, damageMultiplier: 0.9, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 11100, unlocked: false },
-  { id: 'atlas-016', name: 'Atlas 016', tier: 'legendary', speed: 236, maxHp: 106, maxShield: 36, maxEnergy: 86, baseCooldown: 0.52, damageMultiplier: 0.91, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 11740, unlocked: false },
-  { id: 'atlas-017', name: 'Atlas 017', tier: 'exotic', speed: 237, maxHp: 107, maxShield: 37, maxEnergy: 87, baseCooldown: 0.51, damageMultiplier: 0.92, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 12380, unlocked: false },
-  { id: 'atlas-018', name: 'Atlas 018', tier: 'common', speed: 238, maxHp: 108, maxShield: 38, maxEnergy: 88, baseCooldown: 0.5, damageMultiplier: 0.94, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 13020, unlocked: false },
-  { id: 'atlas-019', name: 'Atlas 019', tier: 'uncommon', speed: 239, maxHp: 109, maxShield: 39, maxEnergy: 89, baseCooldown: 0.49, damageMultiplier: 0.95, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 13660, unlocked: false },
-  { id: 'atlas-020', name: 'Atlas 020', tier: 'rare', speed: 240, maxHp: 110, maxShield: 40, maxEnergy: 90, baseCooldown: 0.48, damageMultiplier: 0.96, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 14300, unlocked: false },
-  { id: 'atlas-021', name: 'Atlas 021', tier: 'mythic', speed: 241, maxHp: 111, maxShield: 41, maxEnergy: 91, baseCooldown: 0.47, damageMultiplier: 0.97, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 14940, unlocked: false },
-  { id: 'atlas-022', name: 'Atlas 022', tier: 'legendary', speed: 242, maxHp: 112, maxShield: 42, maxEnergy: 92, baseCooldown: 0.46, damageMultiplier: 0.98, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 15580, unlocked: false },
-  { id: 'atlas-023', name: 'Atlas 023', tier: 'exotic', speed: 243, maxHp: 113, maxShield: 43, maxEnergy: 93, baseCooldown: 0.45, damageMultiplier: 1, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16220, unlocked: false },
-  { id: 'atlas-024', name: 'Atlas 024', tier: 'common', speed: 244, maxHp: 114, maxShield: 44, maxEnergy: 94, baseCooldown: 0.44, damageMultiplier: 1.01, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16860, unlocked: false },
-  { id: 'atlas-025', name: 'Atlas 025', tier: 'uncommon', speed: 245, maxHp: 115, maxShield: 45, maxEnergy: 95, baseCooldown: 0.43, damageMultiplier: 1.02, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17500, unlocked: false },
-  { id: 'atlas-026', name: 'Atlas 026', tier: 'rare', speed: 246, maxHp: 116, maxShield: 46, maxEnergy: 96, baseCooldown: 0.42, damageMultiplier: 1.03, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18140, unlocked: false },
-  { id: 'atlas-027', name: 'Atlas 027', tier: 'mythic', speed: 247, maxHp: 117, maxShield: 47, maxEnergy: 97, baseCooldown: 0.41, damageMultiplier: 1.04, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18780, unlocked: false },
-  { id: 'atlas-028', name: 'Atlas 028', tier: 'legendary', speed: 248, maxHp: 118, maxShield: 48, maxEnergy: 98, baseCooldown: 0.68, damageMultiplier: 1.06, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19420, unlocked: false },
-  { id: 'atlas-029', name: 'Atlas 029', tier: 'exotic', speed: 249, maxHp: 119, maxShield: 49, maxEnergy: 99, baseCooldown: 0.67, damageMultiplier: 1.07, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20060, unlocked: false },
-  { id: 'atlas-030', name: 'Atlas 030', tier: 'common', speed: 250, maxHp: 120, maxShield: 50, maxEnergy: 100, baseCooldown: 0.66, damageMultiplier: 1.08, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20700, unlocked: false },
-  { id: 'atlas-031', name: 'Atlas 031', tier: 'uncommon', speed: 251, maxHp: 121, maxShield: 51, maxEnergy: 101, baseCooldown: 0.65, damageMultiplier: 1.09, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21340, unlocked: false },
-  { id: 'atlas-032', name: 'Atlas 032', tier: 'rare', speed: 252, maxHp: 122, maxShield: 52, maxEnergy: 102, baseCooldown: 0.64, damageMultiplier: 1.1, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21980, unlocked: false },
-  { id: 'atlas-033', name: 'Atlas 033', tier: 'mythic', speed: 253, maxHp: 123, maxShield: 53, maxEnergy: 103, baseCooldown: 0.63, damageMultiplier: 1.12, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22620, unlocked: false },
-  { id: 'atlas-034', name: 'Atlas 034', tier: 'legendary', speed: 254, maxHp: 124, maxShield: 54, maxEnergy: 104, baseCooldown: 0.62, damageMultiplier: 1.13, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23260, unlocked: false },
-  { id: 'atlas-035', name: 'Atlas 035', tier: 'exotic', speed: 255, maxHp: 125, maxShield: 55, maxEnergy: 105, baseCooldown: 0.61, damageMultiplier: 1.14, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 1, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23900, unlocked: false },
-  { id: 'atlas-036', name: 'Atlas 036', tier: 'common', speed: 256, maxHp: 126, maxShield: 56, maxEnergy: 106, baseCooldown: 0.6, damageMultiplier: 1.15, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24540, unlocked: false },
-  { id: 'atlas-037', name: 'Atlas 037', tier: 'uncommon', speed: 257, maxHp: 127, maxShield: 57, maxEnergy: 107, baseCooldown: 0.59, damageMultiplier: 1.16, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25180, unlocked: false },
-  { id: 'atlas-038', name: 'Atlas 038', tier: 'rare', speed: 258, maxHp: 128, maxShield: 58, maxEnergy: 108, baseCooldown: 0.58, damageMultiplier: 1.18, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25820, unlocked: false },
-  { id: 'atlas-039', name: 'Atlas 039', tier: 'mythic', speed: 259, maxHp: 129, maxShield: 59, maxEnergy: 109, baseCooldown: 0.57, damageMultiplier: 1.19, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26460, unlocked: false },
-  { id: 'atlas-040', name: 'Atlas 040', tier: 'legendary', speed: 260, maxHp: 130, maxShield: 60, maxEnergy: 110, baseCooldown: 0.56, damageMultiplier: 1.2, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 27100, unlocked: false },
-  { id: 'atlas-041', name: 'Atlas 041', tier: 'exotic', speed: 261, maxHp: 131, maxShield: 61, maxEnergy: 111, baseCooldown: 0.55, damageMultiplier: 1.21, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 27740, unlocked: false },
-  { id: 'atlas-042', name: 'Atlas 042', tier: 'common', speed: 262, maxHp: 132, maxShield: 62, maxEnergy: 112, baseCooldown: 0.54, damageMultiplier: 1.22, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 28380, unlocked: false },
-  { id: 'atlas-043', name: 'Atlas 043', tier: 'uncommon', speed: 263, maxHp: 133, maxShield: 63, maxEnergy: 113, baseCooldown: 0.53, damageMultiplier: 1.24, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 29020, unlocked: false },
-  { id: 'atlas-044', name: 'Atlas 044', tier: 'rare', speed: 264, maxHp: 134, maxShield: 64, maxEnergy: 114, baseCooldown: 0.52, damageMultiplier: 1.25, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 29660, unlocked: false },
-  { id: 'atlas-045', name: 'Atlas 045', tier: 'mythic', speed: 265, maxHp: 135, maxShield: 65, maxEnergy: 115, baseCooldown: 0.51, damageMultiplier: 1.26, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 30300, unlocked: false },
-  { id: 'atlas-046', name: 'Atlas 046', tier: 'legendary', speed: 266, maxHp: 136, maxShield: 66, maxEnergy: 116, baseCooldown: 0.5, damageMultiplier: 1.27, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 30940, unlocked: false },
-  { id: 'atlas-047', name: 'Atlas 047', tier: 'exotic', speed: 267, maxHp: 137, maxShield: 67, maxEnergy: 117, baseCooldown: 0.49, damageMultiplier: 1.28, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 31580, unlocked: false },
-  { id: 'atlas-048', name: 'Atlas 048', tier: 'common', speed: 268, maxHp: 138, maxShield: 68, maxEnergy: 118, baseCooldown: 0.48, damageMultiplier: 1.3, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 32220, unlocked: false },
-  { id: 'atlas-049', name: 'Atlas 049', tier: 'uncommon', speed: 269, maxHp: 139, maxShield: 69, maxEnergy: 119, baseCooldown: 0.47, damageMultiplier: 1.31, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 32860, unlocked: false },
-  { id: 'atlas-050', name: 'Atlas 050', tier: 'rare', speed: 270, maxHp: 140, maxShield: 70, maxEnergy: 120, baseCooldown: 0.46, damageMultiplier: 1.32, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 33500, unlocked: false },
-  { id: 'atlas-051', name: 'Atlas 051', tier: 'mythic', speed: 271, maxHp: 141, maxShield: 71, maxEnergy: 121, baseCooldown: 0.45, damageMultiplier: 1.33, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 34140, unlocked: false },
-  { id: 'atlas-052', name: 'Atlas 052', tier: 'legendary', speed: 272, maxHp: 142, maxShield: 72, maxEnergy: 122, baseCooldown: 0.44, damageMultiplier: 1.34, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 34780, unlocked: false },
-  { id: 'atlas-053', name: 'Atlas 053', tier: 'exotic', speed: 273, maxHp: 143, maxShield: 73, maxEnergy: 123, baseCooldown: 0.43, damageMultiplier: 1.36, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 35420, unlocked: false },
-  { id: 'atlas-054', name: 'Atlas 054', tier: 'common', speed: 274, maxHp: 144, maxShield: 74, maxEnergy: 124, baseCooldown: 0.42, damageMultiplier: 1.37, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 36060, unlocked: false },
-  { id: 'atlas-055', name: 'Atlas 055', tier: 'uncommon', speed: 275, maxHp: 145, maxShield: 75, maxEnergy: 125, baseCooldown: 0.41, damageMultiplier: 1.38, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 36700, unlocked: false },
-  { id: 'atlas-056', name: 'Atlas 056', tier: 'rare', speed: 276, maxHp: 146, maxShield: 76, maxEnergy: 126, baseCooldown: 0.68, damageMultiplier: 1.39, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 37340, unlocked: false },
-  { id: 'atlas-057', name: 'Atlas 057', tier: 'mythic', speed: 277, maxHp: 147, maxShield: 77, maxEnergy: 127, baseCooldown: 0.67, damageMultiplier: 1.4, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 37980, unlocked: false },
-  { id: 'atlas-058', name: 'Atlas 058', tier: 'legendary', speed: 278, maxHp: 148, maxShield: 78, maxEnergy: 128, baseCooldown: 0.66, damageMultiplier: 1.42, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 38620, unlocked: false },
-  { id: 'atlas-059', name: 'Atlas 059', tier: 'exotic', speed: 279, maxHp: 149, maxShield: 79, maxEnergy: 129, baseCooldown: 0.65, damageMultiplier: 1.43, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 39260, unlocked: false },
-  { id: 'atlas-060', name: 'Atlas 060', tier: 'common', speed: 280, maxHp: 150, maxShield: 80, maxEnergy: 130, baseCooldown: 0.64, damageMultiplier: 1.44, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 39900, unlocked: false },
-  { id: 'atlas-061', name: 'Atlas 061', tier: 'uncommon', speed: 281, maxHp: 151, maxShield: 81, maxEnergy: 131, baseCooldown: 0.63, damageMultiplier: 1.45, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 40540, unlocked: false },
-  { id: 'atlas-062', name: 'Atlas 062', tier: 'rare', speed: 282, maxHp: 152, maxShield: 82, maxEnergy: 132, baseCooldown: 0.62, damageMultiplier: 1.46, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 41180, unlocked: false },
-  { id: 'atlas-063', name: 'Atlas 063', tier: 'mythic', speed: 283, maxHp: 153, maxShield: 83, maxEnergy: 133, baseCooldown: 0.61, damageMultiplier: 1.48, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 41820, unlocked: false },
-  { id: 'atlas-064', name: 'Atlas 064', tier: 'legendary', speed: 284, maxHp: 154, maxShield: 84, maxEnergy: 134, baseCooldown: 0.6, damageMultiplier: 1.49, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 42460, unlocked: false },
-  { id: 'atlas-065', name: 'Atlas 065', tier: 'exotic', speed: 285, maxHp: 155, maxShield: 85, maxEnergy: 135, baseCooldown: 0.59, damageMultiplier: 1.5, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 43100, unlocked: false },
-  { id: 'atlas-066', name: 'Atlas 066', tier: 'common', speed: 286, maxHp: 156, maxShield: 86, maxEnergy: 136, baseCooldown: 0.58, damageMultiplier: 1.51, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 43740, unlocked: false },
-  { id: 'atlas-067', name: 'Atlas 067', tier: 'uncommon', speed: 287, maxHp: 157, maxShield: 87, maxEnergy: 137, baseCooldown: 0.57, damageMultiplier: 1.52, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 44380, unlocked: false },
-  { id: 'atlas-068', name: 'Atlas 068', tier: 'rare', speed: 288, maxHp: 158, maxShield: 88, maxEnergy: 138, baseCooldown: 0.56, damageMultiplier: 1.54, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 45020, unlocked: false },
-  { id: 'atlas-069', name: 'Atlas 069', tier: 'mythic', speed: 289, maxHp: 159, maxShield: 89, maxEnergy: 139, baseCooldown: 0.55, damageMultiplier: 1.55, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 45660, unlocked: false },
-  { id: 'atlas-070', name: 'Atlas 070', tier: 'legendary', speed: 290, maxHp: 160, maxShield: 90, maxEnergy: 140, baseCooldown: 0.54, damageMultiplier: 1.56, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 46300, unlocked: false },
-  { id: 'atlas-071', name: 'Atlas 071', tier: 'exotic', speed: 291, maxHp: 161, maxShield: 91, maxEnergy: 141, baseCooldown: 0.53, damageMultiplier: 1.57, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 46940, unlocked: false },
-  { id: 'atlas-072', name: 'Atlas 072', tier: 'common', speed: 292, maxHp: 162, maxShield: 92, maxEnergy: 142, baseCooldown: 0.52, damageMultiplier: 1.58, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 47580, unlocked: false },
-  { id: 'atlas-073', name: 'Atlas 073', tier: 'uncommon', speed: 293, maxHp: 163, maxShield: 93, maxEnergy: 143, baseCooldown: 0.51, damageMultiplier: 1.6, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 48220, unlocked: false },
-  { id: 'atlas-074', name: 'Atlas 074', tier: 'rare', speed: 294, maxHp: 164, maxShield: 94, maxEnergy: 144, baseCooldown: 0.5, damageMultiplier: 1.61, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 48860, unlocked: false },
-  { id: 'atlas-075', name: 'Atlas 075', tier: 'mythic', speed: 295, maxHp: 165, maxShield: 95, maxEnergy: 145, baseCooldown: 0.49, damageMultiplier: 1.62, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 49500, unlocked: false },
-  { id: 'atlas-076', name: 'Atlas 076', tier: 'legendary', speed: 296, maxHp: 166, maxShield: 96, maxEnergy: 146, baseCooldown: 0.48, damageMultiplier: 1.63, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 50140, unlocked: false },
-  { id: 'atlas-077', name: 'Atlas 077', tier: 'exotic', speed: 297, maxHp: 167, maxShield: 97, maxEnergy: 147, baseCooldown: 0.47, damageMultiplier: 1.64, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 50780, unlocked: false },
-  { id: 'atlas-078', name: 'Atlas 078', tier: 'common', speed: 298, maxHp: 168, maxShield: 98, maxEnergy: 148, baseCooldown: 0.46, damageMultiplier: 1.66, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 51420, unlocked: false },
-  { id: 'atlas-079', name: 'Atlas 079', tier: 'uncommon', speed: 299, maxHp: 169, maxShield: 99, maxEnergy: 149, baseCooldown: 0.45, damageMultiplier: 1.67, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 52060, unlocked: false },
-  { id: 'atlas-080', name: 'Atlas 080', tier: 'rare', speed: 300, maxHp: 170, maxShield: 100, maxEnergy: 150, baseCooldown: 0.44, damageMultiplier: 1.68, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 52700, unlocked: false },
-  { id: 'atlas-081', name: 'Atlas 081', tier: 'mythic', speed: 301, maxHp: 171, maxShield: 101, maxEnergy: 151, baseCooldown: 0.43, damageMultiplier: 1.69, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 53340, unlocked: false },
-  { id: 'atlas-082', name: 'Atlas 082', tier: 'legendary', speed: 302, maxHp: 172, maxShield: 102, maxEnergy: 152, baseCooldown: 0.42, damageMultiplier: 1.7, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 53980, unlocked: false },
-  { id: 'atlas-083', name: 'Atlas 083', tier: 'exotic', speed: 303, maxHp: 173, maxShield: 103, maxEnergy: 153, baseCooldown: 0.41, damageMultiplier: 1.72, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 54620, unlocked: false },
-  { id: 'atlas-084', name: 'Atlas 084', tier: 'common', speed: 304, maxHp: 174, maxShield: 104, maxEnergy: 154, baseCooldown: 0.68, damageMultiplier: 1.73, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 55260, unlocked: false },
-  { id: 'atlas-085', name: 'Atlas 085', tier: 'uncommon', speed: 305, maxHp: 175, maxShield: 105, maxEnergy: 155, baseCooldown: 0.67, damageMultiplier: 1.74, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 55900, unlocked: false },
-  { id: 'atlas-086', name: 'Atlas 086', tier: 'rare', speed: 306, maxHp: 176, maxShield: 106, maxEnergy: 156, baseCooldown: 0.66, damageMultiplier: 1.75, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 56540, unlocked: false },
-  { id: 'atlas-087', name: 'Atlas 087', tier: 'mythic', speed: 307, maxHp: 177, maxShield: 107, maxEnergy: 157, baseCooldown: 0.65, damageMultiplier: 1.76, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 57180, unlocked: false },
-  { id: 'atlas-088', name: 'Atlas 088', tier: 'legendary', speed: 308, maxHp: 178, maxShield: 108, maxEnergy: 158, baseCooldown: 0.64, damageMultiplier: 1.78, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 57820, unlocked: false },
-  { id: 'atlas-089', name: 'Atlas 089', tier: 'exotic', speed: 309, maxHp: 179, maxShield: 109, maxEnergy: 159, baseCooldown: 0.63, damageMultiplier: 1.79, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 58460, unlocked: false },
-  { id: 'atlas-090', name: 'Atlas 090', tier: 'common', speed: 310, maxHp: 180, maxShield: 110, maxEnergy: 160, baseCooldown: 0.62, damageMultiplier: 0.72, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 59100, unlocked: false },
-  { id: 'atlas-091', name: 'Atlas 091', tier: 'uncommon', speed: 311, maxHp: 181, maxShield: 111, maxEnergy: 161, baseCooldown: 0.61, damageMultiplier: 0.73, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 59740, unlocked: false },
-  { id: 'atlas-092', name: 'Atlas 092', tier: 'rare', speed: 312, maxHp: 182, maxShield: 112, maxEnergy: 162, baseCooldown: 0.6, damageMultiplier: 0.74, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 60380, unlocked: false },
-  { id: 'atlas-093', name: 'Atlas 093', tier: 'mythic', speed: 313, maxHp: 183, maxShield: 113, maxEnergy: 163, baseCooldown: 0.59, damageMultiplier: 0.76, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 61020, unlocked: false },
-  { id: 'atlas-094', name: 'Atlas 094', tier: 'legendary', speed: 314, maxHp: 184, maxShield: 114, maxEnergy: 164, baseCooldown: 0.58, damageMultiplier: 0.77, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 61660, unlocked: false },
-  { id: 'atlas-095', name: 'Atlas 095', tier: 'exotic', speed: 315, maxHp: 185, maxShield: 115, maxEnergy: 165, baseCooldown: 0.57, damageMultiplier: 0.78, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 62300, unlocked: false },
-  { id: 'atlas-096', name: 'Atlas 096', tier: 'common', speed: 316, maxHp: 186, maxShield: 116, maxEnergy: 166, baseCooldown: 0.56, damageMultiplier: 0.79, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 62940, unlocked: false },
-  { id: 'atlas-097', name: 'Atlas 097', tier: 'uncommon', speed: 317, maxHp: 187, maxShield: 117, maxEnergy: 167, baseCooldown: 0.55, damageMultiplier: 0.8, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 63580, unlocked: false },
-  { id: 'atlas-098', name: 'Atlas 098', tier: 'rare', speed: 318, maxHp: 188, maxShield: 118, maxEnergy: 168, baseCooldown: 0.54, damageMultiplier: 0.82, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 64220, unlocked: false },
-  { id: 'atlas-099', name: 'Atlas 099', tier: 'mythic', speed: 319, maxHp: 189, maxShield: 119, maxEnergy: 169, baseCooldown: 0.53, damageMultiplier: 0.83, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 64860, unlocked: false },
-  { id: 'atlas-100', name: 'Atlas 100', tier: 'legendary', speed: 320, maxHp: 190, maxShield: 120, maxEnergy: 170, baseCooldown: 0.52, damageMultiplier: 0.84, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 65500, unlocked: false },
-  { id: 'atlas-101', name: 'Atlas 101', tier: 'exotic', speed: 321, maxHp: 191, maxShield: 121, maxEnergy: 171, baseCooldown: 0.51, damageMultiplier: 0.85, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 66140, unlocked: false },
-  { id: 'atlas-102', name: 'Atlas 102', tier: 'common', speed: 322, maxHp: 192, maxShield: 122, maxEnergy: 172, baseCooldown: 0.5, damageMultiplier: 0.86, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 66780, unlocked: false },
-  { id: 'atlas-103', name: 'Atlas 103', tier: 'uncommon', speed: 323, maxHp: 193, maxShield: 123, maxEnergy: 173, baseCooldown: 0.49, damageMultiplier: 0.88, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 67420, unlocked: false },
-  { id: 'atlas-104', name: 'Atlas 104', tier: 'rare', speed: 324, maxHp: 194, maxShield: 124, maxEnergy: 174, baseCooldown: 0.48, damageMultiplier: 0.89, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 68060, unlocked: false },
-  { id: 'atlas-105', name: 'Atlas 105', tier: 'mythic', speed: 325, maxHp: 195, maxShield: 125, maxEnergy: 175, baseCooldown: 0.47, damageMultiplier: 0.9, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 68700, unlocked: false },
-  { id: 'atlas-106', name: 'Atlas 106', tier: 'legendary', speed: 326, maxHp: 196, maxShield: 126, maxEnergy: 176, baseCooldown: 0.46, damageMultiplier: 0.91, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 69340, unlocked: false },
-  { id: 'atlas-107', name: 'Atlas 107', tier: 'exotic', speed: 327, maxHp: 197, maxShield: 127, maxEnergy: 177, baseCooldown: 0.45, damageMultiplier: 0.92, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 69980, unlocked: false },
-  { id: 'atlas-108', name: 'Atlas 108', tier: 'common', speed: 328, maxHp: 198, maxShield: 128, maxEnergy: 178, baseCooldown: 0.44, damageMultiplier: 0.94, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 70620, unlocked: false },
-  { id: 'atlas-109', name: 'Atlas 109', tier: 'uncommon', speed: 329, maxHp: 199, maxShield: 129, maxEnergy: 179, baseCooldown: 0.43, damageMultiplier: 0.95, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 71260, unlocked: false },
-  { id: 'atlas-110', name: 'Atlas 110', tier: 'rare', speed: 330, maxHp: 200, maxShield: 130, maxEnergy: 180, baseCooldown: 0.42, damageMultiplier: 0.96, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 71900, unlocked: false },
-  { id: 'atlas-111', name: 'Atlas 111', tier: 'mythic', speed: 331, maxHp: 201, maxShield: 131, maxEnergy: 181, baseCooldown: 0.41, damageMultiplier: 0.97, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 72540, unlocked: false },
-  { id: 'atlas-112', name: 'Atlas 112', tier: 'legendary', speed: 332, maxHp: 202, maxShield: 132, maxEnergy: 182, baseCooldown: 0.68, damageMultiplier: 0.98, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 73180, unlocked: false },
-  { id: 'atlas-113', name: 'Atlas 113', tier: 'exotic', speed: 333, maxHp: 203, maxShield: 133, maxEnergy: 183, baseCooldown: 0.67, damageMultiplier: 1, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 73820, unlocked: false },
-  { id: 'atlas-114', name: 'Atlas 114', tier: 'common', speed: 334, maxHp: 204, maxShield: 134, maxEnergy: 184, baseCooldown: 0.66, damageMultiplier: 1.01, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 74460, unlocked: false },
-  { id: 'atlas-115', name: 'Atlas 115', tier: 'uncommon', speed: 335, maxHp: 205, maxShield: 135, maxEnergy: 185, baseCooldown: 0.65, damageMultiplier: 1.02, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 1, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 75100, unlocked: false },
-  { id: 'atlas-116', name: 'Atlas 116', tier: 'rare', speed: 336, maxHp: 206, maxShield: 136, maxEnergy: 186, baseCooldown: 0.64, damageMultiplier: 1.03, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 75740, unlocked: false },
-  { id: 'atlas-117', name: 'Atlas 117', tier: 'mythic', speed: 337, maxHp: 207, maxShield: 137, maxEnergy: 187, baseCooldown: 0.63, damageMultiplier: 1.04, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 76380, unlocked: false },
-  { id: 'atlas-118', name: 'Atlas 118', tier: 'legendary', speed: 338, maxHp: 208, maxShield: 138, maxEnergy: 188, baseCooldown: 0.62, damageMultiplier: 1.06, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 77020, unlocked: false },
-  { id: 'atlas-119', name: 'Atlas 119', tier: 'exotic', speed: 339, maxHp: 209, maxShield: 139, maxEnergy: 189, baseCooldown: 0.61, damageMultiplier: 1.07, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 77660, unlocked: false },
-  { id: 'atlas-120', name: 'Atlas 120', tier: 'common', speed: 340, maxHp: 210, maxShield: 20, maxEnergy: 190, baseCooldown: 0.6, damageMultiplier: 1.08, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 78300, unlocked: false },
-  { id: 'atlas-121', name: 'Atlas 121', tier: 'uncommon', speed: 341, maxHp: 211, maxShield: 21, maxEnergy: 191, baseCooldown: 0.59, damageMultiplier: 1.09, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 78940, unlocked: false },
-  { id: 'atlas-122', name: 'Atlas 122', tier: 'rare', speed: 342, maxHp: 212, maxShield: 22, maxEnergy: 192, baseCooldown: 0.58, damageMultiplier: 1.1, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 79580, unlocked: false },
-  { id: 'atlas-123', name: 'Atlas 123', tier: 'mythic', speed: 343, maxHp: 213, maxShield: 23, maxEnergy: 193, baseCooldown: 0.57, damageMultiplier: 1.12, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 80220, unlocked: false },
-  { id: 'atlas-124', name: 'Atlas 124', tier: 'legendary', speed: 344, maxHp: 214, maxShield: 24, maxEnergy: 194, baseCooldown: 0.56, damageMultiplier: 1.13, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 80860, unlocked: false },
-  { id: 'atlas-125', name: 'Atlas 125', tier: 'exotic', speed: 345, maxHp: 215, maxShield: 25, maxEnergy: 195, baseCooldown: 0.55, damageMultiplier: 1.14, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 81500, unlocked: false },
-  { id: 'atlas-126', name: 'Atlas 126', tier: 'common', speed: 346, maxHp: 216, maxShield: 26, maxEnergy: 196, baseCooldown: 0.54, damageMultiplier: 1.15, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 82140, unlocked: false },
-  { id: 'atlas-127', name: 'Atlas 127', tier: 'uncommon', speed: 347, maxHp: 217, maxShield: 27, maxEnergy: 197, baseCooldown: 0.53, damageMultiplier: 1.16, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 82780, unlocked: false },
-  { id: 'atlas-128', name: 'Atlas 128', tier: 'rare', speed: 348, maxHp: 218, maxShield: 28, maxEnergy: 198, baseCooldown: 0.52, damageMultiplier: 1.18, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 83420, unlocked: false },
-  { id: 'atlas-129', name: 'Atlas 129', tier: 'mythic', speed: 349, maxHp: 219, maxShield: 29, maxEnergy: 199, baseCooldown: 0.51, damageMultiplier: 1.19, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 84060, unlocked: false },
-  { id: 'atlas-130', name: 'Atlas 130', tier: 'legendary', speed: 350, maxHp: 220, maxShield: 30, maxEnergy: 200, baseCooldown: 0.5, damageMultiplier: 1.2, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 84700, unlocked: false },
-  { id: 'atlas-131', name: 'Atlas 131', tier: 'exotic', speed: 351, maxHp: 221, maxShield: 31, maxEnergy: 201, baseCooldown: 0.49, damageMultiplier: 1.21, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 85340, unlocked: false },
-  { id: 'atlas-132', name: 'Atlas 132', tier: 'common', speed: 352, maxHp: 222, maxShield: 32, maxEnergy: 202, baseCooldown: 0.48, damageMultiplier: 1.22, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 85980, unlocked: false },
-  { id: 'atlas-133', name: 'Atlas 133', tier: 'uncommon', speed: 353, maxHp: 223, maxShield: 33, maxEnergy: 203, baseCooldown: 0.47, damageMultiplier: 1.24, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 86620, unlocked: false },
-  { id: 'atlas-134', name: 'Atlas 134', tier: 'rare', speed: 354, maxHp: 224, maxShield: 34, maxEnergy: 204, baseCooldown: 0.46, damageMultiplier: 1.25, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 87260, unlocked: false },
-  { id: 'atlas-135', name: 'Atlas 135', tier: 'mythic', speed: 355, maxHp: 225, maxShield: 35, maxEnergy: 205, baseCooldown: 0.45, damageMultiplier: 1.26, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 87900, unlocked: false },
-  { id: 'atlas-136', name: 'Atlas 136', tier: 'legendary', speed: 356, maxHp: 226, maxShield: 36, maxEnergy: 206, baseCooldown: 0.44, damageMultiplier: 1.27, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 88540, unlocked: false },
-  { id: 'atlas-137', name: 'Atlas 137', tier: 'exotic', speed: 357, maxHp: 227, maxShield: 37, maxEnergy: 207, baseCooldown: 0.43, damageMultiplier: 1.28, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 89180, unlocked: false },
-  { id: 'atlas-138', name: 'Atlas 138', tier: 'common', speed: 358, maxHp: 228, maxShield: 38, maxEnergy: 208, baseCooldown: 0.42, damageMultiplier: 1.3, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 89820, unlocked: false },
-  { id: 'atlas-139', name: 'Atlas 139', tier: 'uncommon', speed: 359, maxHp: 229, maxShield: 39, maxEnergy: 209, baseCooldown: 0.41, damageMultiplier: 1.31, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 90460, unlocked: false },
-  { id: 'atlas-140', name: 'Atlas 140', tier: 'rare', speed: 360, maxHp: 230, maxShield: 40, maxEnergy: 210, baseCooldown: 0.68, damageMultiplier: 1.32, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 91100, unlocked: false },
-  { id: 'atlas-141', name: 'Atlas 141', tier: 'mythic', speed: 361, maxHp: 231, maxShield: 41, maxEnergy: 211, baseCooldown: 0.67, damageMultiplier: 1.33, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 91740, unlocked: false },
-  { id: 'atlas-142', name: 'Atlas 142', tier: 'legendary', speed: 362, maxHp: 232, maxShield: 42, maxEnergy: 212, baseCooldown: 0.66, damageMultiplier: 1.34, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 92380, unlocked: false },
-  { id: 'atlas-143', name: 'Atlas 143', tier: 'exotic', speed: 363, maxHp: 233, maxShield: 43, maxEnergy: 213, baseCooldown: 0.65, damageMultiplier: 1.36, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 93020, unlocked: false },
-  { id: 'atlas-144', name: 'Atlas 144', tier: 'common', speed: 364, maxHp: 234, maxShield: 44, maxEnergy: 214, baseCooldown: 0.64, damageMultiplier: 1.37, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 93660, unlocked: false },
-  { id: 'atlas-145', name: 'Atlas 145', tier: 'uncommon', speed: 365, maxHp: 235, maxShield: 45, maxEnergy: 215, baseCooldown: 0.63, damageMultiplier: 1.38, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 94300, unlocked: false },
-  { id: 'atlas-146', name: 'Atlas 146', tier: 'rare', speed: 366, maxHp: 236, maxShield: 46, maxEnergy: 216, baseCooldown: 0.62, damageMultiplier: 1.39, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 94940, unlocked: false },
-  { id: 'atlas-147', name: 'Atlas 147', tier: 'mythic', speed: 367, maxHp: 237, maxShield: 47, maxEnergy: 217, baseCooldown: 0.61, damageMultiplier: 1.4, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 95580, unlocked: false },
-  { id: 'atlas-148', name: 'Atlas 148', tier: 'legendary', speed: 368, maxHp: 238, maxShield: 48, maxEnergy: 218, baseCooldown: 0.6, damageMultiplier: 1.42, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 96220, unlocked: false },
-  { id: 'atlas-149', name: 'Atlas 149', tier: 'exotic', speed: 369, maxHp: 239, maxShield: 49, maxEnergy: 219, baseCooldown: 0.59, damageMultiplier: 1.43, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 96860, unlocked: false },
-  { id: 'atlas-150', name: 'Atlas 150', tier: 'common', speed: 370, maxHp: 240, maxShield: 50, maxEnergy: 70, baseCooldown: 0.58, damageMultiplier: 1.44, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 97500, unlocked: false },
-  { id: 'atlas-151', name: 'Atlas 151', tier: 'uncommon', speed: 371, maxHp: 241, maxShield: 51, maxEnergy: 71, baseCooldown: 0.57, damageMultiplier: 1.45, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 98140, unlocked: false },
-  { id: 'atlas-152', name: 'Atlas 152', tier: 'rare', speed: 372, maxHp: 242, maxShield: 52, maxEnergy: 72, baseCooldown: 0.56, damageMultiplier: 1.46, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 98780, unlocked: false },
-  { id: 'atlas-153', name: 'Atlas 153', tier: 'mythic', speed: 373, maxHp: 243, maxShield: 53, maxEnergy: 73, baseCooldown: 0.55, damageMultiplier: 1.48, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 99420, unlocked: false },
-  { id: 'atlas-154', name: 'Atlas 154', tier: 'legendary', speed: 374, maxHp: 244, maxShield: 54, maxEnergy: 74, baseCooldown: 0.54, damageMultiplier: 1.49, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 100060, unlocked: false },
-  { id: 'atlas-155', name: 'Atlas 155', tier: 'exotic', speed: 375, maxHp: 245, maxShield: 55, maxEnergy: 75, baseCooldown: 0.53, damageMultiplier: 1.5, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 100700, unlocked: false },
-  { id: 'atlas-156', name: 'Atlas 156', tier: 'common', speed: 376, maxHp: 246, maxShield: 56, maxEnergy: 76, baseCooldown: 0.52, damageMultiplier: 1.51, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 101340, unlocked: false },
-  { id: 'atlas-157', name: 'Atlas 157', tier: 'uncommon', speed: 377, maxHp: 247, maxShield: 57, maxEnergy: 77, baseCooldown: 0.51, damageMultiplier: 1.52, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 101980, unlocked: false },
-  { id: 'atlas-158', name: 'Atlas 158', tier: 'rare', speed: 378, maxHp: 248, maxShield: 58, maxEnergy: 78, baseCooldown: 0.5, damageMultiplier: 1.54, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 102620, unlocked: false },
-  { id: 'atlas-159', name: 'Atlas 159', tier: 'mythic', speed: 379, maxHp: 249, maxShield: 59, maxEnergy: 79, baseCooldown: 0.49, damageMultiplier: 1.55, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 103260, unlocked: false },
-  { id: 'atlas-160', name: 'Atlas 160', tier: 'legendary', speed: 380, maxHp: 250, maxShield: 60, maxEnergy: 80, baseCooldown: 0.48, damageMultiplier: 1.56, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 103900, unlocked: false },
-  { id: 'atlas-161', name: 'Atlas 161', tier: 'exotic', speed: 381, maxHp: 251, maxShield: 61, maxEnergy: 81, baseCooldown: 0.47, damageMultiplier: 1.57, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 104540, unlocked: false },
-  { id: 'atlas-162', name: 'Atlas 162', tier: 'common', speed: 382, maxHp: 252, maxShield: 62, maxEnergy: 82, baseCooldown: 0.46, damageMultiplier: 1.58, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 105180, unlocked: false },
-  { id: 'atlas-163', name: 'Atlas 163', tier: 'uncommon', speed: 383, maxHp: 253, maxShield: 63, maxEnergy: 83, baseCooldown: 0.45, damageMultiplier: 1.6, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 105820, unlocked: false },
-  { id: 'atlas-164', name: 'Atlas 164', tier: 'rare', speed: 384, maxHp: 254, maxShield: 64, maxEnergy: 84, baseCooldown: 0.44, damageMultiplier: 1.61, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 106460, unlocked: false },
-  { id: 'atlas-165', name: 'Atlas 165', tier: 'mythic', speed: 385, maxHp: 255, maxShield: 65, maxEnergy: 85, baseCooldown: 0.43, damageMultiplier: 1.62, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 107100, unlocked: false },
-  { id: 'atlas-166', name: 'Atlas 166', tier: 'legendary', speed: 386, maxHp: 256, maxShield: 66, maxEnergy: 86, baseCooldown: 0.42, damageMultiplier: 1.63, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 107740, unlocked: false },
-  { id: 'atlas-167', name: 'Atlas 167', tier: 'exotic', speed: 387, maxHp: 257, maxShield: 67, maxEnergy: 87, baseCooldown: 0.41, damageMultiplier: 1.64, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 108380, unlocked: false },
-  { id: 'atlas-168', name: 'Atlas 168', tier: 'common', speed: 388, maxHp: 258, maxShield: 68, maxEnergy: 88, baseCooldown: 0.68, damageMultiplier: 1.66, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 109020, unlocked: false },
-  { id: 'atlas-169', name: 'Atlas 169', tier: 'uncommon', speed: 389, maxHp: 259, maxShield: 69, maxEnergy: 89, baseCooldown: 0.67, damageMultiplier: 1.67, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 109660, unlocked: false },
-  { id: 'atlas-170', name: 'Atlas 170', tier: 'rare', speed: 390, maxHp: 260, maxShield: 70, maxEnergy: 90, baseCooldown: 0.66, damageMultiplier: 1.68, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 110300, unlocked: false },
-  { id: 'atlas-171', name: 'Atlas 171', tier: 'mythic', speed: 391, maxHp: 261, maxShield: 71, maxEnergy: 91, baseCooldown: 0.65, damageMultiplier: 1.69, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 110940, unlocked: false },
-  { id: 'atlas-172', name: 'Atlas 172', tier: 'legendary', speed: 392, maxHp: 262, maxShield: 72, maxEnergy: 92, baseCooldown: 0.64, damageMultiplier: 1.7, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 111580, unlocked: false },
-  { id: 'atlas-173', name: 'Atlas 173', tier: 'exotic', speed: 393, maxHp: 263, maxShield: 73, maxEnergy: 93, baseCooldown: 0.63, damageMultiplier: 1.72, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 112220, unlocked: false },
-  { id: 'atlas-174', name: 'Atlas 174', tier: 'common', speed: 394, maxHp: 264, maxShield: 74, maxEnergy: 94, baseCooldown: 0.62, damageMultiplier: 1.73, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 112860, unlocked: false },
-  { id: 'atlas-175', name: 'Atlas 175', tier: 'uncommon', speed: 395, maxHp: 265, maxShield: 75, maxEnergy: 95, baseCooldown: 0.61, damageMultiplier: 1.74, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 113500, unlocked: false },
-  { id: 'atlas-176', name: 'Atlas 176', tier: 'rare', speed: 396, maxHp: 266, maxShield: 76, maxEnergy: 96, baseCooldown: 0.6, damageMultiplier: 1.75, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 114140, unlocked: false },
-  { id: 'atlas-177', name: 'Atlas 177', tier: 'mythic', speed: 397, maxHp: 267, maxShield: 77, maxEnergy: 97, baseCooldown: 0.59, damageMultiplier: 1.76, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 114780, unlocked: false },
-  { id: 'atlas-178', name: 'Atlas 178', tier: 'legendary', speed: 398, maxHp: 268, maxShield: 78, maxEnergy: 98, baseCooldown: 0.58, damageMultiplier: 1.78, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 115420, unlocked: false },
-  { id: 'atlas-179', name: 'Atlas 179', tier: 'exotic', speed: 399, maxHp: 269, maxShield: 79, maxEnergy: 99, baseCooldown: 0.57, damageMultiplier: 1.79, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 116060, unlocked: false },
-  { id: 'atlas-180', name: 'Atlas 180', tier: 'common', speed: 220, maxHp: 270, maxShield: 80, maxEnergy: 100, baseCooldown: 0.56, damageMultiplier: 0.72, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 116700, unlocked: false },
-  { id: 'atlas-181', name: 'Atlas 181', tier: 'uncommon', speed: 221, maxHp: 271, maxShield: 81, maxEnergy: 101, baseCooldown: 0.55, damageMultiplier: 0.73, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 117340, unlocked: false },
-  { id: 'atlas-182', name: 'Atlas 182', tier: 'rare', speed: 222, maxHp: 272, maxShield: 82, maxEnergy: 102, baseCooldown: 0.54, damageMultiplier: 0.74, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 117980, unlocked: false },
-  { id: 'atlas-183', name: 'Atlas 183', tier: 'mythic', speed: 223, maxHp: 273, maxShield: 83, maxEnergy: 103, baseCooldown: 0.53, damageMultiplier: 0.76, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 118620, unlocked: false },
-  { id: 'atlas-184', name: 'Atlas 184', tier: 'legendary', speed: 224, maxHp: 274, maxShield: 84, maxEnergy: 104, baseCooldown: 0.52, damageMultiplier: 0.77, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 119260, unlocked: false },
-  { id: 'atlas-185', name: 'Atlas 185', tier: 'exotic', speed: 225, maxHp: 275, maxShield: 85, maxEnergy: 105, baseCooldown: 0.51, damageMultiplier: 0.78, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 119900, unlocked: false },
-  { id: 'atlas-186', name: 'Atlas 186', tier: 'common', speed: 226, maxHp: 276, maxShield: 86, maxEnergy: 106, baseCooldown: 0.5, damageMultiplier: 0.79, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 120540, unlocked: false },
-  { id: 'atlas-187', name: 'Atlas 187', tier: 'uncommon', speed: 227, maxHp: 277, maxShield: 87, maxEnergy: 107, baseCooldown: 0.49, damageMultiplier: 0.8, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 121180, unlocked: false },
-  { id: 'atlas-188', name: 'Atlas 188', tier: 'rare', speed: 228, maxHp: 278, maxShield: 88, maxEnergy: 108, baseCooldown: 0.48, damageMultiplier: 0.82, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 121820, unlocked: false },
-  { id: 'atlas-189', name: 'Atlas 189', tier: 'mythic', speed: 229, maxHp: 279, maxShield: 89, maxEnergy: 109, baseCooldown: 0.47, damageMultiplier: 0.83, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 122460, unlocked: false },
-  { id: 'atlas-190', name: 'Atlas 190', tier: 'legendary', speed: 230, maxHp: 90, maxShield: 90, maxEnergy: 110, baseCooldown: 0.46, damageMultiplier: 0.84, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 123100, unlocked: false },
-  { id: 'atlas-191', name: 'Atlas 191', tier: 'exotic', speed: 231, maxHp: 91, maxShield: 91, maxEnergy: 111, baseCooldown: 0.45, damageMultiplier: 0.85, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 123740, unlocked: false },
-  { id: 'atlas-192', name: 'Atlas 192', tier: 'common', speed: 232, maxHp: 92, maxShield: 92, maxEnergy: 112, baseCooldown: 0.44, damageMultiplier: 0.86, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 124380, unlocked: false },
-  { id: 'atlas-193', name: 'Atlas 193', tier: 'uncommon', speed: 233, maxHp: 93, maxShield: 93, maxEnergy: 113, baseCooldown: 0.43, damageMultiplier: 0.88, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 125020, unlocked: false },
-  { id: 'atlas-194', name: 'Atlas 194', tier: 'rare', speed: 234, maxHp: 94, maxShield: 94, maxEnergy: 114, baseCooldown: 0.42, damageMultiplier: 0.89, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 125660, unlocked: false },
-  { id: 'atlas-195', name: 'Atlas 195', tier: 'mythic', speed: 235, maxHp: 95, maxShield: 95, maxEnergy: 115, baseCooldown: 0.41, damageMultiplier: 0.9, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 126300, unlocked: false },
-  { id: 'atlas-196', name: 'Atlas 196', tier: 'legendary', speed: 236, maxHp: 96, maxShield: 96, maxEnergy: 116, baseCooldown: 0.68, damageMultiplier: 0.91, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 126940, unlocked: false },
-  { id: 'atlas-197', name: 'Atlas 197', tier: 'exotic', speed: 237, maxHp: 97, maxShield: 97, maxEnergy: 117, baseCooldown: 0.67, damageMultiplier: 0.92, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 127580, unlocked: false },
-  { id: 'atlas-198', name: 'Atlas 198', tier: 'common', speed: 238, maxHp: 98, maxShield: 98, maxEnergy: 118, baseCooldown: 0.66, damageMultiplier: 0.94, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 128220, unlocked: false },
-  { id: 'atlas-199', name: 'Atlas 199', tier: 'uncommon', speed: 239, maxHp: 99, maxShield: 99, maxEnergy: 119, baseCooldown: 0.65, damageMultiplier: 0.95, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 128860, unlocked: false },
-  { id: 'atlas-200', name: 'Atlas 200', tier: 'rare', speed: 240, maxHp: 100, maxShield: 100, maxEnergy: 120, baseCooldown: 0.64, damageMultiplier: 0.96, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 129500, unlocked: false },
-  { id: 'atlas-201', name: 'Atlas 201', tier: 'mythic', speed: 241, maxHp: 101, maxShield: 101, maxEnergy: 121, baseCooldown: 0.63, damageMultiplier: 0.97, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 130140, unlocked: false },
-  { id: 'atlas-202', name: 'Atlas 202', tier: 'legendary', speed: 242, maxHp: 102, maxShield: 102, maxEnergy: 122, baseCooldown: 0.62, damageMultiplier: 0.98, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 130780, unlocked: false },
-  { id: 'atlas-203', name: 'Atlas 203', tier: 'exotic', speed: 243, maxHp: 103, maxShield: 103, maxEnergy: 123, baseCooldown: 0.61, damageMultiplier: 1, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 131420, unlocked: false },
-  { id: 'atlas-204', name: 'Atlas 204', tier: 'common', speed: 244, maxHp: 104, maxShield: 104, maxEnergy: 124, baseCooldown: 0.6, damageMultiplier: 1.01, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 132060, unlocked: false },
-  { id: 'atlas-205', name: 'Atlas 205', tier: 'uncommon', speed: 245, maxHp: 105, maxShield: 105, maxEnergy: 125, baseCooldown: 0.59, damageMultiplier: 1.02, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 132700, unlocked: false },
-  { id: 'atlas-206', name: 'Atlas 206', tier: 'rare', speed: 246, maxHp: 106, maxShield: 106, maxEnergy: 126, baseCooldown: 0.58, damageMultiplier: 1.03, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 133340, unlocked: false },
-  { id: 'atlas-207', name: 'Atlas 207', tier: 'mythic', speed: 247, maxHp: 107, maxShield: 107, maxEnergy: 127, baseCooldown: 0.57, damageMultiplier: 1.04, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 133980, unlocked: false },
-  { id: 'atlas-208', name: 'Atlas 208', tier: 'legendary', speed: 248, maxHp: 108, maxShield: 108, maxEnergy: 128, baseCooldown: 0.56, damageMultiplier: 1.06, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 134620, unlocked: false },
-  { id: 'atlas-209', name: 'Atlas 209', tier: 'exotic', speed: 249, maxHp: 109, maxShield: 109, maxEnergy: 129, baseCooldown: 0.55, damageMultiplier: 1.07, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 135260, unlocked: false },
-  { id: 'atlas-210', name: 'Atlas 210', tier: 'common', speed: 250, maxHp: 110, maxShield: 110, maxEnergy: 130, baseCooldown: 0.54, damageMultiplier: 1.08, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 135900, unlocked: false },
-  { id: 'atlas-211', name: 'Atlas 211', tier: 'uncommon', speed: 251, maxHp: 111, maxShield: 111, maxEnergy: 131, baseCooldown: 0.53, damageMultiplier: 1.09, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 136540, unlocked: false },
-  { id: 'atlas-212', name: 'Atlas 212', tier: 'rare', speed: 252, maxHp: 112, maxShield: 112, maxEnergy: 132, baseCooldown: 0.52, damageMultiplier: 1.1, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 137180, unlocked: false },
-  { id: 'atlas-213', name: 'Atlas 213', tier: 'mythic', speed: 253, maxHp: 113, maxShield: 113, maxEnergy: 133, baseCooldown: 0.51, damageMultiplier: 1.12, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 137820, unlocked: false },
-  { id: 'atlas-214', name: 'Atlas 214', tier: 'legendary', speed: 254, maxHp: 114, maxShield: 114, maxEnergy: 134, baseCooldown: 0.5, damageMultiplier: 1.13, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 138460, unlocked: false },
-  { id: 'atlas-215', name: 'Atlas 215', tier: 'exotic', speed: 255, maxHp: 115, maxShield: 115, maxEnergy: 135, baseCooldown: 0.49, damageMultiplier: 1.14, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 139100, unlocked: false },
-  { id: 'atlas-216', name: 'Atlas 216', tier: 'common', speed: 256, maxHp: 116, maxShield: 116, maxEnergy: 136, baseCooldown: 0.48, damageMultiplier: 1.15, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 139740, unlocked: false },
-  { id: 'atlas-217', name: 'Atlas 217', tier: 'uncommon', speed: 257, maxHp: 117, maxShield: 117, maxEnergy: 137, baseCooldown: 0.47, damageMultiplier: 1.16, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 140380, unlocked: false },
-  { id: 'atlas-218', name: 'Atlas 218', tier: 'rare', speed: 258, maxHp: 118, maxShield: 118, maxEnergy: 138, baseCooldown: 0.46, damageMultiplier: 1.18, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 141020, unlocked: false },
-  { id: 'atlas-219', name: 'Atlas 219', tier: 'mythic', speed: 259, maxHp: 119, maxShield: 119, maxEnergy: 139, baseCooldown: 0.45, damageMultiplier: 1.19, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 141660, unlocked: false },
-  { id: 'atlas-220', name: 'Atlas 220', tier: 'legendary', speed: 260, maxHp: 120, maxShield: 120, maxEnergy: 140, baseCooldown: 0.44, damageMultiplier: 1.2, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 142300, unlocked: false },
-  { id: 'atlas-221', name: 'Atlas 221', tier: 'exotic', speed: 261, maxHp: 121, maxShield: 121, maxEnergy: 141, baseCooldown: 0.43, damageMultiplier: 1.21, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 142940, unlocked: false },
-  { id: 'atlas-222', name: 'Atlas 222', tier: 'common', speed: 262, maxHp: 122, maxShield: 122, maxEnergy: 142, baseCooldown: 0.42, damageMultiplier: 1.22, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 143580, unlocked: false },
-  { id: 'atlas-223', name: 'Atlas 223', tier: 'uncommon', speed: 263, maxHp: 123, maxShield: 123, maxEnergy: 143, baseCooldown: 0.41, damageMultiplier: 1.24, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 144220, unlocked: false },
-  { id: 'atlas-224', name: 'Atlas 224', tier: 'rare', speed: 264, maxHp: 124, maxShield: 124, maxEnergy: 144, baseCooldown: 0.68, damageMultiplier: 1.25, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 144860, unlocked: false },
-  { id: 'atlas-225', name: 'Atlas 225', tier: 'mythic', speed: 265, maxHp: 125, maxShield: 125, maxEnergy: 145, baseCooldown: 0.67, damageMultiplier: 1.26, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 145500, unlocked: false },
-  { id: 'atlas-226', name: 'Atlas 226', tier: 'legendary', speed: 266, maxHp: 126, maxShield: 126, maxEnergy: 146, baseCooldown: 0.66, damageMultiplier: 1.27, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 146140, unlocked: false },
-  { id: 'atlas-227', name: 'Atlas 227', tier: 'exotic', speed: 267, maxHp: 127, maxShield: 127, maxEnergy: 147, baseCooldown: 0.65, damageMultiplier: 1.28, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 146780, unlocked: false },
-  { id: 'atlas-228', name: 'Atlas 228', tier: 'common', speed: 268, maxHp: 128, maxShield: 128, maxEnergy: 148, baseCooldown: 0.64, damageMultiplier: 1.3, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 147420, unlocked: false },
-  { id: 'atlas-229', name: 'Atlas 229', tier: 'uncommon', speed: 269, maxHp: 129, maxShield: 129, maxEnergy: 149, baseCooldown: 0.63, damageMultiplier: 1.31, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 148060, unlocked: false },
-  { id: 'atlas-230', name: 'Atlas 230', tier: 'rare', speed: 270, maxHp: 130, maxShield: 130, maxEnergy: 150, baseCooldown: 0.62, damageMultiplier: 1.32, shotSpeedMultiplier: 1, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 148700, unlocked: false },
-  { id: 'atlas-231', name: 'Atlas 231', tier: 'mythic', speed: 271, maxHp: 131, maxShield: 131, maxEnergy: 151, baseCooldown: 0.61, damageMultiplier: 1.33, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 149340, unlocked: false },
-  { id: 'atlas-232', name: 'Atlas 232', tier: 'legendary', speed: 272, maxHp: 132, maxShield: 132, maxEnergy: 152, baseCooldown: 0.6, damageMultiplier: 1.34, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 149980, unlocked: false },
-  { id: 'atlas-233', name: 'Atlas 233', tier: 'exotic', speed: 273, maxHp: 133, maxShield: 133, maxEnergy: 153, baseCooldown: 0.59, damageMultiplier: 1.36, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 150620, unlocked: false },
-  { id: 'atlas-234', name: 'Atlas 234', tier: 'common', speed: 274, maxHp: 134, maxShield: 134, maxEnergy: 154, baseCooldown: 0.58, damageMultiplier: 1.37, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 151260, unlocked: false },
-  { id: 'atlas-235', name: 'Atlas 235', tier: 'uncommon', speed: 275, maxHp: 135, maxShield: 135, maxEnergy: 155, baseCooldown: 0.57, damageMultiplier: 1.38, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 151900, unlocked: false },
-  { id: 'atlas-236', name: 'Atlas 236', tier: 'rare', speed: 276, maxHp: 136, maxShield: 136, maxEnergy: 156, baseCooldown: 0.56, damageMultiplier: 1.39, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 152540, unlocked: false },
-  { id: 'atlas-237', name: 'Atlas 237', tier: 'mythic', speed: 277, maxHp: 137, maxShield: 137, maxEnergy: 157, baseCooldown: 0.55, damageMultiplier: 1.4, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 153180, unlocked: false },
-  { id: 'atlas-238', name: 'Atlas 238', tier: 'legendary', speed: 278, maxHp: 138, maxShield: 138, maxEnergy: 158, baseCooldown: 0.54, damageMultiplier: 1.42, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 153820, unlocked: false },
-  { id: 'atlas-239', name: 'Atlas 239', tier: 'exotic', speed: 279, maxHp: 139, maxShield: 139, maxEnergy: 159, baseCooldown: 0.53, damageMultiplier: 1.43, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 154460, unlocked: false },
-  { id: 'atlas-240', name: 'Atlas 240', tier: 'common', speed: 280, maxHp: 140, maxShield: 20, maxEnergy: 160, baseCooldown: 0.52, damageMultiplier: 1.44, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 155100, unlocked: false },
-  { id: 'atlas-241', name: 'Atlas 241', tier: 'uncommon', speed: 281, maxHp: 141, maxShield: 21, maxEnergy: 161, baseCooldown: 0.51, damageMultiplier: 1.45, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 155740, unlocked: false },
-  { id: 'atlas-242', name: 'Atlas 242', tier: 'rare', speed: 282, maxHp: 142, maxShield: 22, maxEnergy: 162, baseCooldown: 0.5, damageMultiplier: 1.46, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 156380, unlocked: false },
-  { id: 'atlas-243', name: 'Atlas 243', tier: 'mythic', speed: 283, maxHp: 143, maxShield: 23, maxEnergy: 163, baseCooldown: 0.49, damageMultiplier: 1.48, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 157020, unlocked: false },
-  { id: 'atlas-244', name: 'Atlas 244', tier: 'legendary', speed: 284, maxHp: 144, maxShield: 24, maxEnergy: 164, baseCooldown: 0.48, damageMultiplier: 1.49, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 157660, unlocked: false },
-  { id: 'atlas-245', name: 'Atlas 245', tier: 'exotic', speed: 285, maxHp: 145, maxShield: 25, maxEnergy: 165, baseCooldown: 0.47, damageMultiplier: 1.5, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 158300, unlocked: false },
-  { id: 'atlas-246', name: 'Atlas 246', tier: 'common', speed: 286, maxHp: 146, maxShield: 26, maxEnergy: 166, baseCooldown: 0.46, damageMultiplier: 1.51, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 158940, unlocked: false },
-  { id: 'atlas-247', name: 'Atlas 247', tier: 'uncommon', speed: 287, maxHp: 147, maxShield: 27, maxEnergy: 167, baseCooldown: 0.45, damageMultiplier: 1.52, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 159580, unlocked: false },
-  { id: 'atlas-248', name: 'Atlas 248', tier: 'rare', speed: 288, maxHp: 148, maxShield: 28, maxEnergy: 168, baseCooldown: 0.44, damageMultiplier: 1.54, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 160220, unlocked: false },
-  { id: 'atlas-249', name: 'Atlas 249', tier: 'mythic', speed: 289, maxHp: 149, maxShield: 29, maxEnergy: 169, baseCooldown: 0.43, damageMultiplier: 1.55, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 160860, unlocked: false },
-  { id: 'atlas-250', name: 'Atlas 250', tier: 'legendary', speed: 290, maxHp: 150, maxShield: 30, maxEnergy: 170, baseCooldown: 0.42, damageMultiplier: 1.56, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 161500, unlocked: false },
-  { id: 'atlas-251', name: 'Atlas 251', tier: 'exotic', speed: 291, maxHp: 151, maxShield: 31, maxEnergy: 171, baseCooldown: 0.41, damageMultiplier: 1.57, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 162140, unlocked: false },
-  { id: 'atlas-252', name: 'Atlas 252', tier: 'common', speed: 292, maxHp: 152, maxShield: 32, maxEnergy: 172, baseCooldown: 0.68, damageMultiplier: 1.58, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 162780, unlocked: false },
-  { id: 'atlas-253', name: 'Atlas 253', tier: 'uncommon', speed: 293, maxHp: 153, maxShield: 33, maxEnergy: 173, baseCooldown: 0.67, damageMultiplier: 1.6, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 163420, unlocked: false },
-  { id: 'atlas-254', name: 'Atlas 254', tier: 'rare', speed: 294, maxHp: 154, maxShield: 34, maxEnergy: 174, baseCooldown: 0.66, damageMultiplier: 1.61, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 164060, unlocked: false },
-  { id: 'atlas-255', name: 'Atlas 255', tier: 'mythic', speed: 295, maxHp: 155, maxShield: 35, maxEnergy: 175, baseCooldown: 0.65, damageMultiplier: 1.62, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 164700, unlocked: false },
-  { id: 'atlas-256', name: 'Atlas 256', tier: 'legendary', speed: 296, maxHp: 156, maxShield: 36, maxEnergy: 176, baseCooldown: 0.64, damageMultiplier: 1.63, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 165340, unlocked: false },
-  { id: 'atlas-257', name: 'Atlas 257', tier: 'exotic', speed: 297, maxHp: 157, maxShield: 37, maxEnergy: 177, baseCooldown: 0.63, damageMultiplier: 1.64, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 165980, unlocked: false },
-  { id: 'atlas-258', name: 'Atlas 258', tier: 'common', speed: 298, maxHp: 158, maxShield: 38, maxEnergy: 178, baseCooldown: 0.62, damageMultiplier: 1.66, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 166620, unlocked: false },
-  { id: 'atlas-259', name: 'Atlas 259', tier: 'uncommon', speed: 299, maxHp: 159, maxShield: 39, maxEnergy: 179, baseCooldown: 0.61, damageMultiplier: 1.67, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 167260, unlocked: false },
-  { id: 'atlas-260', name: 'Atlas 260', tier: 'rare', speed: 300, maxHp: 160, maxShield: 40, maxEnergy: 180, baseCooldown: 0.6, damageMultiplier: 1.68, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 167900, unlocked: false },
+  { id: 'atlas-001', name: 'Atlas 001', tier: 'uncommon', speed: 221, maxHp: 91, maxShield: 21, maxEnergy: 71, baseCooldown: 0.67, damageMultiplier: 0.73, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4300, unlocked: false },
+  { id: 'atlas-002', name: 'Atlas 002', tier: 'rare', speed: 222, maxHp: 92, maxShield: 22, maxEnergy: 72, baseCooldown: 0.66, damageMultiplier: 0.74, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 15500, unlocked: false },
+  { id: 'atlas-003', name: 'Atlas 003', tier: 'mythic', speed: 223, maxHp: 93, maxShield: 23, maxEnergy: 73, baseCooldown: 0.65, damageMultiplier: 0.76, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 74800, unlocked: false },
+  { id: 'atlas-004', name: 'Atlas 004', tier: 'legendary', speed: 224, maxHp: 94, maxShield: 24, maxEnergy: 74, baseCooldown: 0.64, damageMultiplier: 0.77, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 36000, unlocked: false },
+  { id: 'atlas-005', name: 'Atlas 005', tier: 'exotic', speed: 225, maxHp: 95, maxShield: 25, maxEnergy: 75, baseCooldown: 0.63, damageMultiplier: 0.78, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 131000, unlocked: false },
+  { id: 'atlas-006', name: 'Atlas 006', tier: 'common', speed: 226, maxHp: 96, maxShield: 26, maxEnergy: 76, baseCooldown: 0.62, damageMultiplier: 0.79, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 350, unlocked: false },
+  { id: 'atlas-007', name: 'Atlas 007', tier: 'uncommon', speed: 227, maxHp: 97, maxShield: 27, maxEnergy: 77, baseCooldown: 0.61, damageMultiplier: 0.8, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4423, unlocked: false },
+  { id: 'atlas-008', name: 'Atlas 008', tier: 'rare', speed: 228, maxHp: 98, maxShield: 28, maxEnergy: 78, baseCooldown: 0.6, damageMultiplier: 0.82, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 15763, unlocked: false },
+  { id: 'atlas-009', name: 'Atlas 009', tier: 'mythic', speed: 229, maxHp: 99, maxShield: 29, maxEnergy: 79, baseCooldown: 0.59, damageMultiplier: 0.83, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 75733, unlocked: false },
+  { id: 'atlas-010', name: 'Atlas 010', tier: 'legendary', speed: 230, maxHp: 100, maxShield: 30, maxEnergy: 80, baseCooldown: 0.58, damageMultiplier: 0.84, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 36743, unlocked: false },
+  { id: 'atlas-011', name: 'Atlas 011', tier: 'exotic', speed: 231, maxHp: 101, maxShield: 31, maxEnergy: 81, baseCooldown: 0.57, damageMultiplier: 0.85, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 132071, unlocked: false },
+  { id: 'atlas-012', name: 'Atlas 012', tier: 'common', speed: 232, maxHp: 102, maxShield: 32, maxEnergy: 82, baseCooldown: 0.56, damageMultiplier: 0.86, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 368, unlocked: false },
+  { id: 'atlas-013', name: 'Atlas 013', tier: 'uncommon', speed: 233, maxHp: 103, maxShield: 33, maxEnergy: 83, baseCooldown: 0.55, damageMultiplier: 0.88, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4547, unlocked: false },
+  { id: 'atlas-014', name: 'Atlas 014', tier: 'rare', speed: 234, maxHp: 104, maxShield: 34, maxEnergy: 84, baseCooldown: 0.54, damageMultiplier: 0.89, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16026, unlocked: false },
+  { id: 'atlas-015', name: 'Atlas 015', tier: 'mythic', speed: 235, maxHp: 105, maxShield: 35, maxEnergy: 85, baseCooldown: 0.53, damageMultiplier: 0.9, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 76667, unlocked: false },
+  { id: 'atlas-016', name: 'Atlas 016', tier: 'legendary', speed: 236, maxHp: 106, maxShield: 36, maxEnergy: 86, baseCooldown: 0.52, damageMultiplier: 0.91, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 37486, unlocked: false },
+  { id: 'atlas-017', name: 'Atlas 017', tier: 'exotic', speed: 237, maxHp: 107, maxShield: 37, maxEnergy: 87, baseCooldown: 0.51, damageMultiplier: 0.92, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 133143, unlocked: false },
+  { id: 'atlas-018', name: 'Atlas 018', tier: 'common', speed: 238, maxHp: 108, maxShield: 38, maxEnergy: 88, baseCooldown: 0.5, damageMultiplier: 0.94, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 386, unlocked: false },
+  { id: 'atlas-019', name: 'Atlas 019', tier: 'uncommon', speed: 239, maxHp: 109, maxShield: 39, maxEnergy: 89, baseCooldown: 0.49, damageMultiplier: 0.95, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4670, unlocked: false },
+  { id: 'atlas-020', name: 'Atlas 020', tier: 'rare', speed: 240, maxHp: 110, maxShield: 40, maxEnergy: 90, baseCooldown: 0.48, damageMultiplier: 0.96, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16288, unlocked: false },
+  { id: 'atlas-021', name: 'Atlas 021', tier: 'mythic', speed: 241, maxHp: 111, maxShield: 41, maxEnergy: 91, baseCooldown: 0.47, damageMultiplier: 0.97, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 77600, unlocked: false },
+  { id: 'atlas-022', name: 'Atlas 022', tier: 'legendary', speed: 242, maxHp: 112, maxShield: 42, maxEnergy: 92, baseCooldown: 0.46, damageMultiplier: 0.98, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 38229, unlocked: false },
+  { id: 'atlas-023', name: 'Atlas 023', tier: 'exotic', speed: 243, maxHp: 113, maxShield: 43, maxEnergy: 93, baseCooldown: 0.45, damageMultiplier: 1, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 134214, unlocked: false },
+  { id: 'atlas-024', name: 'Atlas 024', tier: 'common', speed: 244, maxHp: 114, maxShield: 44, maxEnergy: 94, baseCooldown: 0.44, damageMultiplier: 1.01, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 404, unlocked: false },
+  { id: 'atlas-025', name: 'Atlas 025', tier: 'uncommon', speed: 245, maxHp: 115, maxShield: 45, maxEnergy: 95, baseCooldown: 0.43, damageMultiplier: 1.02, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4793, unlocked: false },
+  { id: 'atlas-026', name: 'Atlas 026', tier: 'rare', speed: 246, maxHp: 116, maxShield: 46, maxEnergy: 96, baseCooldown: 0.42, damageMultiplier: 1.03, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16551, unlocked: false },
+  { id: 'atlas-027', name: 'Atlas 027', tier: 'mythic', speed: 247, maxHp: 117, maxShield: 47, maxEnergy: 97, baseCooldown: 0.41, damageMultiplier: 1.04, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 78533, unlocked: false },
+  { id: 'atlas-028', name: 'Atlas 028', tier: 'legendary', speed: 248, maxHp: 118, maxShield: 48, maxEnergy: 98, baseCooldown: 0.68, damageMultiplier: 1.06, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 38971, unlocked: false },
+  { id: 'atlas-029', name: 'Atlas 029', tier: 'exotic', speed: 249, maxHp: 119, maxShield: 49, maxEnergy: 99, baseCooldown: 0.67, damageMultiplier: 1.07, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 135286, unlocked: false },
+  { id: 'atlas-030', name: 'Atlas 030', tier: 'common', speed: 250, maxHp: 120, maxShield: 50, maxEnergy: 100, baseCooldown: 0.66, damageMultiplier: 1.08, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 421, unlocked: false },
+  { id: 'atlas-031', name: 'Atlas 031', tier: 'uncommon', speed: 251, maxHp: 121, maxShield: 51, maxEnergy: 101, baseCooldown: 0.65, damageMultiplier: 1.09, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4916, unlocked: false },
+  { id: 'atlas-032', name: 'Atlas 032', tier: 'rare', speed: 252, maxHp: 122, maxShield: 52, maxEnergy: 102, baseCooldown: 0.64, damageMultiplier: 1.1, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16814, unlocked: false },
+  { id: 'atlas-033', name: 'Atlas 033', tier: 'mythic', speed: 253, maxHp: 123, maxShield: 53, maxEnergy: 103, baseCooldown: 0.63, damageMultiplier: 1.12, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 79467, unlocked: false },
+  { id: 'atlas-034', name: 'Atlas 034', tier: 'legendary', speed: 254, maxHp: 124, maxShield: 54, maxEnergy: 104, baseCooldown: 0.62, damageMultiplier: 1.13, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 39714, unlocked: false },
+  { id: 'atlas-035', name: 'Atlas 035', tier: 'exotic', speed: 255, maxHp: 125, maxShield: 55, maxEnergy: 105, baseCooldown: 0.61, damageMultiplier: 1.14, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 1, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 136357, unlocked: false },
+  { id: 'atlas-036', name: 'Atlas 036', tier: 'common', speed: 256, maxHp: 126, maxShield: 56, maxEnergy: 106, baseCooldown: 0.6, damageMultiplier: 1.15, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 439, unlocked: false },
+  { id: 'atlas-037', name: 'Atlas 037', tier: 'uncommon', speed: 257, maxHp: 127, maxShield: 57, maxEnergy: 107, baseCooldown: 0.59, damageMultiplier: 1.16, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5040, unlocked: false },
+  { id: 'atlas-038', name: 'Atlas 038', tier: 'rare', speed: 258, maxHp: 128, maxShield: 58, maxEnergy: 108, baseCooldown: 0.58, damageMultiplier: 1.18, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17077, unlocked: false },
+  { id: 'atlas-039', name: 'Atlas 039', tier: 'mythic', speed: 259, maxHp: 129, maxShield: 59, maxEnergy: 109, baseCooldown: 0.57, damageMultiplier: 1.19, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 80400, unlocked: false },
+  { id: 'atlas-040', name: 'Atlas 040', tier: 'legendary', speed: 260, maxHp: 130, maxShield: 60, maxEnergy: 110, baseCooldown: 0.56, damageMultiplier: 1.2, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 40457, unlocked: false },
+  { id: 'atlas-041', name: 'Atlas 041', tier: 'exotic', speed: 261, maxHp: 131, maxShield: 61, maxEnergy: 111, baseCooldown: 0.55, damageMultiplier: 1.21, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 137429, unlocked: false },
+  { id: 'atlas-042', name: 'Atlas 042', tier: 'common', speed: 262, maxHp: 132, maxShield: 62, maxEnergy: 112, baseCooldown: 0.54, damageMultiplier: 1.22, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 457, unlocked: false },
+  { id: 'atlas-043', name: 'Atlas 043', tier: 'uncommon', speed: 263, maxHp: 133, maxShield: 63, maxEnergy: 113, baseCooldown: 0.53, damageMultiplier: 1.24, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5163, unlocked: false },
+  { id: 'atlas-044', name: 'Atlas 044', tier: 'rare', speed: 264, maxHp: 134, maxShield: 64, maxEnergy: 114, baseCooldown: 0.52, damageMultiplier: 1.25, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17340, unlocked: false },
+  { id: 'atlas-045', name: 'Atlas 045', tier: 'mythic', speed: 265, maxHp: 135, maxShield: 65, maxEnergy: 115, baseCooldown: 0.51, damageMultiplier: 1.26, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 81333, unlocked: false },
+  { id: 'atlas-046', name: 'Atlas 046', tier: 'legendary', speed: 266, maxHp: 136, maxShield: 66, maxEnergy: 116, baseCooldown: 0.5, damageMultiplier: 1.27, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 41200, unlocked: false },
+  { id: 'atlas-047', name: 'Atlas 047', tier: 'exotic', speed: 267, maxHp: 137, maxShield: 67, maxEnergy: 117, baseCooldown: 0.49, damageMultiplier: 1.28, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 138500, unlocked: false },
+  { id: 'atlas-048', name: 'Atlas 048', tier: 'common', speed: 268, maxHp: 138, maxShield: 68, maxEnergy: 118, baseCooldown: 0.48, damageMultiplier: 1.3, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 475, unlocked: false },
+  { id: 'atlas-049', name: 'Atlas 049', tier: 'uncommon', speed: 269, maxHp: 139, maxShield: 69, maxEnergy: 119, baseCooldown: 0.47, damageMultiplier: 1.31, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5286, unlocked: false },
+  { id: 'atlas-050', name: 'Atlas 050', tier: 'rare', speed: 270, maxHp: 140, maxShield: 70, maxEnergy: 120, baseCooldown: 0.46, damageMultiplier: 1.32, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17602, unlocked: false },
+  { id: 'atlas-051', name: 'Atlas 051', tier: 'mythic', speed: 271, maxHp: 141, maxShield: 71, maxEnergy: 121, baseCooldown: 0.45, damageMultiplier: 1.33, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 82267, unlocked: false },
+  { id: 'atlas-052', name: 'Atlas 052', tier: 'legendary', speed: 272, maxHp: 142, maxShield: 72, maxEnergy: 122, baseCooldown: 0.44, damageMultiplier: 1.34, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 41943, unlocked: false },
+  { id: 'atlas-053', name: 'Atlas 053', tier: 'exotic', speed: 273, maxHp: 143, maxShield: 73, maxEnergy: 123, baseCooldown: 0.43, damageMultiplier: 1.36, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 139571, unlocked: false },
+  { id: 'atlas-054', name: 'Atlas 054', tier: 'common', speed: 274, maxHp: 144, maxShield: 74, maxEnergy: 124, baseCooldown: 0.42, damageMultiplier: 1.37, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 493, unlocked: false },
+  { id: 'atlas-055', name: 'Atlas 055', tier: 'uncommon', speed: 275, maxHp: 145, maxShield: 75, maxEnergy: 125, baseCooldown: 0.41, damageMultiplier: 1.38, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5409, unlocked: false },
+  { id: 'atlas-056', name: 'Atlas 056', tier: 'rare', speed: 276, maxHp: 146, maxShield: 76, maxEnergy: 126, baseCooldown: 0.68, damageMultiplier: 1.39, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17865, unlocked: false },
+  { id: 'atlas-057', name: 'Atlas 057', tier: 'mythic', speed: 277, maxHp: 147, maxShield: 77, maxEnergy: 127, baseCooldown: 0.67, damageMultiplier: 1.4, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 83200, unlocked: false },
+  { id: 'atlas-058', name: 'Atlas 058', tier: 'legendary', speed: 278, maxHp: 148, maxShield: 78, maxEnergy: 128, baseCooldown: 0.66, damageMultiplier: 1.42, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 42686, unlocked: false },
+  { id: 'atlas-059', name: 'Atlas 059', tier: 'exotic', speed: 279, maxHp: 149, maxShield: 79, maxEnergy: 129, baseCooldown: 0.65, damageMultiplier: 1.43, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 140643, unlocked: false },
+  { id: 'atlas-060', name: 'Atlas 060', tier: 'common', speed: 280, maxHp: 150, maxShield: 80, maxEnergy: 130, baseCooldown: 0.64, damageMultiplier: 1.44, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 511, unlocked: false },
+  { id: 'atlas-061', name: 'Atlas 061', tier: 'uncommon', speed: 281, maxHp: 151, maxShield: 81, maxEnergy: 131, baseCooldown: 0.63, damageMultiplier: 1.45, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5533, unlocked: false },
+  { id: 'atlas-062', name: 'Atlas 062', tier: 'rare', speed: 282, maxHp: 152, maxShield: 82, maxEnergy: 132, baseCooldown: 0.62, damageMultiplier: 1.46, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18128, unlocked: false },
+  { id: 'atlas-063', name: 'Atlas 063', tier: 'mythic', speed: 283, maxHp: 153, maxShield: 83, maxEnergy: 133, baseCooldown: 0.61, damageMultiplier: 1.48, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 84133, unlocked: false },
+  { id: 'atlas-064', name: 'Atlas 064', tier: 'legendary', speed: 284, maxHp: 154, maxShield: 84, maxEnergy: 134, baseCooldown: 0.6, damageMultiplier: 1.49, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 43429, unlocked: false },
+  { id: 'atlas-065', name: 'Atlas 065', tier: 'exotic', speed: 285, maxHp: 155, maxShield: 85, maxEnergy: 135, baseCooldown: 0.59, damageMultiplier: 1.5, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 141714, unlocked: false },
+  { id: 'atlas-066', name: 'Atlas 066', tier: 'common', speed: 286, maxHp: 156, maxShield: 86, maxEnergy: 136, baseCooldown: 0.58, damageMultiplier: 1.51, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 529, unlocked: false },
+  { id: 'atlas-067', name: 'Atlas 067', tier: 'uncommon', speed: 287, maxHp: 157, maxShield: 87, maxEnergy: 137, baseCooldown: 0.57, damageMultiplier: 1.52, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5656, unlocked: false },
+  { id: 'atlas-068', name: 'Atlas 068', tier: 'rare', speed: 288, maxHp: 158, maxShield: 88, maxEnergy: 138, baseCooldown: 0.56, damageMultiplier: 1.54, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18391, unlocked: false },
+  { id: 'atlas-069', name: 'Atlas 069', tier: 'mythic', speed: 289, maxHp: 159, maxShield: 89, maxEnergy: 139, baseCooldown: 0.55, damageMultiplier: 1.55, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 85067, unlocked: false },
+  { id: 'atlas-070', name: 'Atlas 070', tier: 'legendary', speed: 290, maxHp: 160, maxShield: 90, maxEnergy: 140, baseCooldown: 0.54, damageMultiplier: 1.56, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 44171, unlocked: false },
+  { id: 'atlas-071', name: 'Atlas 071', tier: 'exotic', speed: 291, maxHp: 161, maxShield: 91, maxEnergy: 141, baseCooldown: 0.53, damageMultiplier: 1.57, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 142786, unlocked: false },
+  { id: 'atlas-072', name: 'Atlas 072', tier: 'common', speed: 292, maxHp: 162, maxShield: 92, maxEnergy: 142, baseCooldown: 0.52, damageMultiplier: 1.58, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 546, unlocked: false },
+  { id: 'atlas-073', name: 'Atlas 073', tier: 'uncommon', speed: 293, maxHp: 163, maxShield: 93, maxEnergy: 143, baseCooldown: 0.51, damageMultiplier: 1.6, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5779, unlocked: false },
+  { id: 'atlas-074', name: 'Atlas 074', tier: 'rare', speed: 294, maxHp: 164, maxShield: 94, maxEnergy: 144, baseCooldown: 0.5, damageMultiplier: 1.61, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18653, unlocked: false },
+  { id: 'atlas-075', name: 'Atlas 075', tier: 'mythic', speed: 295, maxHp: 165, maxShield: 95, maxEnergy: 145, baseCooldown: 0.49, damageMultiplier: 1.62, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 86000, unlocked: false },
+  { id: 'atlas-076', name: 'Atlas 076', tier: 'legendary', speed: 296, maxHp: 166, maxShield: 96, maxEnergy: 146, baseCooldown: 0.48, damageMultiplier: 1.63, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 44914, unlocked: false },
+  { id: 'atlas-077', name: 'Atlas 077', tier: 'exotic', speed: 297, maxHp: 167, maxShield: 97, maxEnergy: 147, baseCooldown: 0.47, damageMultiplier: 1.64, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 143857, unlocked: false },
+  { id: 'atlas-078', name: 'Atlas 078', tier: 'common', speed: 298, maxHp: 168, maxShield: 98, maxEnergy: 148, baseCooldown: 0.46, damageMultiplier: 1.66, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 564, unlocked: false },
+  { id: 'atlas-079', name: 'Atlas 079', tier: 'uncommon', speed: 299, maxHp: 169, maxShield: 99, maxEnergy: 149, baseCooldown: 0.45, damageMultiplier: 1.67, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5902, unlocked: false },
+  { id: 'atlas-080', name: 'Atlas 080', tier: 'rare', speed: 300, maxHp: 170, maxShield: 100, maxEnergy: 150, baseCooldown: 0.44, damageMultiplier: 1.68, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18916, unlocked: false },
+  { id: 'atlas-081', name: 'Atlas 081', tier: 'mythic', speed: 301, maxHp: 171, maxShield: 101, maxEnergy: 151, baseCooldown: 0.43, damageMultiplier: 1.69, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 86933, unlocked: false },
+  { id: 'atlas-082', name: 'Atlas 082', tier: 'legendary', speed: 302, maxHp: 172, maxShield: 102, maxEnergy: 152, baseCooldown: 0.42, damageMultiplier: 1.7, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 45657, unlocked: false },
+  { id: 'atlas-083', name: 'Atlas 083', tier: 'exotic', speed: 303, maxHp: 173, maxShield: 103, maxEnergy: 153, baseCooldown: 0.41, damageMultiplier: 1.72, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 144929, unlocked: false },
+  { id: 'atlas-084', name: 'Atlas 084', tier: 'common', speed: 304, maxHp: 174, maxShield: 104, maxEnergy: 154, baseCooldown: 0.68, damageMultiplier: 1.73, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 582, unlocked: false },
+  { id: 'atlas-085', name: 'Atlas 085', tier: 'uncommon', speed: 305, maxHp: 175, maxShield: 105, maxEnergy: 155, baseCooldown: 0.67, damageMultiplier: 1.74, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6026, unlocked: false },
+  { id: 'atlas-086', name: 'Atlas 086', tier: 'rare', speed: 306, maxHp: 176, maxShield: 106, maxEnergy: 156, baseCooldown: 0.66, damageMultiplier: 1.75, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19179, unlocked: false },
+  { id: 'atlas-087', name: 'Atlas 087', tier: 'mythic', speed: 307, maxHp: 177, maxShield: 107, maxEnergy: 157, baseCooldown: 0.65, damageMultiplier: 1.76, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 87867, unlocked: false },
+  { id: 'atlas-088', name: 'Atlas 088', tier: 'legendary', speed: 308, maxHp: 178, maxShield: 108, maxEnergy: 158, baseCooldown: 0.64, damageMultiplier: 1.78, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 46400, unlocked: false },
+  { id: 'atlas-089', name: 'Atlas 089', tier: 'exotic', speed: 309, maxHp: 179, maxShield: 109, maxEnergy: 159, baseCooldown: 0.63, damageMultiplier: 1.79, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 146000, unlocked: false },
+  { id: 'atlas-090', name: 'Atlas 090', tier: 'common', speed: 310, maxHp: 180, maxShield: 110, maxEnergy: 160, baseCooldown: 0.62, damageMultiplier: 0.72, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 600, unlocked: false },
+  { id: 'atlas-091', name: 'Atlas 091', tier: 'uncommon', speed: 311, maxHp: 181, maxShield: 111, maxEnergy: 161, baseCooldown: 0.61, damageMultiplier: 0.73, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6149, unlocked: false },
+  { id: 'atlas-092', name: 'Atlas 092', tier: 'rare', speed: 312, maxHp: 182, maxShield: 112, maxEnergy: 162, baseCooldown: 0.6, damageMultiplier: 0.74, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19442, unlocked: false },
+  { id: 'atlas-093', name: 'Atlas 093', tier: 'mythic', speed: 313, maxHp: 183, maxShield: 113, maxEnergy: 163, baseCooldown: 0.59, damageMultiplier: 0.76, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 88800, unlocked: false },
+  { id: 'atlas-094', name: 'Atlas 094', tier: 'legendary', speed: 314, maxHp: 184, maxShield: 114, maxEnergy: 164, baseCooldown: 0.58, damageMultiplier: 0.77, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 47143, unlocked: false },
+  { id: 'atlas-095', name: 'Atlas 095', tier: 'exotic', speed: 315, maxHp: 185, maxShield: 115, maxEnergy: 165, baseCooldown: 0.57, damageMultiplier: 0.78, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 147071, unlocked: false },
+  { id: 'atlas-096', name: 'Atlas 096', tier: 'common', speed: 316, maxHp: 186, maxShield: 116, maxEnergy: 166, baseCooldown: 0.56, damageMultiplier: 0.79, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 618, unlocked: false },
+  { id: 'atlas-097', name: 'Atlas 097', tier: 'uncommon', speed: 317, maxHp: 187, maxShield: 117, maxEnergy: 167, baseCooldown: 0.55, damageMultiplier: 0.8, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6272, unlocked: false },
+  { id: 'atlas-098', name: 'Atlas 098', tier: 'rare', speed: 318, maxHp: 188, maxShield: 118, maxEnergy: 168, baseCooldown: 0.54, damageMultiplier: 0.82, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19705, unlocked: false },
+  { id: 'atlas-099', name: 'Atlas 099', tier: 'mythic', speed: 319, maxHp: 189, maxShield: 119, maxEnergy: 169, baseCooldown: 0.53, damageMultiplier: 0.83, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 89733, unlocked: false },
+  { id: 'atlas-100', name: 'Atlas 100', tier: 'legendary', speed: 320, maxHp: 190, maxShield: 120, maxEnergy: 170, baseCooldown: 0.52, damageMultiplier: 0.84, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 47886, unlocked: false },
+  { id: 'atlas-101', name: 'Atlas 101', tier: 'exotic', speed: 321, maxHp: 191, maxShield: 121, maxEnergy: 171, baseCooldown: 0.51, damageMultiplier: 0.85, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 148143, unlocked: false },
+  { id: 'atlas-102', name: 'Atlas 102', tier: 'common', speed: 322, maxHp: 192, maxShield: 122, maxEnergy: 172, baseCooldown: 0.5, damageMultiplier: 0.86, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 636, unlocked: false },
+  { id: 'atlas-103', name: 'Atlas 103', tier: 'uncommon', speed: 323, maxHp: 193, maxShield: 123, maxEnergy: 173, baseCooldown: 0.49, damageMultiplier: 0.88, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6395, unlocked: false },
+  { id: 'atlas-104', name: 'Atlas 104', tier: 'rare', speed: 324, maxHp: 194, maxShield: 124, maxEnergy: 174, baseCooldown: 0.48, damageMultiplier: 0.89, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19967, unlocked: false },
+  { id: 'atlas-105', name: 'Atlas 105', tier: 'mythic', speed: 325, maxHp: 195, maxShield: 125, maxEnergy: 175, baseCooldown: 0.47, damageMultiplier: 0.9, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 90667, unlocked: false },
+  { id: 'atlas-106', name: 'Atlas 106', tier: 'legendary', speed: 326, maxHp: 196, maxShield: 126, maxEnergy: 176, baseCooldown: 0.46, damageMultiplier: 0.91, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 48629, unlocked: false },
+  { id: 'atlas-107', name: 'Atlas 107', tier: 'exotic', speed: 327, maxHp: 197, maxShield: 127, maxEnergy: 177, baseCooldown: 0.45, damageMultiplier: 0.92, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 149214, unlocked: false },
+  { id: 'atlas-108', name: 'Atlas 108', tier: 'common', speed: 328, maxHp: 198, maxShield: 128, maxEnergy: 178, baseCooldown: 0.44, damageMultiplier: 0.94, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 654, unlocked: false },
+  { id: 'atlas-109', name: 'Atlas 109', tier: 'uncommon', speed: 329, maxHp: 199, maxShield: 129, maxEnergy: 179, baseCooldown: 0.43, damageMultiplier: 0.95, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6519, unlocked: false },
+  { id: 'atlas-110', name: 'Atlas 110', tier: 'rare', speed: 330, maxHp: 200, maxShield: 130, maxEnergy: 180, baseCooldown: 0.42, damageMultiplier: 0.96, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20230, unlocked: false },
+  { id: 'atlas-111', name: 'Atlas 111', tier: 'mythic', speed: 331, maxHp: 201, maxShield: 131, maxEnergy: 181, baseCooldown: 0.41, damageMultiplier: 0.97, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 91600, unlocked: false },
+  { id: 'atlas-112', name: 'Atlas 112', tier: 'legendary', speed: 332, maxHp: 202, maxShield: 132, maxEnergy: 182, baseCooldown: 0.68, damageMultiplier: 0.98, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 49371, unlocked: false },
+  { id: 'atlas-113', name: 'Atlas 113', tier: 'exotic', speed: 333, maxHp: 203, maxShield: 133, maxEnergy: 183, baseCooldown: 0.67, damageMultiplier: 1, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 150286, unlocked: false },
+  { id: 'atlas-114', name: 'Atlas 114', tier: 'common', speed: 334, maxHp: 204, maxShield: 134, maxEnergy: 184, baseCooldown: 0.66, damageMultiplier: 1.01, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 671, unlocked: false },
+  { id: 'atlas-115', name: 'Atlas 115', tier: 'uncommon', speed: 335, maxHp: 205, maxShield: 135, maxEnergy: 185, baseCooldown: 0.65, damageMultiplier: 1.02, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 1, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6642, unlocked: false },
+  { id: 'atlas-116', name: 'Atlas 116', tier: 'rare', speed: 336, maxHp: 206, maxShield: 136, maxEnergy: 186, baseCooldown: 0.64, damageMultiplier: 1.03, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20493, unlocked: false },
+  { id: 'atlas-117', name: 'Atlas 117', tier: 'mythic', speed: 337, maxHp: 207, maxShield: 137, maxEnergy: 187, baseCooldown: 0.63, damageMultiplier: 1.04, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 92533, unlocked: false },
+  { id: 'atlas-118', name: 'Atlas 118', tier: 'legendary', speed: 338, maxHp: 208, maxShield: 138, maxEnergy: 188, baseCooldown: 0.62, damageMultiplier: 1.06, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 50114, unlocked: false },
+  { id: 'atlas-119', name: 'Atlas 119', tier: 'exotic', speed: 339, maxHp: 209, maxShield: 139, maxEnergy: 189, baseCooldown: 0.61, damageMultiplier: 1.07, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 151357, unlocked: false },
+  { id: 'atlas-120', name: 'Atlas 120', tier: 'common', speed: 340, maxHp: 210, maxShield: 20, maxEnergy: 190, baseCooldown: 0.6, damageMultiplier: 1.08, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 689, unlocked: false },
+  { id: 'atlas-121', name: 'Atlas 121', tier: 'uncommon', speed: 341, maxHp: 211, maxShield: 21, maxEnergy: 191, baseCooldown: 0.59, damageMultiplier: 1.09, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6765, unlocked: false },
+  { id: 'atlas-122', name: 'Atlas 122', tier: 'rare', speed: 342, maxHp: 212, maxShield: 22, maxEnergy: 192, baseCooldown: 0.58, damageMultiplier: 1.1, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20756, unlocked: false },
+  { id: 'atlas-123', name: 'Atlas 123', tier: 'mythic', speed: 343, maxHp: 213, maxShield: 23, maxEnergy: 193, baseCooldown: 0.57, damageMultiplier: 1.12, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 93467, unlocked: false },
+  { id: 'atlas-124', name: 'Atlas 124', tier: 'legendary', speed: 344, maxHp: 214, maxShield: 24, maxEnergy: 194, baseCooldown: 0.56, damageMultiplier: 1.13, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 50857, unlocked: false },
+  { id: 'atlas-125', name: 'Atlas 125', tier: 'exotic', speed: 345, maxHp: 215, maxShield: 25, maxEnergy: 195, baseCooldown: 0.55, damageMultiplier: 1.14, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 152429, unlocked: false },
+  { id: 'atlas-126', name: 'Atlas 126', tier: 'common', speed: 346, maxHp: 216, maxShield: 26, maxEnergy: 196, baseCooldown: 0.54, damageMultiplier: 1.15, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 707, unlocked: false },
+  { id: 'atlas-127', name: 'Atlas 127', tier: 'uncommon', speed: 347, maxHp: 217, maxShield: 27, maxEnergy: 197, baseCooldown: 0.53, damageMultiplier: 1.16, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6888, unlocked: false },
+  { id: 'atlas-128', name: 'Atlas 128', tier: 'rare', speed: 348, maxHp: 218, maxShield: 28, maxEnergy: 198, baseCooldown: 0.52, damageMultiplier: 1.18, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21019, unlocked: false },
+  { id: 'atlas-129', name: 'Atlas 129', tier: 'mythic', speed: 349, maxHp: 219, maxShield: 29, maxEnergy: 199, baseCooldown: 0.51, damageMultiplier: 1.19, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 94400, unlocked: false },
+  { id: 'atlas-130', name: 'Atlas 130', tier: 'legendary', speed: 350, maxHp: 220, maxShield: 30, maxEnergy: 200, baseCooldown: 0.5, damageMultiplier: 1.2, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 51600, unlocked: false },
+  { id: 'atlas-131', name: 'Atlas 131', tier: 'exotic', speed: 351, maxHp: 221, maxShield: 31, maxEnergy: 201, baseCooldown: 0.49, damageMultiplier: 1.21, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 153500, unlocked: false },
+  { id: 'atlas-132', name: 'Atlas 132', tier: 'common', speed: 352, maxHp: 222, maxShield: 32, maxEnergy: 202, baseCooldown: 0.48, damageMultiplier: 1.22, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 725, unlocked: false },
+  { id: 'atlas-133', name: 'Atlas 133', tier: 'uncommon', speed: 353, maxHp: 223, maxShield: 33, maxEnergy: 203, baseCooldown: 0.47, damageMultiplier: 1.24, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7012, unlocked: false },
+  { id: 'atlas-134', name: 'Atlas 134', tier: 'rare', speed: 354, maxHp: 224, maxShield: 34, maxEnergy: 204, baseCooldown: 0.46, damageMultiplier: 1.25, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21281, unlocked: false },
+  { id: 'atlas-135', name: 'Atlas 135', tier: 'mythic', speed: 355, maxHp: 225, maxShield: 35, maxEnergy: 205, baseCooldown: 0.45, damageMultiplier: 1.26, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 95333, unlocked: false },
+  { id: 'atlas-136', name: 'Atlas 136', tier: 'legendary', speed: 356, maxHp: 226, maxShield: 36, maxEnergy: 206, baseCooldown: 0.44, damageMultiplier: 1.27, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 52343, unlocked: false },
+  { id: 'atlas-137', name: 'Atlas 137', tier: 'exotic', speed: 357, maxHp: 227, maxShield: 37, maxEnergy: 207, baseCooldown: 0.43, damageMultiplier: 1.28, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 154571, unlocked: false },
+  { id: 'atlas-138', name: 'Atlas 138', tier: 'common', speed: 358, maxHp: 228, maxShield: 38, maxEnergy: 208, baseCooldown: 0.42, damageMultiplier: 1.3, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 743, unlocked: false },
+  { id: 'atlas-139', name: 'Atlas 139', tier: 'uncommon', speed: 359, maxHp: 229, maxShield: 39, maxEnergy: 209, baseCooldown: 0.41, damageMultiplier: 1.31, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7135, unlocked: false },
+  { id: 'atlas-140', name: 'Atlas 140', tier: 'rare', speed: 360, maxHp: 230, maxShield: 40, maxEnergy: 210, baseCooldown: 0.68, damageMultiplier: 1.32, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21544, unlocked: false },
+  { id: 'atlas-141', name: 'Atlas 141', tier: 'mythic', speed: 361, maxHp: 231, maxShield: 41, maxEnergy: 211, baseCooldown: 0.67, damageMultiplier: 1.33, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 96267, unlocked: false },
+  { id: 'atlas-142', name: 'Atlas 142', tier: 'legendary', speed: 362, maxHp: 232, maxShield: 42, maxEnergy: 212, baseCooldown: 0.66, damageMultiplier: 1.34, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 53086, unlocked: false },
+  { id: 'atlas-143', name: 'Atlas 143', tier: 'exotic', speed: 363, maxHp: 233, maxShield: 43, maxEnergy: 213, baseCooldown: 0.65, damageMultiplier: 1.36, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 155643, unlocked: false },
+  { id: 'atlas-144', name: 'Atlas 144', tier: 'common', speed: 364, maxHp: 234, maxShield: 44, maxEnergy: 214, baseCooldown: 0.64, damageMultiplier: 1.37, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 761, unlocked: false },
+  { id: 'atlas-145', name: 'Atlas 145', tier: 'uncommon', speed: 365, maxHp: 235, maxShield: 45, maxEnergy: 215, baseCooldown: 0.63, damageMultiplier: 1.38, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7258, unlocked: false },
+  { id: 'atlas-146', name: 'Atlas 146', tier: 'rare', speed: 366, maxHp: 236, maxShield: 46, maxEnergy: 216, baseCooldown: 0.62, damageMultiplier: 1.39, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21807, unlocked: false },
+  { id: 'atlas-147', name: 'Atlas 147', tier: 'mythic', speed: 367, maxHp: 237, maxShield: 47, maxEnergy: 217, baseCooldown: 0.61, damageMultiplier: 1.4, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 97200, unlocked: false },
+  { id: 'atlas-148', name: 'Atlas 148', tier: 'legendary', speed: 368, maxHp: 238, maxShield: 48, maxEnergy: 218, baseCooldown: 0.6, damageMultiplier: 1.42, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 53829, unlocked: false },
+  { id: 'atlas-149', name: 'Atlas 149', tier: 'exotic', speed: 369, maxHp: 239, maxShield: 49, maxEnergy: 219, baseCooldown: 0.59, damageMultiplier: 1.43, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 156714, unlocked: false },
+  { id: 'atlas-150', name: 'Atlas 150', tier: 'common', speed: 370, maxHp: 240, maxShield: 50, maxEnergy: 70, baseCooldown: 0.58, damageMultiplier: 1.44, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 779, unlocked: false },
+  { id: 'atlas-151', name: 'Atlas 151', tier: 'uncommon', speed: 371, maxHp: 241, maxShield: 51, maxEnergy: 71, baseCooldown: 0.57, damageMultiplier: 1.45, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7381, unlocked: false },
+  { id: 'atlas-152', name: 'Atlas 152', tier: 'rare', speed: 372, maxHp: 242, maxShield: 52, maxEnergy: 72, baseCooldown: 0.56, damageMultiplier: 1.46, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22070, unlocked: false },
+  { id: 'atlas-153', name: 'Atlas 153', tier: 'mythic', speed: 373, maxHp: 243, maxShield: 53, maxEnergy: 73, baseCooldown: 0.55, damageMultiplier: 1.48, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 98133, unlocked: false },
+  { id: 'atlas-154', name: 'Atlas 154', tier: 'legendary', speed: 374, maxHp: 244, maxShield: 54, maxEnergy: 74, baseCooldown: 0.54, damageMultiplier: 1.49, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 54571, unlocked: false },
+  { id: 'atlas-155', name: 'Atlas 155', tier: 'exotic', speed: 375, maxHp: 245, maxShield: 55, maxEnergy: 75, baseCooldown: 0.53, damageMultiplier: 1.5, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 157786, unlocked: false },
+  { id: 'atlas-156', name: 'Atlas 156', tier: 'common', speed: 376, maxHp: 246, maxShield: 56, maxEnergy: 76, baseCooldown: 0.52, damageMultiplier: 1.51, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 796, unlocked: false },
+  { id: 'atlas-157', name: 'Atlas 157', tier: 'uncommon', speed: 377, maxHp: 247, maxShield: 57, maxEnergy: 77, baseCooldown: 0.51, damageMultiplier: 1.52, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7505, unlocked: false },
+  { id: 'atlas-158', name: 'Atlas 158', tier: 'rare', speed: 378, maxHp: 248, maxShield: 58, maxEnergy: 78, baseCooldown: 0.5, damageMultiplier: 1.54, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22333, unlocked: false },
+  { id: 'atlas-159', name: 'Atlas 159', tier: 'mythic', speed: 379, maxHp: 249, maxShield: 59, maxEnergy: 79, baseCooldown: 0.49, damageMultiplier: 1.55, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 99067, unlocked: false },
+  { id: 'atlas-160', name: 'Atlas 160', tier: 'legendary', speed: 380, maxHp: 250, maxShield: 60, maxEnergy: 80, baseCooldown: 0.48, damageMultiplier: 1.56, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 55314, unlocked: false },
+  { id: 'atlas-161', name: 'Atlas 161', tier: 'exotic', speed: 381, maxHp: 251, maxShield: 61, maxEnergy: 81, baseCooldown: 0.47, damageMultiplier: 1.57, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 158857, unlocked: false },
+  { id: 'atlas-162', name: 'Atlas 162', tier: 'common', speed: 382, maxHp: 252, maxShield: 62, maxEnergy: 82, baseCooldown: 0.46, damageMultiplier: 1.58, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 814, unlocked: false },
+  { id: 'atlas-163', name: 'Atlas 163', tier: 'uncommon', speed: 383, maxHp: 253, maxShield: 63, maxEnergy: 83, baseCooldown: 0.45, damageMultiplier: 1.6, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7628, unlocked: false },
+  { id: 'atlas-164', name: 'Atlas 164', tier: 'rare', speed: 384, maxHp: 254, maxShield: 64, maxEnergy: 84, baseCooldown: 0.44, damageMultiplier: 1.61, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22595, unlocked: false },
+  { id: 'atlas-165', name: 'Atlas 165', tier: 'mythic', speed: 385, maxHp: 255, maxShield: 65, maxEnergy: 85, baseCooldown: 0.43, damageMultiplier: 1.62, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 100000, unlocked: false },
+  { id: 'atlas-166', name: 'Atlas 166', tier: 'legendary', speed: 386, maxHp: 256, maxShield: 66, maxEnergy: 86, baseCooldown: 0.42, damageMultiplier: 1.63, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 56057, unlocked: false },
+  { id: 'atlas-167', name: 'Atlas 167', tier: 'exotic', speed: 387, maxHp: 257, maxShield: 67, maxEnergy: 87, baseCooldown: 0.41, damageMultiplier: 1.64, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 159929, unlocked: false },
+  { id: 'atlas-168', name: 'Atlas 168', tier: 'common', speed: 388, maxHp: 258, maxShield: 68, maxEnergy: 88, baseCooldown: 0.68, damageMultiplier: 1.66, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 832, unlocked: false },
+  { id: 'atlas-169', name: 'Atlas 169', tier: 'uncommon', speed: 389, maxHp: 259, maxShield: 69, maxEnergy: 89, baseCooldown: 0.67, damageMultiplier: 1.67, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7751, unlocked: false },
+  { id: 'atlas-170', name: 'Atlas 170', tier: 'rare', speed: 390, maxHp: 260, maxShield: 70, maxEnergy: 90, baseCooldown: 0.66, damageMultiplier: 1.68, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22858, unlocked: false },
+  { id: 'atlas-171', name: 'Atlas 171', tier: 'mythic', speed: 391, maxHp: 261, maxShield: 71, maxEnergy: 91, baseCooldown: 0.65, damageMultiplier: 1.69, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 100933, unlocked: false },
+  { id: 'atlas-172', name: 'Atlas 172', tier: 'legendary', speed: 392, maxHp: 262, maxShield: 72, maxEnergy: 92, baseCooldown: 0.64, damageMultiplier: 1.7, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 56800, unlocked: false },
+  { id: 'atlas-173', name: 'Atlas 173', tier: 'exotic', speed: 393, maxHp: 263, maxShield: 73, maxEnergy: 93, baseCooldown: 0.63, damageMultiplier: 1.72, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 161000, unlocked: false },
+  { id: 'atlas-174', name: 'Atlas 174', tier: 'common', speed: 394, maxHp: 264, maxShield: 74, maxEnergy: 94, baseCooldown: 0.62, damageMultiplier: 1.73, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 850, unlocked: false },
+  { id: 'atlas-175', name: 'Atlas 175', tier: 'uncommon', speed: 395, maxHp: 265, maxShield: 75, maxEnergy: 95, baseCooldown: 0.61, damageMultiplier: 1.74, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7874, unlocked: false },
+  { id: 'atlas-176', name: 'Atlas 176', tier: 'rare', speed: 396, maxHp: 266, maxShield: 76, maxEnergy: 96, baseCooldown: 0.6, damageMultiplier: 1.75, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23121, unlocked: false },
+  { id: 'atlas-177', name: 'Atlas 177', tier: 'mythic', speed: 397, maxHp: 267, maxShield: 77, maxEnergy: 97, baseCooldown: 0.59, damageMultiplier: 1.76, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 101867, unlocked: false },
+  { id: 'atlas-178', name: 'Atlas 178', tier: 'legendary', speed: 398, maxHp: 268, maxShield: 78, maxEnergy: 98, baseCooldown: 0.58, damageMultiplier: 1.78, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 57543, unlocked: false },
+  { id: 'atlas-179', name: 'Atlas 179', tier: 'exotic', speed: 399, maxHp: 269, maxShield: 79, maxEnergy: 99, baseCooldown: 0.57, damageMultiplier: 1.79, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 162071, unlocked: false },
+  { id: 'atlas-180', name: 'Atlas 180', tier: 'common', speed: 220, maxHp: 270, maxShield: 80, maxEnergy: 100, baseCooldown: 0.56, damageMultiplier: 0.72, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 868, unlocked: false },
+  { id: 'atlas-181', name: 'Atlas 181', tier: 'uncommon', speed: 221, maxHp: 271, maxShield: 81, maxEnergy: 101, baseCooldown: 0.55, damageMultiplier: 0.73, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7998, unlocked: false },
+  { id: 'atlas-182', name: 'Atlas 182', tier: 'rare', speed: 222, maxHp: 272, maxShield: 82, maxEnergy: 102, baseCooldown: 0.54, damageMultiplier: 0.74, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23384, unlocked: false },
+  { id: 'atlas-183', name: 'Atlas 183', tier: 'mythic', speed: 223, maxHp: 273, maxShield: 83, maxEnergy: 103, baseCooldown: 0.53, damageMultiplier: 0.76, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 102800, unlocked: false },
+  { id: 'atlas-184', name: 'Atlas 184', tier: 'legendary', speed: 224, maxHp: 274, maxShield: 84, maxEnergy: 104, baseCooldown: 0.52, damageMultiplier: 0.77, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 58286, unlocked: false },
+  { id: 'atlas-185', name: 'Atlas 185', tier: 'exotic', speed: 225, maxHp: 275, maxShield: 85, maxEnergy: 105, baseCooldown: 0.51, damageMultiplier: 0.78, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 163143, unlocked: false },
+  { id: 'atlas-186', name: 'Atlas 186', tier: 'common', speed: 226, maxHp: 276, maxShield: 86, maxEnergy: 106, baseCooldown: 0.5, damageMultiplier: 0.79, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 886, unlocked: false },
+  { id: 'atlas-187', name: 'Atlas 187', tier: 'uncommon', speed: 227, maxHp: 277, maxShield: 87, maxEnergy: 107, baseCooldown: 0.49, damageMultiplier: 0.8, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8121, unlocked: false },
+  { id: 'atlas-188', name: 'Atlas 188', tier: 'rare', speed: 228, maxHp: 278, maxShield: 88, maxEnergy: 108, baseCooldown: 0.48, damageMultiplier: 0.82, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23647, unlocked: false },
+  { id: 'atlas-189', name: 'Atlas 189', tier: 'mythic', speed: 229, maxHp: 279, maxShield: 89, maxEnergy: 109, baseCooldown: 0.47, damageMultiplier: 0.83, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 103733, unlocked: false },
+  { id: 'atlas-190', name: 'Atlas 190', tier: 'legendary', speed: 230, maxHp: 90, maxShield: 90, maxEnergy: 110, baseCooldown: 0.46, damageMultiplier: 0.84, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 59029, unlocked: false },
+  { id: 'atlas-191', name: 'Atlas 191', tier: 'exotic', speed: 231, maxHp: 91, maxShield: 91, maxEnergy: 111, baseCooldown: 0.45, damageMultiplier: 0.85, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 164214, unlocked: false },
+  { id: 'atlas-192', name: 'Atlas 192', tier: 'common', speed: 232, maxHp: 92, maxShield: 92, maxEnergy: 112, baseCooldown: 0.44, damageMultiplier: 0.86, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 904, unlocked: false },
+  { id: 'atlas-193', name: 'Atlas 193', tier: 'uncommon', speed: 233, maxHp: 93, maxShield: 93, maxEnergy: 113, baseCooldown: 0.43, damageMultiplier: 0.88, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8244, unlocked: false },
+  { id: 'atlas-194', name: 'Atlas 194', tier: 'rare', speed: 234, maxHp: 94, maxShield: 94, maxEnergy: 114, baseCooldown: 0.42, damageMultiplier: 0.89, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23909, unlocked: false },
+  { id: 'atlas-195', name: 'Atlas 195', tier: 'mythic', speed: 235, maxHp: 95, maxShield: 95, maxEnergy: 115, baseCooldown: 0.41, damageMultiplier: 0.9, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 104667, unlocked: false },
+  { id: 'atlas-196', name: 'Atlas 196', tier: 'legendary', speed: 236, maxHp: 96, maxShield: 96, maxEnergy: 116, baseCooldown: 0.68, damageMultiplier: 0.91, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 59771, unlocked: false },
+  { id: 'atlas-197', name: 'Atlas 197', tier: 'exotic', speed: 237, maxHp: 97, maxShield: 97, maxEnergy: 117, baseCooldown: 0.67, damageMultiplier: 0.92, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 165286, unlocked: false },
+  { id: 'atlas-198', name: 'Atlas 198', tier: 'common', speed: 238, maxHp: 98, maxShield: 98, maxEnergy: 118, baseCooldown: 0.66, damageMultiplier: 0.94, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 921, unlocked: false },
+  { id: 'atlas-199', name: 'Atlas 199', tier: 'uncommon', speed: 239, maxHp: 99, maxShield: 99, maxEnergy: 119, baseCooldown: 0.65, damageMultiplier: 0.95, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8367, unlocked: false },
+  { id: 'atlas-200', name: 'Atlas 200', tier: 'rare', speed: 240, maxHp: 100, maxShield: 100, maxEnergy: 120, baseCooldown: 0.64, damageMultiplier: 0.96, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24172, unlocked: false },
+  { id: 'atlas-201', name: 'Atlas 201', tier: 'mythic', speed: 241, maxHp: 101, maxShield: 101, maxEnergy: 121, baseCooldown: 0.63, damageMultiplier: 0.97, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 105600, unlocked: false },
+  { id: 'atlas-202', name: 'Atlas 202', tier: 'legendary', speed: 242, maxHp: 102, maxShield: 102, maxEnergy: 122, baseCooldown: 0.62, damageMultiplier: 0.98, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 60514, unlocked: false },
+  { id: 'atlas-203', name: 'Atlas 203', tier: 'exotic', speed: 243, maxHp: 103, maxShield: 103, maxEnergy: 123, baseCooldown: 0.61, damageMultiplier: 1, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 166357, unlocked: false },
+  { id: 'atlas-204', name: 'Atlas 204', tier: 'common', speed: 244, maxHp: 104, maxShield: 104, maxEnergy: 124, baseCooldown: 0.6, damageMultiplier: 1.01, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 939, unlocked: false },
+  { id: 'atlas-205', name: 'Atlas 205', tier: 'uncommon', speed: 245, maxHp: 105, maxShield: 105, maxEnergy: 125, baseCooldown: 0.59, damageMultiplier: 1.02, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8491, unlocked: false },
+  { id: 'atlas-206', name: 'Atlas 206', tier: 'rare', speed: 246, maxHp: 106, maxShield: 106, maxEnergy: 126, baseCooldown: 0.58, damageMultiplier: 1.03, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24435, unlocked: false },
+  { id: 'atlas-207', name: 'Atlas 207', tier: 'mythic', speed: 247, maxHp: 107, maxShield: 107, maxEnergy: 127, baseCooldown: 0.57, damageMultiplier: 1.04, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 106533, unlocked: false },
+  { id: 'atlas-208', name: 'Atlas 208', tier: 'legendary', speed: 248, maxHp: 108, maxShield: 108, maxEnergy: 128, baseCooldown: 0.56, damageMultiplier: 1.06, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 61257, unlocked: false },
+  { id: 'atlas-209', name: 'Atlas 209', tier: 'exotic', speed: 249, maxHp: 109, maxShield: 109, maxEnergy: 129, baseCooldown: 0.55, damageMultiplier: 1.07, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 167429, unlocked: false },
+  { id: 'atlas-210', name: 'Atlas 210', tier: 'common', speed: 250, maxHp: 110, maxShield: 110, maxEnergy: 130, baseCooldown: 0.54, damageMultiplier: 1.08, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 957, unlocked: false },
+  { id: 'atlas-211', name: 'Atlas 211', tier: 'uncommon', speed: 251, maxHp: 111, maxShield: 111, maxEnergy: 131, baseCooldown: 0.53, damageMultiplier: 1.09, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8614, unlocked: false },
+  { id: 'atlas-212', name: 'Atlas 212', tier: 'rare', speed: 252, maxHp: 112, maxShield: 112, maxEnergy: 132, baseCooldown: 0.52, damageMultiplier: 1.1, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24698, unlocked: false },
+  { id: 'atlas-213', name: 'Atlas 213', tier: 'mythic', speed: 253, maxHp: 113, maxShield: 113, maxEnergy: 133, baseCooldown: 0.51, damageMultiplier: 1.12, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 107467, unlocked: false },
+  { id: 'atlas-214', name: 'Atlas 214', tier: 'legendary', speed: 254, maxHp: 114, maxShield: 114, maxEnergy: 134, baseCooldown: 0.5, damageMultiplier: 1.13, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 62000, unlocked: false },
+  { id: 'atlas-215', name: 'Atlas 215', tier: 'exotic', speed: 255, maxHp: 115, maxShield: 115, maxEnergy: 135, baseCooldown: 0.49, damageMultiplier: 1.14, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 168500, unlocked: false },
+  { id: 'atlas-216', name: 'Atlas 216', tier: 'common', speed: 256, maxHp: 116, maxShield: 116, maxEnergy: 136, baseCooldown: 0.48, damageMultiplier: 1.15, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 975, unlocked: false },
+  { id: 'atlas-217', name: 'Atlas 217', tier: 'uncommon', speed: 257, maxHp: 117, maxShield: 117, maxEnergy: 137, baseCooldown: 0.47, damageMultiplier: 1.16, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8737, unlocked: false },
+  { id: 'atlas-218', name: 'Atlas 218', tier: 'rare', speed: 258, maxHp: 118, maxShield: 118, maxEnergy: 138, baseCooldown: 0.46, damageMultiplier: 1.18, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24960, unlocked: false },
+  { id: 'atlas-219', name: 'Atlas 219', tier: 'mythic', speed: 259, maxHp: 119, maxShield: 119, maxEnergy: 139, baseCooldown: 0.45, damageMultiplier: 1.19, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 108400, unlocked: false },
+  { id: 'atlas-220', name: 'Atlas 220', tier: 'legendary', speed: 260, maxHp: 120, maxShield: 120, maxEnergy: 140, baseCooldown: 0.44, damageMultiplier: 1.2, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 62743, unlocked: false },
+  { id: 'atlas-221', name: 'Atlas 221', tier: 'exotic', speed: 261, maxHp: 121, maxShield: 121, maxEnergy: 141, baseCooldown: 0.43, damageMultiplier: 1.21, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 169571, unlocked: false },
+  { id: 'atlas-222', name: 'Atlas 222', tier: 'common', speed: 262, maxHp: 122, maxShield: 122, maxEnergy: 142, baseCooldown: 0.42, damageMultiplier: 1.22, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 993, unlocked: false },
+  { id: 'atlas-223', name: 'Atlas 223', tier: 'uncommon', speed: 263, maxHp: 123, maxShield: 123, maxEnergy: 143, baseCooldown: 0.41, damageMultiplier: 1.24, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8860, unlocked: false },
+  { id: 'atlas-224', name: 'Atlas 224', tier: 'rare', speed: 264, maxHp: 124, maxShield: 124, maxEnergy: 144, baseCooldown: 0.68, damageMultiplier: 1.25, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25223, unlocked: false },
+  { id: 'atlas-225', name: 'Atlas 225', tier: 'mythic', speed: 265, maxHp: 125, maxShield: 125, maxEnergy: 145, baseCooldown: 0.67, damageMultiplier: 1.26, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 109333, unlocked: false },
+  { id: 'atlas-226', name: 'Atlas 226', tier: 'legendary', speed: 266, maxHp: 126, maxShield: 126, maxEnergy: 146, baseCooldown: 0.66, damageMultiplier: 1.27, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 63486, unlocked: false },
+  { id: 'atlas-227', name: 'Atlas 227', tier: 'exotic', speed: 267, maxHp: 127, maxShield: 127, maxEnergy: 147, baseCooldown: 0.65, damageMultiplier: 1.28, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 170643, unlocked: false },
+  { id: 'atlas-228', name: 'Atlas 228', tier: 'common', speed: 268, maxHp: 128, maxShield: 128, maxEnergy: 148, baseCooldown: 0.64, damageMultiplier: 1.3, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1011, unlocked: false },
+  { id: 'atlas-229', name: 'Atlas 229', tier: 'uncommon', speed: 269, maxHp: 129, maxShield: 129, maxEnergy: 149, baseCooldown: 0.63, damageMultiplier: 1.31, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8984, unlocked: false },
+  { id: 'atlas-230', name: 'Atlas 230', tier: 'rare', speed: 270, maxHp: 130, maxShield: 130, maxEnergy: 150, baseCooldown: 0.62, damageMultiplier: 1.32, shotSpeedMultiplier: 1, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25486, unlocked: false },
+  { id: 'atlas-231', name: 'Atlas 231', tier: 'mythic', speed: 271, maxHp: 131, maxShield: 131, maxEnergy: 151, baseCooldown: 0.61, damageMultiplier: 1.33, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 110267, unlocked: false },
+  { id: 'atlas-232', name: 'Atlas 232', tier: 'legendary', speed: 272, maxHp: 132, maxShield: 132, maxEnergy: 152, baseCooldown: 0.6, damageMultiplier: 1.34, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 64229, unlocked: false },
+  { id: 'atlas-233', name: 'Atlas 233', tier: 'exotic', speed: 273, maxHp: 133, maxShield: 133, maxEnergy: 153, baseCooldown: 0.59, damageMultiplier: 1.36, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 171714, unlocked: false },
+  { id: 'atlas-234', name: 'Atlas 234', tier: 'common', speed: 274, maxHp: 134, maxShield: 134, maxEnergy: 154, baseCooldown: 0.58, damageMultiplier: 1.37, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1029, unlocked: false },
+  { id: 'atlas-235', name: 'Atlas 235', tier: 'uncommon', speed: 275, maxHp: 135, maxShield: 135, maxEnergy: 155, baseCooldown: 0.57, damageMultiplier: 1.38, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9107, unlocked: false },
+  { id: 'atlas-236', name: 'Atlas 236', tier: 'rare', speed: 276, maxHp: 136, maxShield: 136, maxEnergy: 156, baseCooldown: 0.56, damageMultiplier: 1.39, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25749, unlocked: false },
+  { id: 'atlas-237', name: 'Atlas 237', tier: 'mythic', speed: 277, maxHp: 137, maxShield: 137, maxEnergy: 157, baseCooldown: 0.55, damageMultiplier: 1.4, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 111200, unlocked: false },
+  { id: 'atlas-238', name: 'Atlas 238', tier: 'legendary', speed: 278, maxHp: 138, maxShield: 138, maxEnergy: 158, baseCooldown: 0.54, damageMultiplier: 1.42, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 64971, unlocked: false },
+  { id: 'atlas-239', name: 'Atlas 239', tier: 'exotic', speed: 279, maxHp: 139, maxShield: 139, maxEnergy: 159, baseCooldown: 0.53, damageMultiplier: 1.43, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 172786, unlocked: false },
+  { id: 'atlas-240', name: 'Atlas 240', tier: 'common', speed: 280, maxHp: 140, maxShield: 20, maxEnergy: 160, baseCooldown: 0.52, damageMultiplier: 1.44, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1046, unlocked: false },
+  { id: 'atlas-241', name: 'Atlas 241', tier: 'uncommon', speed: 281, maxHp: 141, maxShield: 21, maxEnergy: 161, baseCooldown: 0.51, damageMultiplier: 1.45, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9230, unlocked: false },
+  { id: 'atlas-242', name: 'Atlas 242', tier: 'rare', speed: 282, maxHp: 142, maxShield: 22, maxEnergy: 162, baseCooldown: 0.5, damageMultiplier: 1.46, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26012, unlocked: false },
+  { id: 'atlas-243', name: 'Atlas 243', tier: 'mythic', speed: 283, maxHp: 143, maxShield: 23, maxEnergy: 163, baseCooldown: 0.49, damageMultiplier: 1.48, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 112133, unlocked: false },
+  { id: 'atlas-244', name: 'Atlas 244', tier: 'legendary', speed: 284, maxHp: 144, maxShield: 24, maxEnergy: 164, baseCooldown: 0.48, damageMultiplier: 1.49, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 65714, unlocked: false },
+  { id: 'atlas-245', name: 'Atlas 245', tier: 'exotic', speed: 285, maxHp: 145, maxShield: 25, maxEnergy: 165, baseCooldown: 0.47, damageMultiplier: 1.5, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 173857, unlocked: false },
+  { id: 'atlas-246', name: 'Atlas 246', tier: 'common', speed: 286, maxHp: 146, maxShield: 26, maxEnergy: 166, baseCooldown: 0.46, damageMultiplier: 1.51, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1064, unlocked: false },
+  { id: 'atlas-247', name: 'Atlas 247', tier: 'uncommon', speed: 287, maxHp: 147, maxShield: 27, maxEnergy: 167, baseCooldown: 0.45, damageMultiplier: 1.52, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9353, unlocked: false },
+  { id: 'atlas-248', name: 'Atlas 248', tier: 'rare', speed: 288, maxHp: 148, maxShield: 28, maxEnergy: 168, baseCooldown: 0.44, damageMultiplier: 1.54, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26274, unlocked: false },
+  { id: 'atlas-249', name: 'Atlas 249', tier: 'mythic', speed: 289, maxHp: 149, maxShield: 29, maxEnergy: 169, baseCooldown: 0.43, damageMultiplier: 1.55, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 113067, unlocked: false },
+  { id: 'atlas-250', name: 'Atlas 250', tier: 'legendary', speed: 290, maxHp: 150, maxShield: 30, maxEnergy: 170, baseCooldown: 0.42, damageMultiplier: 1.56, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 66457, unlocked: false },
+  { id: 'atlas-251', name: 'Atlas 251', tier: 'exotic', speed: 291, maxHp: 151, maxShield: 31, maxEnergy: 171, baseCooldown: 0.41, damageMultiplier: 1.57, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 174929, unlocked: false },
+  { id: 'atlas-252', name: 'Atlas 252', tier: 'common', speed: 292, maxHp: 152, maxShield: 32, maxEnergy: 172, baseCooldown: 0.68, damageMultiplier: 1.58, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1082, unlocked: false },
+  { id: 'atlas-253', name: 'Atlas 253', tier: 'uncommon', speed: 293, maxHp: 153, maxShield: 33, maxEnergy: 173, baseCooldown: 0.67, damageMultiplier: 1.6, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9477, unlocked: false },
+  { id: 'atlas-254', name: 'Atlas 254', tier: 'rare', speed: 294, maxHp: 154, maxShield: 34, maxEnergy: 174, baseCooldown: 0.66, damageMultiplier: 1.61, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26537, unlocked: false },
+  { id: 'atlas-255', name: 'Atlas 255', tier: 'mythic', speed: 295, maxHp: 155, maxShield: 35, maxEnergy: 175, baseCooldown: 0.65, damageMultiplier: 1.62, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 114000, unlocked: false },
+  { id: 'atlas-256', name: 'Atlas 256', tier: 'legendary', speed: 296, maxHp: 156, maxShield: 36, maxEnergy: 176, baseCooldown: 0.64, damageMultiplier: 1.63, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 67200, unlocked: false },
+  { id: 'atlas-257', name: 'Atlas 257', tier: 'exotic', speed: 297, maxHp: 157, maxShield: 37, maxEnergy: 177, baseCooldown: 0.63, damageMultiplier: 1.64, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 176000, unlocked: false },
+  { id: 'atlas-258', name: 'Atlas 258', tier: 'common', speed: 298, maxHp: 158, maxShield: 38, maxEnergy: 178, baseCooldown: 0.62, damageMultiplier: 1.66, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1100, unlocked: false },
+  { id: 'atlas-259', name: 'Atlas 259', tier: 'uncommon', speed: 299, maxHp: 159, maxShield: 39, maxEnergy: 179, baseCooldown: 0.61, damageMultiplier: 1.67, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9600, unlocked: false },
+  { id: 'atlas-260', name: 'Atlas 260', tier: 'rare', speed: 300, maxHp: 160, maxShield: 40, maxEnergy: 180, baseCooldown: 0.6, damageMultiplier: 1.68, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26800, unlocked: false },
 ];
 
 const MEGA_CODEX_APPENDIX_V2 = [
@@ -11040,3 +16542,5 @@ if (typeof ADVANCED_CHALLENGE_PRESETS !== 'undefined') {
 if (typeof ADVANCED_FX_PROFILES !== 'undefined') {
   ADVANCED_FX_PROFILES.push(...MEGA_FX_PROFILES_V2);
 }
+updateShipSelection();
+refreshProgressAchievements();
