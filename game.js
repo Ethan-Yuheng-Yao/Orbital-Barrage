@@ -112,6 +112,18 @@ const config = {
 };
 const TOP_HUD_SAFE_Y = 96;
 
+function clampEnemyBelowHud(enemy) {
+  if (!enemy) return;
+  const minCenterY = TOP_HUD_SAFE_Y + enemy.size;
+  if (enemy.y < minCenterY) enemy.y = minCenterY;
+}
+
+const PLAYER_SHIP_EXTENT_Y = 28;
+
+function playerMinY() {
+  return TOP_HUD_SAFE_Y + PLAYER_SHIP_EXTENT_Y;
+}
+
 const audio = {
   ctx: null,
   master: null,
@@ -2079,7 +2091,9 @@ class Bullet {
       }
       if (best <= band) return;
     }
-    this.life -= dt;
+    if (!(this.friendly && this.clawHoverPaw)) {
+      this.life -= dt;
+    }
     this.age += dt;
     if (this.friendly && this.seraphRailEmitter && !this.seraphNeedle && this.life > 0) {
       this.emitAcc = (this.emitAcc || 0) + dt;
@@ -2406,9 +2420,14 @@ class Bullet {
       this.vy = Math.sin(theta + Math.PI / 2 * spinDir) * (220 + radius * 0.8);
     }
     if (this.friendly && this.clawHoverPaw) {
-      const target = this.clawHoverTarget;
+      let target = this.clawHoverTarget;
       if (!target || target.hp <= 0) {
-        this.life = 0;
+        target = getNearestEnemy(this.x, this.y);
+        this.clawHoverTarget = target;
+      }
+      if (!target) {
+        this.vx = 0;
+        this.vy = 0;
       } else {
         const tx = target.x;
         const ty = target.y - target.size - 24;
@@ -2432,7 +2451,7 @@ class Bullet {
           if (target.hp <= 0) {
             const idx = state.enemies.indexOf(target);
             if (idx > -1) onEnemyDestroyed(target, idx);
-            this.life = 0;
+            this.clawHoverTarget = getNearestEnemy(this.x, this.y);
           }
         }
       }
@@ -3340,6 +3359,7 @@ class Enemy {
       this.hasSplit = false;
     }
     this.stunTimer = 0;
+    clampEnemyBelowHud(this);
   }
   update(dt, player, bulletsOut) {
     
@@ -3352,6 +3372,7 @@ class Enemy {
     }
     if ((this.stunTimer || 0) > 0) {
       this.stunTimer = Math.max(0, this.stunTimer - dt);
+      clampEnemyBelowHud(this);
       return;
     }
     const targetActor = getEnemyTargetFor(this, player);
@@ -3453,7 +3474,7 @@ class Enemy {
         this.vx = Math.cos(performance.now() / 1500) * this.speed * 0.5;
         this.vy = Math.sin(performance.now() / 1100) * this.speed * 0.4;
         this.x += this.vx * dt;
-      this.y = clamp(this.y + this.vy * dt, TOP_HUD_SAFE_Y, 180);
+      this.y = clamp(this.y + this.vy * dt, TOP_HUD_SAFE_Y + this.size, 180);
       } else if (this.bossType === "swarmlord") {
         
         this.vx = Math.cos(performance.now() / 800) * this.speed;
@@ -3480,7 +3501,7 @@ class Enemy {
       }
       this.updateBossPattern(dt, player, bulletsOut);
       this.x = clamp(this.x, 80, config.width - 80);
-      this.y = clamp(this.y, TOP_HUD_SAFE_Y, config.height - 200);
+      this.y = clamp(this.y, TOP_HUD_SAFE_Y + this.size, config.height - 200);
       return;
     } else {
       this.vx = Math.cos(performance.now() / 500 + this.x) * this.speed * 0.2;
@@ -3495,7 +3516,7 @@ class Enemy {
 
     this.x = clamp(this.x, 30, config.width - 30);
     const bottomClamp = this.kind === "shooter" ? config.height - 140 : config.height - 80;
-    this.y = clamp(this.y, TOP_HUD_SAFE_Y, bottomClamp);
+    this.y = clamp(this.y, TOP_HUD_SAFE_Y + this.size, bottomClamp);
 
     this.fireTimer -= dt;
     if (this.fireTimer <= 0) {
@@ -4631,7 +4652,7 @@ class Player {
     this.vy = clamp(this.vy, -maxSpeed, maxSpeed);
 
     this.x = clamp(this.x + this.vx * dt, 20, config.width - 20);
-    this.y = clamp(this.y + this.vy * dt, 20, config.height - 20);
+    this.y = clamp(this.y + this.vy * dt, playerMinY(), config.height - 20);
 
     this.cooldown = Math.max(this.cooldown - dt, 0);
     const prevShield = this.shield;
@@ -8043,27 +8064,17 @@ const abilityHandlers = {
     if (state.player.shipId === "claw") {
       abilityParticleBurst("#5cff8a", 82, 45);
       const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const candidates = state.enemies
-        .filter((e) => e && e.hp > 0)
-        .sort((a, b) => dist(a.x, a.y, state.player.x, state.player.y) - dist(b.x, b.y, state.player.x, state.player.y))
-        .slice(0, 5);
-      for (let i = 0; i < 5; i++) {
-        const target = candidates[i] || null;
-        const ang = target
-          ? Math.atan2(target.y - state.player.y, target.x - state.player.x)
-          : Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x) + (i - 2) * 0.18;
-        const b = new Bullet(state.player.x, state.player.y, ang, 420 * state.player.shotSpeedMultiplier, true, 5.6, "#5cff8a", 1.6 * dm);
-        b.visualShape = "pawShot";
-        b.clawHoverPaw = true;
-        b.clawHoverTarget = target;
-        b.clawHoverDps = 5.2 * dm;
-        b.clawHoverStun = 0.32;
-        b.infinitePierce = true;
-        b.piercing = true;
-        b.life = 4;
-        b.noTrail = true;
-        state.bullets.push(b);
-      }
+      const sm = state.player.shotSpeedMultiplier;
+      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
+      const b = new Bullet(state.player.x, state.player.y, ang, 390 * sm, true, 13.5, "#66ff99", 14 * dm);
+      b.clawTear = true;
+      b.clawStun = 3.5;
+      b.visualShape = "pawShot";
+      b.knockback = 120;
+      b.infinitePierce = true;
+      b.piercing = true;
+      b.life = 1.35;
+      state.bullets.push(b);
       return;
     }
     if (state.player.shipId === "stinger") {
@@ -8343,7 +8354,7 @@ const abilityHandlers = {
     const col = sid === "sparrow" ? "#ffe566" : "#d1afff";
     abilityParticleBurst(col, 100, 50);
     state.player.x = clamp(state.player.x + Math.cos(angle) * dashDistance, 20, config.width - 20);
-    state.player.y = clamp(state.player.y + Math.sin(angle) * dashDistance, 20, config.height - 20);
+    state.player.y = clamp(state.player.y + Math.sin(angle) * dashDistance, playerMinY(), config.height - 20);
     abilityParticleBurst(col, 100, 50);
     const x1 = oldX;
     const y1 = oldY;
@@ -8449,32 +8460,13 @@ const abilityHandlers = {
       return;
     }
     if (sid === "claw") {
-      abilityParticleBurst("#7dffb3", 80, 48);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const a0 = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      for (const d of [-Math.PI / 4, Math.PI / 4]) {
-        const len = 380;
-        const ex = state.player.x + Math.cos(a0 + d) * len;
-        const ey = state.player.y + Math.sin(a0 + d) * len;
-        for (const enemy of state.enemies) {
-          const distSeg = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
-          if (distSeg < 14 + enemy.size * 0.42) {
-            enemy.hp -= 22 * dm;
-            recordDamageDealt(22 * dm);
-          }
-        }
-        state.visualBeams.push({
-          x1: state.player.x,
-          y1: state.player.y,
-          x2: ex,
-          y2: ey,
-          color: "rgba(100, 255, 160, 0.9)",
-          width: 10,
-          life: 0.28,
-          maxLife: 0.28,
-          phase: 0,
-        });
-      }
+      abilityParticleBurst("#66ff99", 95, 54);
+      state.clawPawShield = {
+        life: 4,
+        maxLife: 4,
+        radius: 132,
+        yOffset: 0,
+      };
       return;
     }
     if (sid === "marauder") {
@@ -8523,13 +8515,13 @@ const abilityHandlers = {
     abilityParticleBurst(col, 120, 60);
     if (sid === "voidwalker") {
       state.player.x = clamp(state.player.x + rng(-120, 120), 20, config.width - 20);
-      state.player.y = clamp(state.player.y + rng(-120, 120), 20, config.height - 20);
+      state.player.y = clamp(state.player.y + rng(-120, 120), playerMinY(), config.height - 20);
     } else if (sid === "eclipse") {
       state.player.x = clamp(state.player.x + rng(-220, 220), 20, config.width - 20);
-      state.player.y = clamp(state.player.y + rng(-220, 220), 20, config.height - 20);
+      state.player.y = clamp(state.player.y + rng(-220, 220), playerMinY(), config.height - 20);
     } else {
       state.player.x = clamp(state.player.x + rng(-200, 200), 20, config.width - 20);
-      state.player.y = clamp(state.player.y + rng(-200, 200), 20, config.height - 20);
+      state.player.y = clamp(state.player.y + rng(-200, 200), playerMinY(), config.height - 20);
     }
     abilityParticleBurst(col, 120, 60);
     if (sid === "oracle") {
@@ -8764,7 +8756,7 @@ const abilityHandlers = {
       const ox = state.player.x;
       const oy = state.player.y;
       const nx = clamp(ox + Math.cos(ang) * dash, 22, config.width - 22);
-      const ny = clamp(oy + Math.sin(ang) * dash, TOP_HUD_SAFE_Y + 22, config.height - 22);
+      const ny = clamp(oy + Math.sin(ang) * dash, playerMinY(), config.height - 22);
       const steps = 12;
       for (let s = 1; s <= steps; s++) {
         const t = s / steps;
@@ -8831,7 +8823,7 @@ const abilityHandlers = {
       const oldX = state.player.x;
       const oldY = state.player.y;
       state.player.x = clamp(input.mouse.x, 24, config.width - 24);
-      state.player.y = clamp(input.mouse.y, TOP_HUD_SAFE_Y + 24, config.height - 24);
+      state.player.y = clamp(input.mouse.y, playerMinY(), config.height - 24);
       const burstClaws = (cx, cy) => {
         for (let i = 0; i < 10; i++) {
           const a = (i / 10) * Math.PI * 2;
@@ -8849,14 +8841,28 @@ const abilityHandlers = {
       return;
     }
     if (sid === "claw") {
-      abilityParticleBurst("#5cff8a", 75, 45);
-      const b = new Bullet(state.player.x, state.player.y, ang, 390 * sm, true, 13.5, "#66ff99", 14 * dm);
-      b.clawTear = true;
-      b.clawStun = 3.5;
-      b.visualShape = "pawShot";
-      b.knockback = 120;
-      b.life = 1.35;
-      state.bullets.push(b);
+      abilityParticleBurst("#5cff8a", 82, 45);
+      const candidates = state.enemies
+        .filter((e) => e && e.hp > 0)
+        .sort((a, b) => dist(a.x, a.y, state.player.x, state.player.y) - dist(b.x, b.y, state.player.x, state.player.y))
+        .slice(0, 5);
+      for (let i = 0; i < 5; i++) {
+        const target = candidates[i] || null;
+        const a = target
+          ? Math.atan2(target.y - state.player.y, target.x - state.player.x)
+          : ang + (i - 2) * 0.18;
+        const b = new Bullet(state.player.x, state.player.y, a, 420 * sm, true, 5.6, "#5cff8a", 1.6 * dm);
+        b.visualShape = "pawShot";
+        b.clawHoverPaw = true;
+        b.clawHoverTarget = target;
+        b.clawHoverDps = 5.2 * dm;
+        b.clawHoverStun = 0.32;
+        b.infinitePierce = true;
+        b.piercing = true;
+        b.life = 1;
+        b.noTrail = true;
+        state.bullets.push(b);
+      }
       return;
     }
     if (sid === "lancer") {
@@ -9331,7 +9337,7 @@ const abilityHandlers = {
         ? Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x) + Math.PI
         : Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
     state.player.x = clamp(state.player.x + Math.cos(angle) * 120, 20, config.width - 20);
-    state.player.y = clamp(state.player.y + Math.sin(angle) * 120, 20, config.height - 20);
+    state.player.y = clamp(state.player.y + Math.sin(angle) * 120, playerMinY(), config.height - 20);
     abilityParticleBurst("#9b7fff", 100, 50);
     state.player.burstTimer = Math.min(state.player.burstTimer + 4, 8);
   },
@@ -9375,16 +9381,6 @@ const abilityHandlers = {
           pivotArcBlendRadius: 200,
         }
       );
-      return;
-    }
-    if (sid === "claw") {
-      abilityParticleBurst("#66ff99", 95, 54);
-      state.clawPawShield = {
-        life: 4,
-        maxLife: 4,
-        radius: 72,
-        yOffset: 76,
-      };
       return;
     }
     if (target) {
@@ -11192,7 +11188,7 @@ const handleCollisions = (dt) => {
       
       
       enemy.x = clamp(enemy.x, enemy.size, config.width - enemy.size);
-      enemy.y = clamp(enemy.y, enemy.size, config.height - enemy.size);
+      enemy.y = clamp(enemy.y, TOP_HUD_SAFE_Y + enemy.size, config.height - enemy.size);
       
       
       
@@ -11281,6 +11277,7 @@ const applyPowerUp = (kind) => {
 const updateEntities = (dt) => {
   if (!state.player) return;
   state.player.update(dt);
+  if (state.player.y < playerMinY()) state.player.y = playerMinY();
   if (state.emberFog && state.emberFog.life > 0) {
     state.emberFog.life = Math.max(0, state.emberFog.life - dt);
     state.emberFog.x = state.player.x;
@@ -11422,17 +11419,17 @@ const updateEntities = (dt) => {
   if (state.clawPawShield && state.player) {
     state.clawPawShield.life = Math.max(0, state.clawPawShield.life - dt);
     const sx = state.player.x;
-    const sy = state.player.y - (state.clawPawShield.yOffset || 76);
-    for (let i = 0; i < state.enemyBullets.length; i++) {
+    const yo = state.clawPawShield.yOffset ?? 0;
+    const sy = state.player.y - yo;
+    const rad = state.clawPawShield.radius ?? 132;
+    for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
       const eb = state.enemyBullets[i];
       const d = dist(eb.x, eb.y, sx, sy);
-      if (d <= (state.clawPawShield.radius || 72) + (eb.size || 4)) {
-        const a = Math.atan2(eb.y - sy, eb.x - sx);
-        const sp = Math.hypot(eb.vx, eb.vy) || 140;
-        eb.vx = Math.cos(a) * sp;
-        eb.vy = Math.sin(a) * sp;
-        eb.x = sx + Math.cos(a) * ((state.clawPawShield.radius || 72) + (eb.size || 4) + 2);
-        eb.y = sy + Math.sin(a) * ((state.clawPawShield.radius || 72) + (eb.size || 4) + 2);
+      if (d <= rad + (eb.size || 4)) {
+        for (let p = 0; p < 7; p++) {
+          state.particles.push(new Particle(eb.x + rng(-3, 3), eb.y + rng(-3, 3), "#7dffb3"));
+        }
+        state.enemyBullets.splice(i, 1);
       }
     }
     if (state.clawPawShield.life <= 0) state.clawPawShield = null;
@@ -11655,6 +11652,9 @@ const updateEntities = (dt) => {
     });
   }
   handleCollisions(dt);
+  for (const enemy of state.enemies) {
+    if (enemy.hp > 0) clampEnemyBelowHud(enemy);
+  }
   for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
     const en = state.enemies[ei];
     if (en.hp <= 0) onEnemyDestroyed(en, ei);
@@ -11743,21 +11743,41 @@ const drawEntities = () => {
   if (state.clawPawShield && state.player) {
     const alpha = clamp(state.clawPawShield.life / state.clawPawShield.maxLife, 0, 1);
     const x = state.player.x;
-    const y = state.player.y - (state.clawPawShield.yOffset || 76);
-    const r = state.clawPawShield.radius || 72;
+    const y = state.player.y - (state.clawPawShield.yOffset ?? 0);
+    const r = state.clawPawShield.radius ?? 132;
     ctx.save();
-    ctx.globalAlpha = alpha * 0.9;
-    ctx.shadowBlur = 22;
+    ctx.globalAlpha = alpha * 0.95;
+    ctx.shadowBlur = 28;
     ctx.shadowColor = "#7dffb3";
-    ctx.fillStyle = "rgba(80, 255, 160, 0.2)";
+    ctx.fillStyle = "rgba(90, 255, 170, 0.16)";
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.arc(x, y + r * 0.25, r * 0.78, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "rgba(170, 255, 210, 0.82)";
-    ctx.lineWidth = 3;
+    for (const toe of [
+      { x: -r * 0.72, y: -r * 0.18, rr: r * 0.33 },
+      { x: -r * 0.26, y: -r * 0.5, rr: r * 0.31 },
+      { x: r * 0.26, y: -r * 0.5, rr: r * 0.31 },
+      { x: r * 0.72, y: -r * 0.18, rr: r * 0.33 },
+    ]) {
+      ctx.beginPath();
+      ctx.arc(x + toe.x, y + toe.y, toe.rr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = "rgba(210, 255, 230, 0.95)";
+    ctx.lineWidth = 7;
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.arc(x, y + r * 0.25, r * 0.84, 0, Math.PI * 2);
     ctx.stroke();
+    for (const toe of [
+      { x: -r * 0.72, y: -r * 0.18, rr: r * 0.38 },
+      { x: -r * 0.26, y: -r * 0.5, rr: r * 0.35 },
+      { x: r * 0.26, y: -r * 0.5, rr: r * 0.35 },
+      { x: r * 0.72, y: -r * 0.18, rr: r * 0.38 },
+    ]) {
+      ctx.beginPath();
+      ctx.arc(x + toe.x, y + toe.y, toe.rr, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
   if (state.emberFog && state.emberFog.life > 0) {
