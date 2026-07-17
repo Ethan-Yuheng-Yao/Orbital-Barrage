@@ -12,6 +12,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/mega-theme-library.css" />
   </head>
   <body>
     <div class="hud hidden" id="hud">
@@ -38,17 +39,20 @@
         <span>Quantum Cores: <strong id="quantumCoresValue">0</strong></span>
       </div>
     </div>
+    <div class="game-stage">
+    <canvas id="gameCanvas" width="960" height="600"></canvas>
     <div class="overlay">
-      <div id="quantumCoresDisplay" class="hidden" style="position: absolute; top: 8px; right: 8px; padding: 6px 12px; font-size: 1rem; background: rgba(92, 95, 247, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); color: white; z-index: 1000; pointer-events: none; border-radius: 6px;">Quantum Cores: <strong id="quantumCoresDisplayValue">0</strong></div>
-      <button id="hudSettingsButton" class="hidden" style="position: absolute; top: 90px; right: 8px; padding: 6px 10px; font-size: 1rem; background: rgba(92, 95, 247, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); color: white; cursor: pointer; z-index: 1000; pointer-events: auto;" title="Settings">&#9881;</button>
+      <div id="quantumCoresDisplay" class="hud-float-badge hidden">Quantum Cores: <strong id="quantumCoresDisplayValue">0</strong></div>
+      <button type="button" id="hudSettingsButton" class="hud-float-settings hidden" title="Settings">&#9881;</button>
       <div id="abilityIcons" class="ability-icons hidden"></div>
       <div class="instructions start-hub" id="mainHub">
         <div class="start-hub__neon-bg"></div>
         <h1 class="start-hub__title">Orbital Barrage</h1>
+        <p class="start-hub__tagline">Top-down arena shooter · Single-player</p>
         <div class="start-hub__center-stack">
-          <button id="campaignButton" class="start-main-btn">Campaign</button>
-          <button id="endlessButton" class="start-main-btn">Endless</button>
-          <button id="tutorialButton" class="start-main-btn">Tutorial</button>
+          <button id="campaignButton" class="start-main-btn" type="button">Campaign</button>
+          <button id="endlessButton" class="start-main-btn" type="button">Endless</button>
+          <button id="tutorialButton" class="start-main-btn" type="button">Practice controls</button>
           <button id="shopButtonMain" class="start-main-btn" type="button">Shop</button>
         </div>
         <div class="start-hub__right-rail">
@@ -150,13 +154,12 @@
           <h2>Instructions</h2>
         </div>
         <div class="instructions-lines">
-          <p>Move with WASD or Arrow keys.</p>
-          <p>Aim with the mouse cursor at all times.</p>
-          <p>Hold left click to fire your primary weapon.</p>
-          <p>Abilities consume energy and are ship-specific.</p>
-          <p>Default ability keys are 1, 2, and 3.</p>
-          <p>You can remap abilities in the settings menu.</p>
-          <p>Press P to pause and open settings quickly.</p>
+          <p>Move with the keyboard (WASD or ZQSD on AZERTY) or Arrow keys.</p>
+          <p>Aim with the mouse; your ship fires automatically toward the cursor.</p>
+          <p>Left click is only needed if you map abilities to mouse buttons in Settings.</p>
+          <p>Abilities use energy and differ per ship.</p>
+          <p>Default ability keys are 1, 2, and 3 (remap in Settings).</p>
+          <p>Press P to pause and open Settings.</p>
           <p>Shield absorbs damage before HP does.</p>
           <p>Energy regenerates over time while in combat.</p>
           <p>Every cleared wave grants an upgrade choice.</p>
@@ -167,7 +170,7 @@
           <p>Unlock ships in the shop with Quantum Cores, then pick one on the Endless setup screen.</p>
           <p>Use different ships for different tactical matchups.</p>
           <p>Position below dangerous boss telegraphs when possible.</p>
-          <p>Don?t overcommit energy if a boss phase is incoming.</p>
+          <p>Don't overcommit energy if a boss phase is incoming.</p>
           <p>Reposition often and control enemy approach lanes.</p>
           <p>Good luck, pilot.</p>
         </div>
@@ -180,12 +183,18 @@
         <p id="gameOverDetails"></p>
         <button id="restartButton">Retry</button>
       </div>
+      <div class="game-over hidden" id="campaignCompletePanel">
+        <h2 id="campaignCompleteTitle">Level Complete</h2>
+        <p id="campaignCompleteDetails"></p>
+        <button id="campaignCompleteContinueButton">Continue</button>
+      </div>
       <div class="boss-bar hidden" id="bossBar">
         <span class="boss-bar__label">BOSS</span>
         <div class="boss-bar__track">
           <div class="boss-bar__fill" id="bossBarFill"></div>
         </div>
       </div>
+    </div>
     </div>
     <div class="upgrade-panel hidden" id="upgradePanel">
       <h3>Choose an Upgrade</h3>
@@ -252,13 +261,14 @@
       <p class="achievements-panel__summary" id="achievementsSummary"></p>
       <div class="achievements-list" id="achievementsList"></div>
     </div>
-    </div>
     <div class="tutorial-overlay hidden" id="tutorialOverlay">
       <div class="tutorial-text-top" id="tutorialTextTop">
         <span id="tutorialTextTopContent"></span>
-        <button id="tutorialNextStepButton" class="tutorial-next-step hidden" type="button" aria-label="Next tutorial step">&#8594;</button>
+        <button id="tutorialNextStepButton" class="tutorial-next-step hidden" type="button">Continue</button>
       </div>
-      <button id="tutorialSkipButton" class="tutorial-button tutorial-button--secondary" style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 2001;">Skip Tutorial</button>
+      <div class="tutorial-arrow hidden" id="tutorialArrow" aria-hidden="true"></div>
+      <div class="tutorial-key-layout hidden" id="tutorialKeyLayout" aria-hidden="true"></div>
+      <button id="tutorialSkipButton" class="tutorial-button tutorial-button--secondary tutorial-skip-btn" type="button">Skip to menu</button>
     </div>
     <div id="achievementToastContainer" class="achievement-toast-container"></div>
     <div class="terms-panel hidden" id="termsPanel">
@@ -336,8 +346,6 @@
         <button id="quitToMenuButton" class="settings-quit-button">Quit to Main Menu</button>
       </div>
     </div>
-    <canvas id="gameCanvas" width="960" height="600"></canvas>
-    <script src="./game.js"></script>
       <div class="map-registry-panel hidden" id="mapRegistryPanel">
       <div class="map-registry-panel__header">
         <h3>Map Registry</h3>
@@ -1547,6 +1555,14 @@
             <li data-map-id='map-1200'><strong>Sector 1200</strong> ? Threat Band 1 ? Biome: Nebular Rift ? Notes: Multi-lane pressure with orbital hazards.</li>
       </ul>
     </div>
+    <script src="./src/utils/math.js"></script>
+    <script src="./src/utils/enemy-helpers.js"></script>
+    <script src="./src/core/audio.js"></script>
+    <script src="./src/data/mega-runtime-content.js"></script>
+    <script src="./src/game/modes-ships-data.js"></script>
+    <script src="./src/game/entities-core.js"></script>
+    <script src="./src/game/combat-abilities.js"></script>
+    <script src="./game.js"></script>
   </body>
 </html>
 

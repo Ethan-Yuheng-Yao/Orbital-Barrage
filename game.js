@@ -20,6 +20,10 @@ const gameOverEl = document.getElementById("gameOver");
 const restartButton = document.getElementById("restartButton");
 const gameOverTitle = document.getElementById("gameOverTitle");
 const gameOverDetails = document.getElementById("gameOverDetails");
+const campaignCompletePanel = document.getElementById("campaignCompletePanel");
+const campaignCompleteTitle = document.getElementById("campaignCompleteTitle");
+const campaignCompleteDetails = document.getElementById("campaignCompleteDetails");
+const campaignCompleteContinueButton = document.getElementById("campaignCompleteContinueButton");
 const bossBar = document.getElementById("bossBar");
 const bossBarFill = document.getElementById("bossBarFill");
 const upgradePanel = document.getElementById("upgradePanel");
@@ -50,6 +54,8 @@ const tutorialTextTop = document.getElementById("tutorialTextTop");
 const tutorialTextTopContent = document.getElementById("tutorialTextTopContent");
 const tutorialNextStepButton = document.getElementById("tutorialNextStepButton");
 const tutorialSkipButton = document.getElementById("tutorialSkipButton");
+const tutorialArrow = document.getElementById("tutorialArrow");
+const tutorialKeyLayout = document.getElementById("tutorialKeyLayout");
 const quantumCoresDisplay = document.getElementById("quantumCoresDisplay");
 const quantumCoresDisplayValue = document.getElementById("quantumCoresDisplayValue");
 const settingsButton = document.getElementById("settingsButton");
@@ -103,6 +109,7 @@ const advancedMapRegistryButton = document.getElementById("advancedMapRegistryBu
 
 const input = {
   keys: new Set(),
+  codes: new Set(),
   mouse: { x: canvas.width / 2, y: canvas.height / 2, down: false },
 };
 
@@ -110,7 +117,73 @@ const config = {
   width: canvas.width,
   height: canvas.height,
 };
-const TOP_HUD_SAFE_Y = 96;
+const BASE_VIEWPORT_WIDTH = 960;
+const BASE_VIEWPORT_HEIGHT = 600;
+const BASE_TOP_HUD_SAFE_Y = 96;
+const BASE_PLAYER_SHIP_EXTENT_Y = 28;
+let TOP_HUD_SAFE_Y = BASE_TOP_HUD_SAFE_Y;
+let PLAYER_SHIP_EXTENT_Y = BASE_PLAYER_SHIP_EXTENT_Y;
+
+function viewportScale() {
+  return Math.max(
+    0.6,
+    Math.min(
+      config.width / BASE_VIEWPORT_WIDTH,
+      config.height / BASE_VIEWPORT_HEIGHT
+    )
+  );
+}
+
+function scaleByViewport(value) {
+  return value * viewportScale();
+}
+
+function syncCanvasToDisplaySize() {
+  const stage = canvas.closest(".game-stage");
+  if (!stage) return;
+  const rect = stage.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const width = Math.max(320, Math.round(rect.width));
+  const height = Math.max(200, Math.round((width * BASE_VIEWPORT_HEIGHT) / BASE_VIEWPORT_WIDTH));
+  if (canvas.width === width && canvas.height === height) return;
+  canvas.width = width;
+  canvas.height = height;
+  config.width = width;
+  config.height = height;
+  TOP_HUD_SAFE_Y = Math.round(BASE_TOP_HUD_SAFE_Y * (config.height / BASE_VIEWPORT_HEIGHT));
+  PLAYER_SHIP_EXTENT_Y = Math.round(BASE_PLAYER_SHIP_EXTENT_Y * (config.height / BASE_VIEWPORT_HEIGHT));
+}
+
+syncCanvasToDisplaySize();
+window.addEventListener("resize", syncCanvasToDisplaySize);
+
+const TUTORIAL_COMPLETED_KEY = "orbital-tutorial-completed";
+const MOVEMENT_KEYS_STORAGE_KEY = "orbital-movement-keys";
+const detectDefaultMovementKeys = () => {
+  const lang = (navigator.language || "").toLowerCase();
+  if (lang.startsWith("fr")) {
+    return { up: "z", left: "q", down: "s", right: "d" };
+  }
+  return { up: "w", left: "a", down: "s", right: "d" };
+};
+const sanitizeMovementKeys = (keys) => {
+  const fallback = detectDefaultMovementKeys();
+  if (!keys || typeof keys !== "object") return fallback;
+  const read = (k, def) => (typeof keys[k] === "string" && keys[k].trim() ? keys[k].toLowerCase() : def);
+  return {
+    up: read("up", fallback.up),
+    left: read("left", fallback.left),
+    down: read("down", fallback.down),
+    right: read("right", fallback.right),
+  };
+};
+const loadMovementKeys = () => {
+  try {
+    return sanitizeMovementKeys(JSON.parse(localStorage.getItem(MOVEMENT_KEYS_STORAGE_KEY) || "null"));
+  } catch (_err) {
+    return detectDefaultMovementKeys();
+  }
+};
 
 function clampEnemyBelowHud(enemy) {
   if (!enemy) return;
@@ -118,890 +191,11 @@ function clampEnemyBelowHud(enemy) {
   if (enemy.y < minCenterY) enemy.y = minCenterY;
 }
 
-const PLAYER_SHIP_EXTENT_Y = 28;
-
 function playerMinY() {
   return TOP_HUD_SAFE_Y + PLAYER_SHIP_EXTENT_Y;
 }
 
-const audio = {
-  ctx: null,
-  master: null,
-  music: null,
-  bgmEl: null,
-  bgmGain: null,
-  bgmBuffer: null,
-  bgmSource: null,
-  unlocked: false,
-  enabled: true,
-  sfxVolume: 0.4,
-  musicVolume: 0.22,
-  useProceduralMusic: false,
-  beatInterval: 0.28,
-  nextBeatTime: 0,
-  musicPattern: [110, 138.59, 164.81, 138.59, 123.47, 164.81, 174.61, 138.59],
-  musicStep: 0,
-  shotCooldownUntil: 0,
-};
-
-const initAudio = () => {
-  if (audio.ctx || !audio.enabled) return;
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtx) return;
-  audio.ctx = new AudioCtx();
-  audio.master = audio.ctx.createGain();
-  audio.master.gain.value = 0.9;
-  audio.master.connect(audio.ctx.destination);
-  audio.music = audio.ctx.createGain();
-  audio.music.gain.value = 0;
-  audio.music.connect(audio.master);
-  audio.bgmGain = audio.ctx.createGain();
-  audio.bgmGain.gain.value = audio.musicVolume;
-  audio.bgmGain.connect(audio.master);
-  fetch("./audio/BackgroundAudio.mp3")
-    .then(r => r.arrayBuffer())
-    .then(ab => audio.ctx.decodeAudioData(ab))
-    .then(buffer => {
-      audio.bgmBuffer = buffer;
-      if (audio.unlocked) startBgmLoop();
-    })
-    .catch(() => {
-      audio.bgmEl = new Audio("./audio/BackgroundAudio.mp3");
-      audio.bgmEl.loop = true;
-      audio.bgmEl.preload = "auto";
-      audio.bgmEl.volume = audio.musicVolume;
-      if (audio.unlocked) audio.bgmEl.play().catch(() => {});
-    });
-};
-
-const startBgmLoop = () => {
-  if (!audio.bgmBuffer || !audio.ctx || !audio.bgmGain) return;
-  if (audio.bgmSource) {
-    try { audio.bgmSource.stop(0); } catch (e) {}
-    audio.bgmSource.disconnect();
-    audio.bgmSource = null;
-  }
-  const src = audio.ctx.createBufferSource();
-  src.buffer = audio.bgmBuffer;
-  src.loop = true;
-  src.connect(audio.bgmGain);
-  src.start(0);
-  audio.bgmSource = src;
-};
-
-const unlockAudio = () => {
-  if (!audio.enabled) return;
-  initAudio();
-  if (!audio.ctx) return;
-  if (audio.ctx.state === "suspended") {
-    audio.ctx.resume();
-  }
-  audio.unlocked = true;
-  if (audio.bgmBuffer && !audio.bgmSource) {
-    startBgmLoop();
-  } else if (audio.bgmEl && audio.bgmEl.paused) {
-    audio.bgmEl.volume = audio.musicVolume;
-    audio.bgmEl.play().catch(() => {});
-  }
-};
-
-const tone = (freq, duration, type, volume, target = "master") => {
-  if (!audio.enabled || !audio.unlocked || !audio.ctx) return;
-  const now = audio.ctx.currentTime;
-  const osc = audio.ctx.createOscillator();
-  const gain = audio.ctx.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, now);
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume), now + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-  osc.connect(gain);
-  gain.connect(target === "music" ? audio.music : audio.master);
-  osc.start(now);
-  osc.stop(now + duration + 0.02);
-};
-
-const noiseBurst = (duration = 0.08, volume = 0.05) => {
-  if (!audio.enabled || !audio.unlocked || !audio.ctx) return;
-  const frameCount = Math.floor(audio.ctx.sampleRate * duration);
-  const buffer = audio.ctx.createBuffer(1, frameCount, audio.ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < frameCount; i++) {
-    data[i] = (Math.random() * 2 - 1) * (1 - i / frameCount);
-  }
-  const source = audio.ctx.createBufferSource();
-  const gain = audio.ctx.createGain();
-  source.buffer = buffer;
-  gain.gain.value = volume;
-  source.connect(gain);
-  gain.connect(audio.master);
-  source.start();
-};
-
-const playSfx = {
-  shoot: (shipId) => {
-    const now = performance.now();
-    if (now < audio.shotCooldownUntil) return;
-    audio.shotCooldownUntil = now + 55;
-    if (shipId === "inferno") {
-      noiseBurst(0.04, audio.sfxVolume * 0.2);
-      tone(180, 0.05, "sawtooth", audio.sfxVolume * 0.1);
-      return;
-    }
-    if (shipId === "aurora") {
-      tone(620, 0.07, "triangle", audio.sfxVolume * 0.15);
-      return;
-    }
-    if (shipId === "stinger") {
-      tone(520, 0.04, "sawtooth", audio.sfxVolume * 0.08);
-      tone(880, 0.03, "square", audio.sfxVolume * 0.06);
-      return;
-    }
-    tone(360, 0.05, "square", audio.sfxVolume * 0.1);
-  },
-  ability: () => {
-    tone(420, 0.06, "triangle", audio.sfxVolume * 0.2);
-    tone(660, 0.08, "sine", audio.sfxVolume * 0.14);
-  },
-  enemyDown: () => {
-    tone(180, 0.06, "square", audio.sfxVolume * 0.12);
-  },
-  bossDown: () => {
-    tone(220, 0.18, "sawtooth", audio.sfxVolume * 0.18);
-    tone(110, 0.24, "triangle", audio.sfxVolume * 0.15);
-  },
-  powerUp: () => {
-    tone(740, 0.08, "sine", audio.sfxVolume * 0.15);
-    tone(980, 0.1, "triangle", audio.sfxVolume * 0.11);
-  },
-  hitPlayer: () => {
-    noiseBurst(0.06, audio.sfxVolume * 0.18);
-  },
-};
-
-const applyMusicVolume = () => {
-  const vol = clamp(audio.musicVolume, 0, 1);
-  if (audio.bgmGain && audio.ctx) {
-    const now = audio.ctx.currentTime;
-    audio.bgmGain.gain.cancelScheduledValues(now);
-    audio.bgmGain.gain.setValueAtTime(vol, now);
-  }
-  if (audio.bgmEl) {
-    audio.bgmEl.volume = vol;
-  }
-};
-
-const updateMusic = () => {
-  if (!audio.enabled) return;
-  applyMusicVolume();
-  if (!audio.unlocked || !audio.ctx) return;
-  if (audio.bgmGain && !audio.bgmSource && audio.bgmBuffer) {
-    startBgmLoop();
-  } else if (audio.bgmEl && audio.bgmEl.paused) {
-    audio.bgmEl.play().catch(() => {});
-  }
-  if (!audio.useProceduralMusic) {
-    audio.music.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.08);
-    return;
-  }
-  const musicTarget = state.running && !state.paused ? audio.musicVolume : 0;
-  const now = audio.ctx.currentTime;
-  audio.music.gain.setTargetAtTime(musicTarget, now, 0.12);
-  if (!(state.running && !state.paused)) return;
-  if (audio.nextBeatTime === 0) audio.nextBeatTime = now + 0.02;
-  while (audio.nextBeatTime < now + 0.06) {
-    const freq = audio.musicPattern[audio.musicStep % audio.musicPattern.length];
-    const osc = audio.ctx.createOscillator();
-    const gain = audio.ctx.createGain();
-    osc.type = "triangle";
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.0001, audio.nextBeatTime);
-    gain.gain.exponentialRampToValueAtTime(0.06, audio.nextBeatTime + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audio.nextBeatTime + 0.2);
-    osc.connect(gain);
-    gain.connect(audio.music);
-    osc.start(audio.nextBeatTime);
-    osc.stop(audio.nextBeatTime + 0.22);
-    audio.nextBeatTime += audio.beatInterval;
-    audio.musicStep++;
-  }
-};
-
-const difficultyModes = {
-  recruit: {
-    enemyHp: 0.42,
-    enemySpeed: 0.62,
-    enemyCount: 0.56,
-    powerDrop: 1.38,
-    bossHpMultiplier: 0.7,
-    bossActionRate: 0.38,
-    coreMultiplier: 0.22,
-    spawnBase: 3,
-    spawnWaveMultiplier: 2.45,
-    spawnRampBonus: 0.55,
-    maxPerSegment: 8,
-    killEnergyMultiplier: 1,
-    fx: { tint: "40, 120, 70", tintAlpha: 0.06, vignette: 0.08 },
-  },
-  adept: {
-    enemyHp: 0.58,
-    enemySpeed: 0.72,
-    enemyCount: 0.74,
-    powerDrop: 1.24,
-    bossHpMultiplier: 0.84,
-    bossActionRate: 0.52,
-    coreMultiplier: 0.52,
-    spawnBase: 6,
-    spawnWaveMultiplier: 3.35,
-    spawnRampBonus: 0.68,
-    maxPerSegment: 10,
-    killEnergyMultiplier: 1,
-    fx: { tint: "50, 100, 155", tintAlpha: 0.07, vignette: 0.1 },
-  },
-  veteran: {
-    enemyHp: 0.7,
-    enemySpeed: 0.8,
-    enemyCount: 0.88,
-    powerDrop: 1.08,
-    bossHpMultiplier: 0.92,
-    bossActionRate: 0.68,
-    coreMultiplier: 0.95,
-    spawnBase: 9,
-    spawnWaveMultiplier: 4.05,
-    spawnRampBonus: 0.8,
-    maxPerSegment: 13,
-    killEnergyMultiplier: 1,
-    fx: { tint: "125, 100, 40", tintAlpha: 0.08, vignette: 0.12 },
-  },
-  elite: {
-    enemyHp: 1.02,
-    enemySpeed: 1.02,
-    enemyCount: 1.18,
-    powerDrop: 0.92,
-    bossHpMultiplier: 1.75,
-    bossActionRate: 0.92,
-    coreMultiplier: 1.32,
-    spawnBase: 13,
-    spawnWaveMultiplier: 5.65,
-    spawnRampBonus: 1.02,
-    maxPerSegment: 17,
-    killEnergyMultiplier: 0.58,
-    fx: { tint: "175, 85, 40", tintAlpha: 0.1, vignette: 0.15 },
-  },
-  insane: {
-    enemyHp: 1.32,
-    enemySpeed: 1.18,
-    enemyCount: 1.48,
-    powerDrop: 0.78,
-    bossHpMultiplier: 2.65,
-    bossActionRate: 1.1,
-    coreMultiplier: 1.72,
-    spawnBase: 17,
-    spawnWaveMultiplier: 7.05,
-    spawnRampBonus: 1.22,
-    maxPerSegment: 21,
-    killEnergyMultiplier: 0.44,
-    fx: { tint: "185, 45, 55", tintAlpha: 0.13, vignette: 0.18 },
-  },
-  impossible: {
-    enemyHp: 1.62,
-    enemySpeed: 1.32,
-    enemyCount: 1.82,
-    powerDrop: 0.68,
-    bossHpMultiplier: 3.85,
-    bossActionRate: 1.26,
-    coreMultiplier: 2.08,
-    spawnBase: 21,
-    spawnWaveMultiplier: 8.15,
-    spawnRampBonus: 1.42,
-    maxPerSegment: 25,
-    killEnergyMultiplier: 0.36,
-    fx: { tint: "170, 30, 80", tintAlpha: 0.16, vignette: 0.22 },
-  },
-  nightmare: {
-    enemyHp: 3.38,
-    enemySpeed: 2.18,
-    enemyCount: 3.48,
-    powerDrop: 0.3,
-    bossHpMultiplier: 8.8,
-    bossActionRate: 2.05,
-    coreMultiplier: 3.45,
-    spawnBase: 40,
-    spawnWaveMultiplier: 13.8,
-    spawnRampBonus: 2.48,
-    maxPerSegment: 44,
-    killEnergyMultiplier: 0.12,
-    fx: { tint: "120, 35, 170", tintAlpha: 0.18, vignette: 0.26 },
-  },
-  abyssal: {
-    enemyHp: 4.12,
-    enemySpeed: 2.48,
-    enemyCount: 4.12,
-    powerDrop: 0.22,
-    bossHpMultiplier: 12.5,
-    bossActionRate: 2.32,
-    coreMultiplier: 4.12,
-    spawnBase: 48,
-    spawnWaveMultiplier: 16.2,
-    spawnRampBonus: 2.88,
-    maxPerSegment: 52,
-    killEnergyMultiplier: 0.065,
-    fx: { tint: "40, 65, 200", tintAlpha: 0.2, vignette: 0.3 },
-  },
-  oblivion: {
-    enemyHp: 5.25,
-    enemySpeed: 2.92,
-    enemyCount: 5.05,
-    powerDrop: 0.15,
-    bossHpMultiplier: 18,
-    bossActionRate: 2.72,
-    coreMultiplier: 5.15,
-    spawnBase: 58,
-    spawnWaveMultiplier: 19.5,
-    spawnRampBonus: 3.35,
-    maxPerSegment: 62,
-    killEnergyMultiplier: 0.04,
-    fx: { tint: "170, 20, 30", tintAlpha: 0.24, vignette: 0.36 },
-  },
-};
-
-const getDifficulty = () => difficultyModes[state.difficultyKey] || difficultyModes.veteran;
-
-const shipLoadouts = {
-  striker: {
-    id: "striker",
-    name: "Striker",
-    tier: "common",
-    speed: 225,
-    maxHp: 90,
-    maxShield: 28,
-    maxEnergy: 68,
-    baseCooldown: 0.7,
-    damageMultiplier: 0.68,
-    shotSpeedMultiplier: 0.82,
-    energyRegenMultiplier: 0.26,
-    shieldRegenMultiplier: 1.15,
-    abilities: [
-      { key: "1", name: "Omni Burst", cost: 100, type: "burst" },
-      { key: "2", name: "Kinetic Spray", cost: 40, type: "rapidVolley" },
-      { key: "3", name: "Flux Lances", cost: 60, type: "energySurge" },
-    ],
-    price: 0,
-    unlocked: true,
-  },
-  phantom: {
-    id: "phantom",
-    name: "Phantom",
-    tier: "rare",
-    speed: 260,
-    maxHp: 92,
-    maxShield: 30,
-    maxEnergy: 88,
-    baseCooldown: 0.58,
-    damageMultiplier: 0.88,
-    shotSpeedMultiplier: 0.98,
-    energyRegenMultiplier: 0.58,
-    shieldRegenMultiplier: 2.0,
-    abilities: [
-      { key: "1", name: "Phase Bolt", cost: 72, type: "ghostfire" },
-      { key: "2", name: "Ghost Trace", cost: 58, type: "phaseShift" },
-      { key: "3", name: "Unseen Edge", cost: 68, type: "chainBolt" },
-    ],
-    price: 17800,
-    unlocked: false,
-  },
-  aegis: {
-    id: "aegis",
-    name: "Aegis",
-    tier: "legendary",
-    speed: 228,
-    maxHp: 168,
-    maxShield: 78,
-    maxEnergy: 96,
-    baseCooldown: 0.62,
-    damageMultiplier: 1.02,
-    shotSpeedMultiplier: 0.78,
-    energyRegenMultiplier: 0.62,
-    shieldRegenMultiplier: 3.2,
-    abilities: [
-      { key: "1", name: "Bulwark Burst", cost: 110, type: "energyBarrier" },
-      { key: "2", name: "Phalanx Spin", cost: 75, type: "overload" },
-      { key: "3", name: "Aegis Mirror", cost: 95, type: "shockwave" },
-    ],
-    price: 112000,
-    unlocked: false,
-  },
-  tempest: {
-    id: "tempest",
-    name: "Tempest",
-    tier: "rare",
-    speed: 285,
-    maxHp: 108,
-    maxShield: 42,
-    maxEnergy: 102,
-    baseCooldown: 0.52,
-    damageMultiplier: 1.04,
-    shotSpeedMultiplier: 1.14,
-    energyRegenMultiplier: 0.95,
-    shieldRegenMultiplier: 2.25,
-    abilities: [
-      { key: "1", name: "Storm Front", cost: 105, type: "lightningStorm" },
-      { key: "2", name: "Rolling Thunder", cost: 68, type: "overload" },
-      { key: "3", name: "Eye of the Storm", cost: 88, type: "burst" },
-    ],
-    price: 19200,
-    unlocked: false,
-  },
-  titan: {
-    id: "titan",
-    name: "Titan",
-    tier: "mythic",
-    speed: 248,
-    maxHp: 340,
-    maxShield: 96,
-    maxEnergy: 108,
-    baseCooldown: 0.56,
-    damageMultiplier: 1.52,
-    shotSpeedMultiplier: 0.96,
-    energyRegenMultiplier: 1.12,
-    shieldRegenMultiplier: 3.6,
-    abilities: [
-      { key: "1", name: "Colossus Beam", cost: 115, type: "siegeCannon" },
-      { key: "2", name: "Earthshaker", cost: 85, type: "shockwave" },
-      { key: "3", name: "Titanic Fury", cost: 92, type: "rampage" },
-    ],
-    price: 89800,
-    unlocked: false,
-  },
-  specter: {
-    id: "specter",
-    name: "Specter",
-    tier: "mythic",
-    speed: 340,
-    maxHp: 108,
-    maxShield: 38,
-    maxEnergy: 128,
-    baseCooldown: 0.36,
-    damageMultiplier: 1.12,
-    shotSpeedMultiplier: 1.38,
-    energyRegenMultiplier: 2.0,
-    shieldRegenMultiplier: 3.6,
-    abilities: [
-      { key: "1", name: "Haunt", cost: 72, type: "deathMark" },
-      { key: "2", name: "Phantasm", cost: 95, type: "combatDrone" },
-      { key: "3", name: "Death's Door", cost: 140, type: "dimensionalSlash" },
-    ],
-    price: 73500,
-    unlocked: false,
-  },
-  vanguard: {
-    id: "vanguard",
-    name: "Vanguard",
-    tier: "rare",
-    speed: 238,
-    maxHp: 124,
-    maxShield: 40,
-    maxEnergy: 86,
-    baseCooldown: 0.56,
-    damageMultiplier: 0.94,
-    shotSpeedMultiplier: 0.92,
-    energyRegenMultiplier: 0.55,
-    shieldRegenMultiplier: 2.0,
-    abilities: [
-      { key: "1", name: "Frontline Beam", cost: 85, type: "chainBolt" },
-      { key: "2", name: "Shield Breach", cost: 62, type: "rapidVolley" },
-      { key: "3", name: "Vanguard Charge", cost: 78, type: "blink" },
-    ],
-    price: 16800,
-    unlocked: false,
-  },
-  reaper: {
-    id: "reaper",
-    name: "Reaper",
-    tier: "legendary",
-    speed: 268,
-    maxHp: 148,
-    maxShield: 52,
-    maxEnergy: 102,
-    baseCooldown: 0.48,
-    damageMultiplier: 1.28,
-    shotSpeedMultiplier: 1.06,
-    energyRegenMultiplier: 1.05,
-    shieldRegenMultiplier: 2.85,
-    abilities: [
-      { key: "1", name: "Harvest", cost: 28, type: "deathMark" },
-      { key: "2", name: "Soul Scythe", cost: 72, type: "soulHarvest" },
-      { key: "3", name: "Final Cut", cost: 105, type: "dimensionalSlash" },
-    ],
-    price: 117000,
-    unlocked: false,
-  },
-  nova: {
-    id: "nova",
-    name: "Nova",
-    tier: "mythic",
-    speed: 318,
-    maxHp: 158,
-    maxShield: 62,
-    maxEnergy: 140,
-    baseCooldown: 0.34,
-    damageMultiplier: 1.42,
-    shotSpeedMultiplier: 1.22,
-    energyRegenMultiplier: 1.45,
-    shieldRegenMultiplier: 3.0,
-    abilities: [
-      { key: "1", name: "Supernova", cost: 118, type: "supernova" },
-      { key: "2", name: "Stellar Flare", cost: 88, type: "novaSwarmDrones" },
-      { key: "3", name: "Collapsar", cost: 102, type: "azureCataclysm" },
-    ],
-    price: 95200,
-    unlocked: false,
-  },
-  voidwalker: {
-    id: "voidwalker",
-    name: "Voidwalker",
-    tier: "legendary",
-    speed: 348,
-    maxHp: 128,
-    maxShield: 44,
-    maxEnergy: 136,
-    baseCooldown: 0.34,
-    damageMultiplier: 1.22,
-    shotSpeedMultiplier: 1.38,
-    energyRegenMultiplier: 2.05,
-    shieldRegenMultiplier: 3.9,
-    abilities: [
-      { key: "1", name: "Null Step", cost: 72, type: "phaseShift" },
-      { key: "2", name: "Abyssal Gaze", cost: 105, type: "voidRift" },
-      { key: "3", name: "Event Horizon", cost: 125, type: "blackHole" },
-    ],
-    price: 113000,
-    unlocked: false,
-  },
-  glacier: {
-    id: "glacier",
-    name: "Glacier",
-    tier: "legendary",
-    speed: 218,
-    maxHp: 168,
-    maxShield: 58,
-    maxEnergy: 96,
-    baseCooldown: 0.6,
-    damageMultiplier: 1.08,
-    shotSpeedMultiplier: 0.82,
-    energyRegenMultiplier: 0.72,
-    shieldRegenMultiplier: 2.65,
-    abilities: [
-      { key: "1", name: "Permafrost Beam", cost: 105, type: "chainBolt" },
-      { key: "2", name: "Glacial Prism", cost: 78, type: "burst" },
-      { key: "3", name: "Absolute Zero", cost: 115, type: "supernova" },
-    ],
-    price: 115000,
-    unlocked: false,
-  },
-  bulwark: {
-    id: "bulwark",
-    name: "Bulwark",
-    tier: "uncommon",
-    speed: 208,
-    maxHp: 152,
-    maxShield: 72,
-    maxEnergy: 78,
-    baseCooldown: 0.78,
-    damageMultiplier: 1.05,
-    shotSpeedMultiplier: 0.72,
-    energyRegenMultiplier: 0.4,
-    shieldRegenMultiplier: 2.75,
-    abilities: [
-      { key: "1", name: "Fortify Pulse", cost: 62, type: "energyBarrier" },
-      { key: "2", name: "Reinforced Beam", cost: 55, type: "chainBolt" },
-      { key: "3", name: "Steadfast Core", cost: 88, type: "fortify" },
-    ],
-    price: 8200,
-    unlocked: false,
-  },
-  inferno: {
-    id: "inferno",
-    name: "Inferno",
-    tier: "mythic",
-    speed: 288,
-    maxHp: 188,
-    maxShield: 66,
-    maxEnergy: 132,
-    baseCooldown: 0.42,
-    damageMultiplier: 1.38,
-    shotSpeedMultiplier: 1.02,
-    energyRegenMultiplier: 1.5,
-    shieldRegenMultiplier: 3.0,
-    abilities: [
-      { key: "1", name: "Conflagration", cost: 82, type: "overload" },
-      { key: "2", name: "Pyroclasm", cost: 95, type: "starfall" },
-      { key: "3", name: "Hellfire", cost: 110, type: "combatDrone" },
-    ],
-    price: 102000,
-    unlocked: false,
-  },
-  aurora: {
-    id: "aurora",
-    name: "Aurora",
-    tier: "mythic",
-    speed: 336,
-    maxHp: 150,
-    maxShield: 56,
-    maxEnergy: 146,
-    baseCooldown: 0.34,
-    damageMultiplier: 1.26,
-    shotSpeedMultiplier: 1.32,
-    energyRegenMultiplier: 1.8,
-    shieldRegenMultiplier: 3.1,
-    abilities: [
-      { key: "1", name: "Borealis", cost: 105, type: "lightningStorm" },
-      { key: "2", name: "Prismatic Veil", cost: 72, type: "overload" },
-      { key: "3", name: "Celestial Dance", cost: 118, type: "burst" },
-    ],
-    price: 78800,
-    unlocked: false,
-  },
-  aphelion: {
-    id: "aphelion",
-    name: "Aphelion",
-    tier: "exotic",
-    speed: 385,
-    maxHp: 240,
-    maxShield: 118,
-    maxEnergy: 178,
-    baseCooldown: 0.24,
-    damageMultiplier: 1.95,
-    shotSpeedMultiplier: 1.62,
-    energyRegenMultiplier: 3.2,
-    shieldRegenMultiplier: 6.4,
-    abilities: [
-      { key: "1", name: "Keelbreaker Singularity", cost: 120, type: "blackHole" },
-      { key: "2", name: "Keelbreaker Cascade", cost: 75, type: "starfall" },
-      { key: "3", name: "Orbital Aegis", cost: 60, type: "dimensionalSlash" },
-    ],
-    price: 132000,
-    unlocked: false,
-  },
-};
-
-const ADVANCED_SHIP_LIBRARY = [
-  { id: "dart", name: "Dart", tier: "common", speed: 288, maxHp: 70, maxShield: 18, maxEnergy: 68, baseCooldown: 0.5, damageMultiplier: 0.52, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.0, abilities: [{ key: "1", name: "Twin Pierce", cost: 38, type: "rapidVolley" }, { key: "2", name: "Seeker Darts", cost: 48, type: "chainBolt" }, { key: "3", name: "Triple Volley", cost: 52, type: "ghostfire" }], price: 560, unlocked: false },
-  { id: "pebble", name: "Pebble", tier: "common", speed: 238, maxHp: 88, maxShield: 26, maxEnergy: 70, baseCooldown: 0.62, damageMultiplier: 0.58, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 1.12, abilities: [{ key: "1", name: "Stone Line", cost: 42, type: "chainBolt" }, { key: "2", name: "Gravel Fan", cost: 45, type: "burst" }, { key: "3", name: "Rolling Stone", cost: 58, type: "fortify" }], price: 680, unlocked: false },
-  { id: "wick", name: "Wick", tier: "common", speed: 296, maxHp: 66, maxShield: 16, maxEnergy: 74, baseCooldown: 0.48, damageMultiplier: 0.5, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 0.95, abilities: [{ key: "1", name: "Cinder Shell", cost: 35, type: "rapidVolley" }, { key: "2", name: "Flame Rush", cost: 50, type: "chainBolt" }, { key: "3", name: "Wild Sparks", cost: 55, type: "burst" }], price: 480, unlocked: false },
-  { id: "bolt", name: "Bolt", tier: "common", speed: 262, maxHp: 80, maxShield: 22, maxEnergy: 76, baseCooldown: 0.54, damageMultiplier: 0.6, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 1.08, abilities: [{ key: "1", name: "Ion Veil", cost: 40, type: "rapidVolley" }, { key: "2", name: "Arc Chain", cost: 52, type: "chainBolt" }, { key: "3", name: "Storm Cage", cost: 48, type: "shockwave" }], price: 740, unlocked: false },
-  { id: "knave", name: "Knave", tier: "uncommon", speed: 302, maxHp: 88, maxShield: 24, maxEnergy: 84, baseCooldown: 0.5, damageMultiplier: 0.78, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 1.45, abilities: [{ key: "1", name: "Cheap Shot", cost: 42, type: "shadowStep" }, { key: "2", name: "Dirty Trick", cost: 55, type: "ghostfire" }, { key: "3", name: "Underhanded", cost: 62, type: "burst" }], price: 5800, unlocked: false },
-  { id: "ember", name: "Ember", tier: "uncommon", speed: 278, maxHp: 92, maxShield: 28, maxEnergy: 88, baseCooldown: 0.52, damageMultiplier: 0.82, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 1.55, abilities: [{ key: "1", name: "Smolder", cost: 50, type: "chainBolt" }, { key: "2", name: "Cinder Burst", cost: 48, type: "burst" }, { key: "3", name: "Ash Cloud", cost: 65, type: "energySurge" }], price: 6400, unlocked: false },
-  { id: "claw", name: "Claw", tier: "uncommon", speed: 268, maxHp: 98, maxShield: 30, maxEnergy: 82, baseCooldown: 0.54, damageMultiplier: 0.86, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 1.65, abilities: [{ key: "1", name: "Scratch", cost: 42, type: "rapidVolley" }, { key: "2", name: "Tear", cost: 58, type: "chainBolt" }, { key: "3", name: "Rend", cost: 68, type: "ghostfire" }], price: 7600, unlocked: false },
-  { id: "stinger", name: "Stinger", tier: "uncommon", speed: 308, maxHp: 84, maxShield: 22, maxEnergy: 80, baseCooldown: 0.44, damageMultiplier: 0.74, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 1.35, abilities: [{ key: "1", name: "Prick", cost: 45, type: "chainBolt" }, { key: "2", name: "Hornet Swarm", cost: 50, type: "rapidVolley" }, { key: "3", name: "Venom Tip", cost: 62, type: "deathMark" }], price: 7200, unlocked: false },
-  { id: "halberd", name: "Halberd", tier: "rare", speed: 262, maxHp: 132, maxShield: 48, maxEnergy: 100, baseCooldown: 0.56, damageMultiplier: 1.08, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 2.15, abilities: [{ key: "1", name: "Cleaving Blow", cost: 105, type: "shockwave" }, { key: "2", name: "Polearm Spin", cost: 58, type: "burst" }, { key: "3", name: "Executioner's Swing", cost: 88, type: "chainBolt" }], price: 21800, unlocked: false },
-  { id: "lancer", name: "Lancer", tier: "rare", speed: 288, maxHp: 110, maxShield: 34, maxEnergy: 94, baseCooldown: 0.48, damageMultiplier: 0.98, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 1.85, abilities: [{ key: "1", name: "Impale", cost: 55, type: "chainBolt" }, { key: "2", name: "Cavalry Sweep", cost: 72, type: "blink" }, { key: "3", name: "Lance Formation", cost: 85, type: "combatDrone" }], price: 15200, unlocked: false },
-  { id: "raven", name: "Raven", tier: "rare", speed: 308, maxHp: 116, maxShield: 40, maxEnergy: 106, baseCooldown: 0.44, damageMultiplier: 1.06, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 2.05, abilities: [{ key: "1", name: "Murder", cost: 52, type: "ghostfire" }, { key: "2", name: "Unkindness", cost: 88, type: "starfall" }, { key: "3", name: "Omen", cost: 95, type: "deathMark" }], price: 24800, unlocked: false },
-  { id: "warden", name: "Warden", tier: "rare", speed: 228, maxHp: 188, maxShield: 78, maxEnergy: 108, baseCooldown: 0.58, damageMultiplier: 0.96, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 3.1, abilities: [{ key: "1", name: "Law's Reach", cost: 78, type: "chainBolt" }, { key: "2", name: "Judgment Pulse", cost: 68, type: "shieldOvercharge" }, { key: "3", name: "Warden's Oath", cost: 105, type: "lightningStorm" }], price: 26500, unlocked: false },
-  { id: "marauder", name: "Marauder", tier: "rare", speed: 272, maxHp: 122, maxShield: 36, maxEnergy: 96, baseCooldown: 0.5, damageMultiplier: 1.02, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 1.75, abilities: [{ key: "1", name: "Pillage", cost: 55, type: "soulHarvest" }, { key: "2", name: "Raid", cost: 62, type: "ghostfire" }, { key: "3", name: "Plunder", cost: 88, type: "burst" }], price: 20500, unlocked: false },
-  { id: "gallant", name: "Gallant", tier: "rare", speed: 252, maxHp: 128, maxShield: 44, maxEnergy: 90, baseCooldown: 0.54, damageMultiplier: 0.98, shotSpeedMultiplier: 1.0, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 2.25, abilities: [{ key: "1", name: "Challenge", cost: 58, type: "deathMark" }, { key: "2", name: "Duelist's Lunge", cost: 65, type: "blink" }, { key: "3", name: "Valor's Light", cost: 78, type: "energySurge" }], price: 23200, unlocked: false },
-  { id: "helios", name: "Helios", tier: "legendary", speed: 318, maxHp: 198, maxShield: 66, maxEnergy: 142, baseCooldown: 0.34, damageMultiplier: 1.42, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.45, shieldRegenMultiplier: 2.95, abilities: [{ key: "1", name: "Solar Flare", cost: 95, type: "supernova" }, { key: "2", name: "Orbital Ray", cost: 82, type: "starfall" }, { key: "3", name: "Dawnbringer", cost: 115, type: "overload" }], price: 120000, unlocked: false },
-  { id: "eclipse", name: "Eclipse", tier: "mythic", speed: 358, maxHp: 136, maxShield: 54, maxEnergy: 170, baseCooldown: 0.3, damageMultiplier: 1.34, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 2.2, shieldRegenMultiplier: 3.85, abilities: [{ key: "1", name: "Occultation", cost: 75, type: "phaseShift" }, { key: "2", name: "Shadow Crown", cost: 95, type: "energyBarrier" }, { key: "3", name: "Total Eclipse", cost: 125, type: "supernova" }], price: 84200, unlocked: false },
-  { id: "oracle", name: "Oracle", tier: "mythic", speed: 298, maxHp: 162, maxShield: 72, maxEnergy: 158, baseCooldown: 0.36, damageMultiplier: 1.32, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 1.75, shieldRegenMultiplier: 3.5, abilities: [{ key: "1", name: "Foresight", cost: 70, type: "phaseShift" }, { key: "2", name: "Prophecy", cost: 95, type: "lightningStorm" }, { key: "3", name: "Revelation", cost: 118, type: "supernova" }], price: 108000, unlocked: false },
-  { id: "seraph", name: "Seraph", tier: "exotic", speed: 390, maxHp: 210, maxShield: 102, maxEnergy: 190, baseCooldown: 0.22, damageMultiplier: 1.82, shotSpeedMultiplier: 1.64, energyRegenMultiplier: 3.0, shieldRegenMultiplier: 6.0, abilities: [{ key: "1", name: "Umbral Singularity", cost: 120, type: "blackHole" }, { key: "2", name: "Stellar Ignition", cost: 120, type: "supernova" }, { key: "3", name: "Dimensional Slash", cost: 85, type: "dimensionalSlash" }], price: 145000, unlocked: false },
-  { id: "myrmidon", name: "Myrmidon", tier: "uncommon", speed: 270, maxHp: 124, maxShield: 42, maxEnergy: 98, baseCooldown: 0.42, damageMultiplier: 0.82, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 1.92, abilities: [{ key: "1", name: "Phalanx Shot", cost: 42, type: "rapidVolley" }, { key: "2", name: "Shield Throw", cost: 58, type: "chainBolt" }, { key: "3", name: "Formation Break", cost: 72, type: "burst" }], price: 9600, unlocked: false },
-  { id: "grimstar", name: "Grimstar", tier: "legendary", speed: 328, maxHp: 172, maxShield: 60, maxEnergy: 150, baseCooldown: 0.32, damageMultiplier: 1.38, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 3.25, abilities: [{ key: "1", name: "Void Star", cost: 95, type: "blackHole" }, { key: "2", name: "Dirge", cost: 72, type: "overload" }, { key: "3", name: "Mourning Star", cost: 105, type: "starfall" }], price: 124000, unlocked: false }
-];
-
-const ADVANCED_PATTERN_LIBRARY = [
-  { id: "encircle-arc", family: "encirclement", rhythm: "medium", threat: 2, note: "Wraps player with delayed arc shots and then punctures centerline." },
-  { id: "spear-rain", family: "volley", rhythm: "fast", threat: 3, note: "Vertical staggered lances that punish static movement." },
-  { id: "gravity-fan", family: "gravity", rhythm: "slow", threat: 4, note: "Converging wedges that compress dodge lanes from both wings." },
-  { id: "cross-thread", family: "threading", rhythm: "fast", threat: 3, note: "Alternating X patterns with tiny safe pockets." },
-  { id: "delta-net", family: "saturation", rhythm: "medium", threat: 4, note: "Triad packets that drift and then snap toward current player vector." },
-  { id: "shatter-wheel", family: "orbital", rhythm: "medium", threat: 5, note: "Rotating wheel that cracks into high-speed shards at 60% radius." },
-  { id: "ion-gate", family: "gating", rhythm: "slow", threat: 3, note: "Sequential gates force pathing decisions before burst release." },
-  { id: "spiral-lock", family: "spiral", rhythm: "fast", threat: 5, note: "Dual spirals rotating opposite directions with randomized phase." },
-  { id: "mirror-lattice", family: "lattice", rhythm: "medium", threat: 4, note: "Mirrored hex lattice with directional phase flips." },
-  { id: "tidal-flood", family: "wave", rhythm: "slow", threat: 2, note: "Broad wavefront with low DPS, high displacement pressure." },
-  { id: "needle-crown", family: "pinpoint", rhythm: "fast", threat: 4, note: "Radial needle bursts from micro-crown satellites." },
-  { id: "horizon-saw", family: "sweeper", rhythm: "medium", threat: 5, note: "Horizontal sawtooth sweep with acceleration ramp." }
-];
-
-const ADVANCED_CHALLENGE_PRESETS = [
-  { id: "iron-recruit", title: "Iron Recruit", stars: 2, description: "Recruit HP scaling with Veteran projectile speed.", mutators: ["enemySpeed+10%", "dropRate+15%", "bossHp-10%"] },
-  { id: "fracture-veteran", title: "Fracture Veteran", stars: 3, description: "Veteran baseline with extra mixed enemy packs.", mutators: ["enemyCount+20%", "eliteChance+12%", "healingDrops-8%"] },
-  { id: "nightmare-thread", title: "Nightmare Thread", stars: 4, description: "Nightmare speed plus denial-heavy wave scripting.", mutators: ["enemySpeed+18%", "projectileSpread+24%", "shieldRegen-15%"] },
-  { id: "abyss-marathon", title: "Abyss Marathon", stars: 5, description: "Long-form run with aggressive bosses every 4 waves.", mutators: ["bossInterval=4", "bossHp+22%", "energyRegen-10%"] },
-  { id: "rift-gauntlet", title: "Rift Gauntlet", stars: 5, description: "High enemy density and reduced arena control windows.", mutators: ["enemyCount+35%", "dropRate-20%", "eliteChance+22%"] },
-  { id: "astral-exam", title: "Astral Exam", stars: 3, description: "Balanced challenge with strict survival checks.", mutators: ["maxHp-12%", "shieldRegen+20%", "enemyDamage+8%"] }
-];
-
-const ADVANCED_FX_PROFILES = [
-  { id: "blackhole-core", label: "Black Hole", category: "gravity", visual: "Dense violet ring with inward spiral particles and hard center sink.", signature: "spiral_inward_dense" },
-  { id: "void-rift-shear", label: "Void Rift", category: "anomaly", visual: "Jagged indigo fissure with offset asymmetrical shear and shard outflow.", signature: "rift_shear_outflow" },
-  { id: "abyss-supernova", label: "Abyssal Supernova", category: "nova", visual: "Teal-white inflation phase and blinding shock-shell with delayed star fragments.", signature: "nova_shell_fragments" },
-  { id: "event-horizon", label: "Event Horizon", category: "gravity", visual: "Crimson-edged singularity with concentric lensing halos and collapsing filaments.", signature: "horizon_filament_collapse" },
-  { id: "dimensional-slash", label: "Dimensional Slash", category: "rift", visual: "Linear fracture ribbons that peel into angular cuts.", signature: "ribbon_fracture_linear" }
-];
-
-const ADVANCED_SHIP_VISUAL_LIBRARY = [
-  { id: "striker", hull: "delta", wings: "dual-mid", trail: "cyan-short", accent: "#9bf5ff" },
-  { id: "phantom", hull: "needle", wings: "reverse-thin", trail: "violet-ghost", accent: "#d1afff" },
-  { id: "aegis", hull: "bastion", wings: "heavy-block", trail: "amber-thick", accent: "#ffe29b" },
-  { id: "specter", hull: "wraith", wings: "hollow-prong", trail: "void-smoke", accent: "#9b7fff" },
-  { id: "voidwalker", hull: "riftblade", wings: "split-prism", trail: "indigo-fork", accent: "#4a0080" },
-  { id: "aphelion", hull: "crown", wings: "overdrive-spear", trail: "solar-fray", accent: "#ff4d4d" },
-  { id: "halberd", hull: "spearhead", wings: "armored-mid", trail: "ion-band", accent: "#66ccff" },
-  { id: "lancer", hull: "dart", wings: "flared", trail: "yellow-arc", accent: "#ffd166" },
-  { id: "raven", hull: "talon", wings: "swept", trail: "dark-plasma", accent: "#b067ff" },
-  { id: "warden", hull: "fortress", wings: "broad", trail: "aegis-mist", accent: "#8ef7b5" },
-  { id: "helios", hull: "flare", wings: "sunbarb", trail: "sun-lace", accent: "#5ec6ff" },
-  { id: "eclipse", hull: "crescent", wings: "double-prism", trail: "umbra-coil", accent: "#d9a6ff" },
-  { id: "oracle", hull: "seer", wings: "orbital-winglet", trail: "lumen-thread", accent: "#6fffe9" },
-  { id: "seraph", hull: "archon", wings: "tri-crown", trail: "scarlet-lens", accent: "#ff7b7b" },
-  { id: "dart", hull: "needle", wings: "reverse-thin", trail: "cyan-short", accent: "#f0f4ff" },
-  { id: "pebble", hull: "delta", wings: "dual-mid", trail: "amber-thick", accent: "#b8c4cc" },
-  { id: "wick", hull: "needle", wings: "flared", trail: "sun-lace", accent: "#ff9a3c" },
-  { id: "bolt", hull: "dart", wings: "dual-mid", trail: "ion-band", accent: "#66a8ff" },
-  { id: "knave", hull: "talon", wings: "hollow-prong", trail: "violet-ghost", accent: "#c86bff" },
-  { id: "ember", hull: "flare", wings: "dual-mid", trail: "sun-lace", accent: "#ff6b35" },
-  { id: "claw", hull: "talon", wings: "swept", trail: "dark-plasma", accent: "#5cff8a" },
-  { id: "stinger", hull: "needle", wings: "swept", trail: "yellow-arc", accent: "#ffe566" },
-  { id: "marauder", hull: "riftblade", wings: "armored-mid", trail: "dark-plasma", accent: "#ff4466" },
-  { id: "gallant", hull: "spearhead", wings: "orbital-winglet", trail: "lumen-thread", accent: "#a8d4ff" }
-];
-
-const STELLAR_CODEX_ENTRIES = [
-  "ARC-001 | Movement doctrine: drift-snap-drift to preserve dodge vectors.",
-  "ARC-002 | Vector staging: keep weapon cone slightly ahead of enemy flow.",
-  "ARC-003 | Reserve at least 30 energy for emergency displacement abilities.",
-  "ARC-004 | Treat orbiting enemies as area-denial, not direct DPS checks.",
-  "ARC-005 | Shield-first builds spike hardest in mid-wave pressure.",
-  "ARC-006 | Burst archetypes should rotate lanes every two volleys.",
-  "ARC-007 | Blink windows are strongest immediately after radial bursts.",
-  "ARC-008 | Gravity abilities multiply value when used near borders.",
-  "ARC-009 | Stacked pull effects are strongest when enemy speed is high.",
-  "ARC-010 | Avoid overcommitting to center during boss telegraphs.",
-  "ARC-011 | Nova and singularity effects are visually and tactically distinct.",
-  "ARC-012 | Rift class abilities bias lateral shear and angular displacement.",
-  "ARC-013 | Supernova class abilities bias shell expansion and delayed detonation.",
-  "ARC-014 | Black-hole class abilities bias inward spiral accretion patterns.",
-  "ARC-015 | Keep at least one short-cooldown button in every loadout.",
-  "ARC-016 | Mixed tiers let lower-cost ships remain relevant in late waves.",
-  "ARC-017 | Trial ships are ideal for learning ability sequence timings.",
-  "ARC-018 | Pair fortification tools with multi-shot pressure for uptime.",
-  "ARC-019 | Chain effects gain value from clustered enemy formations.",
-  "ARC-020 | Lancing builds reward high shot-speed multipliers.",
-  "ARC-021 | Treat energy regen as tempo, not just sustain.",
-  "ARC-022 | Burst damage without control can lose to density spikes.",
-  "ARC-023 | Control builds without finisher tools stall score growth.",
-  "ARC-024 | The ideal loop alternates control, burst, and reposition.",
-  "ARC-025 | Fire cadence changes matter as much as raw projectile count.",
-  "ARC-026 | Tighter arenas favor shield and mitigation archetypes.",
-  "ARC-027 | Open arenas favor burst and displacement archetypes.",
-  "ARC-028 | Threat calibration uses projectile speed before HP tuning.",
-  "ARC-029 | Enemy count scaling should preserve readable pathing corridors.",
-  "ARC-030 | FX readability is a gameplay affordance, not cosmetic garnish.",
-  "ARC-031 | Hull profile readability improves player identity in chaos.",
-  "ARC-032 | Accent colors should communicate threat class at a glance.",
-  "ARC-033 | Mythic tier expects high-expression ability cycles.",
-  "ARC-034 | Exotic tier expects game-shaping ability anchors.",
-  "ARC-035 | Rare tier should introduce first tactical fork.",
-  "ARC-036 | Uncommon tier should reward cleaner execution.",
-  "ARC-037 | Common tier remains baseline for mechanical learning.",
-  "ARC-038 | Horizontal pressure patterns punish tunnel-aiming.",
-  "ARC-039 | Vertical pressure patterns punish static cornering.",
-  "ARC-040 | Spiral pressure patterns punish panic dashing.",
-  "ARC-041 | Staggered volleys reward anticipation over reaction.",
-  "ARC-042 | Dense shots with low speed can remain fair when telegraphed.",
-  "ARC-043 | Sparse shots with high speed require stronger visual contrast.",
-  "ARC-044 | Pull effects should include persistent centerline indicators.",
-  "ARC-045 | Rift effects should include directional shear indicators.",
-  "ARC-046 | Nova effects should include expansion phase indicators.",
-  "ARC-047 | Maintain one-second readability window for major ult visuals.",
-  "ARC-048 | Distinct silhouettes reduce misreads in mixed ability scenes.",
-  "ARC-049 | FX categories: gravity, rift, nova, kinetic, arc, shield.",
-  "ARC-050 | Sound and visuals should share timing landmarks.",
-  "ARC-051 | Economy tuning relies on challenge-star and wave depth.",
-  "ARC-052 | Price curves should leave early meaningful unlock decisions.",
-  "ARC-053 | Top-tier unlocks should require strategic spending choices.",
-  "ARC-054 | Data-driven libraries reduce hardcoded branch maintenance.",
-  "ARC-055 | Codex entries act as in-client design telemetry.",
-  "ARC-056 | Challenge cards should expose mutators explicitly.",
-  "ARC-057 | FX lab helps prevent overlap among similar concepts.",
-  "ARC-058 | UI panels should pause tactical input focus visually.",
-  "ARC-059 | Control surfaces should reuse shop modal ergonomics.",
-  "ARC-060 | Keep tactical copy concise to preserve scan speed.",
-  "ARC-061 | Sprinting archetypes trade survivability for wave pace.",
-  "ARC-062 | Tank archetypes trade peak DPS for positional certainty.",
-  "ARC-063 | Hybrid archetypes trade specialization for consistency.",
-  "ARC-064 | Heavy barrages demand cooldown discipline.",
-  "ARC-065 | Reposition tools need clear entry and exit moments.",
-  "ARC-066 | Survival boosts should not eclipse skill expression.",
-  "ARC-067 | High pull strengths need capped crowd stacking.",
-  "ARC-068 | Wave scripting should avoid unavoidable trap states.",
-  "ARC-069 | Chaos can be hard, but never unreadable.",
-  "ARC-070 | Reward familiarity by increasing pattern depth, not opacity.",
-  "ARC-071 | Pattern recombination yields variety with lower implementation cost.",
-  "ARC-072 | FX presets should map to gameplay categories directly.",
-  "ARC-073 | Ability naming should reinforce mechanical intent.",
-  "ARC-074 | Price tags should roughly track game-shaping potential.",
-  "ARC-075 | Trial access lowers onboarding friction for high-tier content.",
-  "ARC-076 | Threat systems should track overlap, not only base stats.",
-  "ARC-077 | Damage spikes should be paired with recovery opportunities.",
-  "ARC-078 | Recovery opportunities can be positional, not only drops.",
-  "ARC-079 | Arena edges are strategic resources.",
-  "ARC-080 | Front-loaded burst should have post-cast vulnerability windows.",
-  "ARC-081 | Visual trails should signal intended movement arcs.",
-  "ARC-082 | Lensing halos communicate horizon class abilities.",
-  "ARC-083 | Shard outflow communicates unstable rift class effects.",
-  "ARC-084 | Fragment blooms communicate delayed nova class detonations.",
-  "ARC-085 | Multi-stage FX must preserve color hierarchy.",
-  "ARC-086 | Readability order: shape > motion > color > detail.",
-  "ARC-087 | Distinct center behavior differentiates gravity subclasses.",
-  "ARC-088 | Combat rhythm benefits from alternating short and long casts.",
-  "ARC-089 | Damage floors protect weaker loadouts from dead runs.",
-  "ARC-090 | Damage ceilings protect stronger loadouts from trivial runs.",
-  "ARC-091 | Boss pressure should test movement, then damage, then endurance.",
-  "ARC-092 | Upgrade drafts should present at least one tempo option.",
-  "ARC-093 | Economy rewards should align to risk exposure.",
-  "ARC-094 | Advanced systems should still degrade gracefully.",
-  "ARC-095 | Config libraries enable future event modes quickly.",
-  "ARC-096 | UI discoverability prevents hidden-system abandonment.",
-  "ARC-097 | Metadata-rich ship cards aid rapid comparison.",
-  "ARC-098 | Challenge stars should communicate expected mastery.",
-  "ARC-099 | FX profiles can serve as test fixtures.",
-  "ARC-100 | Keep data comments sparse and actionable.",
-  "ARC-101 | Library row spacing should prioritize readability over density.",
-  "ARC-102 | Encounter layering should be additive, not chaotic by default.",
-  "ARC-103 | Cross-tier ship viability increases long-term retention.",
-  "ARC-104 | Peak builds still need mechanical execution checks.",
-  "ARC-105 | Late-game economy should avoid runaway compounding.",
-  "ARC-106 | Preserve user agency when introducing advanced systems.",
-  "ARC-107 | Coherent data tables beat ad-hoc tuning constants.",
-  "ARC-108 | FX preview should mirror in-game color grading closely.",
-  "ARC-109 | Challenge browser should remain purely informational.",
-  "ARC-110 | Codex serves as an embedded design notebook.",
-  "ARC-111 | FX uniqueness constraints reduce concept ambiguity.",
-  "ARC-112 | Distinct black-hole spirals prevent overlap with rift visuals.",
-  "ARC-113 | Distinct void shears prevent overlap with nova visuals.",
-  "ARC-114 | Distinct nova shells prevent overlap with pull anomalies.",
-  "ARC-115 | Every ability class needs a primary motion metaphor.",
-  "ARC-116 | Every high-impact cast needs a center anchor.",
-  "ARC-117 | Every panel should be keyboard-and-pointer friendly.",
-  "ARC-118 | Preserve launch flow when adding side systems.",
-  "ARC-119 | Expanded data should remain forward-compatible.",
-  "ARC-120 | Build complete."
-];
-
-for (const ship of ADVANCED_SHIP_LIBRARY) {
-  if (!shipLoadouts[ship.id]) {
-    shipLoadouts[ship.id] = ship;
-  }
-}
-
-for (const ship of Object.values(shipLoadouts)) {
-  if (!ship.abilities) continue;
-  const maxCost = ship.abilities.reduce((m, a) => Math.max(m, a.cost || 0), 0);
-  if ((ship.maxEnergy || 0) < maxCost) ship.maxEnergy = maxCost + 12;
-}
-
+// Extracted: modes/ships/advanced data setup
 const upgradePool = [
   {
     id: "thrusters",
@@ -1107,32 +301,6 @@ const upgradePool = [
   },
 ];
 
-const rng = (min, max) => Math.random() * (max - min) + min;
-const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
-const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
-const pointToSegmentDistance = (px, py, x1, y1, x2, y2) => {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1);
-  const t = clamp(((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy), 0, 1);
-  const cx = x1 + t * dx;
-  const cy = y1 + t * dy;
-  return Math.hypot(px - cx, py - cy);
-};
-const getNearestEnemy = (x, y) => {
-  let nearest = null;
-  let best = Infinity;
-  for (const enemy of state.enemies) {
-    if (enemy.hp <= 0) continue;
-    const d = dist(x, y, enemy.x, enemy.y);
-    if (d < best) {
-      best = d;
-      nearest = enemy;
-    }
-  }
-  return nearest;
-};
-
 class Particle {
   constructor(x, y, color) {
     this.x = x;
@@ -1141,7 +309,7 @@ class Particle {
     this.vy = rng(-80, 80);
     this.life = rng(0.3, 0.8);
     this.color = color;
-    this.size = 2;
+    this.size = scaleByViewport(2);
     this.travelled = 0;
     this.maxTravel = null;
   }
@@ -1179,6 +347,67 @@ class Particle {
 
 const drawFriendlyProjectileSilhouette = (ctx, bullet) => {
   if (!bullet.friendly) return false;
+  if (bullet.voidwalkerPhaseBlade) {
+    const ang = Math.atan2(bullet.vy, bullet.vx);
+    const s = Math.max(bullet.size || 14, 13);
+    const len = s * 6.6;
+    const halfW = Math.max(15, s * 1.12);
+    ctx.save();
+    ctx.translate(bullet.x, bullet.y);
+    ctx.rotate(ang);
+    ctx.globalAlpha = bullet.life < 0.22 ? clamp(bullet.life / 0.22, 0, 1) : 1;
+    ctx.lineCap = "round";
+    const g = ctx.createLinearGradient(-len, 0, len, 0);
+    g.addColorStop(0, "#0c0018");
+    g.addColorStop(0.22, "#3a0878");
+    g.addColorStop(0.42, "#6510b8");
+    g.addColorStop(0.58, "#9a28e8");
+    g.addColorStop(0.74, "#d070ff");
+    g.addColorStop(0.88, "#f8e8ff");
+    g.addColorStop(1, "#7a18c8");
+    ctx.strokeStyle = g;
+    ctx.lineWidth = halfW * 2.1;
+    ctx.shadowBlur = 36;
+    ctx.shadowColor = "#7020e0";
+    ctx.beginPath();
+    ctx.moveTo(-len * 0.95, 0);
+    ctx.lineTo(len * 0.95, 0);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 252, 255, 0.9)";
+    ctx.lineWidth = Math.max(3.2, halfW * 0.34);
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = "#e8c8ff";
+    ctx.beginPath();
+    ctx.moveTo(-len * 0.9, 0);
+    ctx.lineTo(len * 0.9, 0);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    return true;
+  }
+  if (bullet.weaponBuffEnhanced && !bullet.voidwalkerRiftBlade) {
+    const ang0 = Math.atan2(bullet.vy, bullet.vx);
+    const s0 = (bullet.size || 4) * 1.05;
+    ctx.save();
+    ctx.translate(bullet.x, bullet.y);
+    ctx.rotate(ang0);
+    ctx.globalAlpha = bullet.life < 0.25 ? clamp(bullet.life / 0.25, 0, 1) : 1;
+    ctx.strokeStyle = "rgba(255, 230, 140, 0.9)";
+    ctx.lineWidth = 2.8;
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = "#ffe566";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s0 * 2.6, s0 * 1.65, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(255, 180, 80, 0.45)";
+    ctx.lineWidth = 1.5;
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s0 * 3.2, s0 * 2.05, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
   const shape = bullet.visualShape;
   const inferredShape =
     shape ||
@@ -1255,6 +484,26 @@ const drawFriendlyProjectileSilhouette = (ctx, bullet) => {
     ctx.quadraticCurveTo(-s * 0.4, 0, -s * 2.2, s * 0.2);
     ctx.quadraticCurveTo(0, s * 1.8, s * 2.2, 0);
     ctx.fill();
+  } else if (inferredShape === "ravenDetailed") {
+    const flap = Math.sin(performance.now() * 0.02 + bullet.x * 0.03) * 0.5;
+    const wing = s * (2.7 + flap * 0.28);
+    const body = s * 0.9;
+    ctx.fillStyle = bullet.color || "#9a5cff";
+    ctx.beginPath();
+    ctx.moveTo(s * 2.55, 0);
+    ctx.quadraticCurveTo(s * 1.25, -s * 0.8, 0, -body);
+    ctx.quadraticCurveTo(-s * 0.65, -wing, -s * 2.6, -s * 0.18);
+    ctx.quadraticCurveTo(-s * 0.95, -s * 0.12, -s * 0.2, 0);
+    ctx.quadraticCurveTo(-s * 0.95, s * 0.12, -s * 2.6, s * 0.18);
+    ctx.quadraticCurveTo(-s * 0.65, wing, 0, body);
+    ctx.quadraticCurveTo(s * 1.25, s * 0.8, s * 2.55, 0);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(245, 220, 255, 0.9)";
+    ctx.lineWidth = Math.max(1, s * 0.2);
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.7, 0);
+    ctx.lineTo(s * 1.9, 0);
+    ctx.stroke();
   } else if (inferredShape === "clawHook") {
     ctx.lineCap = "round";
     ctx.beginPath();
@@ -1270,6 +519,30 @@ const drawFriendlyProjectileSilhouette = (ctx, bullet) => {
     ctx.lineTo(-s * 2.5, s * 0.9);
     ctx.quadraticCurveTo(s * 0.4, s * 2.7, s * 3.4, 0);
     ctx.fill();
+  } else if (inferredShape === "voidArcBlade") {
+    ctx.lineCap = "round";
+    const R = s * 5.15;
+    const cx = -R * 0.56;
+    const radius = R * 1.52;
+    ctx.lineWidth = Math.max(8.5, s * 1.12);
+    const g = ctx.createLinearGradient(cx - radius * 0.45, 0, cx + radius * 1.05, 0);
+    g.addColorStop(0, "rgba(32, 0, 62, 0.96)");
+    g.addColorStop(0.35, "#6020a8");
+    g.addColorStop(0.58, "#a050f0");
+    g.addColorStop(0.82, "#f0dcff");
+    g.addColorStop(1, "#8838e0");
+    ctx.strokeStyle = g;
+    ctx.shadowBlur = Math.min(40, 16 + s * 1.9);
+    ctx.shadowColor = "#8040ff";
+    ctx.beginPath();
+    ctx.arc(cx, 0, radius, -0.78, 0.78, false);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(240, 220, 255, 0.72)";
+    ctx.lineWidth = Math.max(2.4, s * 0.28);
+    ctx.beginPath();
+    ctx.arc(cx, 0, radius * 0.9, -0.64, 0.64, false);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   } else if (inferredShape === "crescent") {
     ctx.beginPath();
     ctx.arc(0, 0, s * 2.35, -1.05, 1.05);
@@ -1378,16 +651,28 @@ const drawFriendlyProjectileSilhouette = (ctx, bullet) => {
     ctx.arc(-R * 0.25, -R * 0.28, R * 0.22, 0, Math.PI * 2);
     ctx.fill();
   } else if (inferredShape === "singularity") {
-    ctx.strokeStyle = "rgba(180,100,255,0.95)";
+    const eclipseShot = bullet.eclipseBrightRim;
+    ctx.strokeStyle = eclipseShot ? "rgba(255,120,255,0.98)" : "rgba(180,100,255,0.95)";
+    ctx.lineWidth = eclipseShot ? 2.2 : 1.2;
+    ctx.shadowBlur = eclipseShot ? 22 : 10;
+    ctx.shadowColor = eclipseShot ? "#ff66ff" : "#c080ff";
     for (let r = 0; r < 3; r++) {
       ctx.beginPath();
       ctx.ellipse(0, 0, s * (1.2 + r * 0.45), s * (0.55 + r * 0.22), r * 0.8, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.fillStyle = "#05000a";
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = eclipseShot ? "#2a0a48" : "#05000a";
     ctx.beginPath();
     ctx.arc(0, 0, s * 0.92, 0, Math.PI * 2);
     ctx.fill();
+    if (eclipseShot) {
+      ctx.strokeStyle = "rgba(255, 200, 255, 0.88)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 1.05, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   } else if (inferredShape === "coin") {
     ctx.beginPath();
     ctx.ellipse(0, 0, s * 1.45, s * 0.95, 0, 0, Math.PI * 2);
@@ -1403,7 +688,7 @@ const drawFriendlyProjectileSilhouette = (ctx, bullet) => {
     ctx.closePath();
     ctx.fill();
   } else if (inferredShape === "ghostBolt") {
-    ctx.globalAlpha *= 0.62;
+    if (!bullet.phantomPhaseBolt) ctx.globalAlpha *= 0.62;
     ctx.beginPath();
     ctx.ellipse(0, 0, s * 1.8, s * 0.82, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -1512,6 +797,28 @@ function drawEnemyDizzyStars(ctx, enemy) {
     ctx.fill();
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+function drawEnemyInfernoBurn(ctx, enemy) {
+  if (!(enemy.infernoBurnTimer > 0)) return;
+  const pulse = 0.38 + 0.22 * Math.sin(performance.now() / 85 + (enemy.phase || 0));
+  ctx.save();
+  ctx.globalAlpha = pulse;
+  ctx.strokeStyle = "#ff5500";
+  ctx.lineWidth = 2.4;
+  ctx.shadowBlur = 12;
+  ctx.shadowColor = "#ff2200";
+  const r = enemy.size + 7 + Math.sin(performance.now() / 65 + enemy.x * 0.02) * 2;
+  ctx.beginPath();
+  ctx.arc(enemy.x, enemy.y, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255, 200, 80, 0.65)";
+  ctx.lineWidth = 1.2;
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.arc(enemy.x, enemy.y, r * 0.72, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -1863,26 +1170,41 @@ class ReaperChain {
 }
 
 class SolarFlareEmitter {
-  constructor(x, y) {
+  constructor(x, y, opts = {}) {
     this.x = x;
     this.y = y;
-    this.life = 3;
-    this.maxLife = 3;
+    this.life = opts.life ?? 3;
+    this.maxLife = this.life;
     this.angle = 0;
     this.emitTimer = 0;
+    this.emitInterval = opts.emitInterval ?? 0.025;
+    this.perTickFlames = opts.perTickFlames ?? 5;
+    this.flameSpeedMin = opts.flameSpeedMin ?? 180;
+    this.flameSpeedMax = opts.flameSpeedMax ?? 430;
+    this.flameLifeMin = opts.flameLifeMin ?? 0.45;
+    this.flameLifeMax = opts.flameLifeMax ?? 0.95;
   }
   update(dt) {
     this.life -= dt;
     this.angle += dt * Math.PI * 2.2;
     this.emitTimer -= dt;
     while (this.emitTimer <= 0) {
-      this.emitTimer += 0.025;
-      for (let i = 0; i < 5; i++) {
+      this.emitTimer += this.emitInterval;
+      for (let i = 0; i < this.perTickFlames; i++) {
         const a = this.angle + rng(-0.36, 0.36) + i * 0.08;
-        const flame = new Bullet(this.x, this.y, a, rng(180, 430) * state.player.shotSpeedMultiplier, true, rng(3.5, 6.5), Math.random() < 0.5 ? "#ff4a1f" : "#ffbd45", 3.8 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+        const flame = new Bullet(
+          this.x,
+          this.y,
+          a,
+          rng(this.flameSpeedMin, this.flameSpeedMax) * state.player.shotSpeedMultiplier,
+          true,
+          rng(3.5, 6.5),
+          Math.random() < 0.5 ? "#ff4a1f" : "#ffbd45",
+          3.8 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
+        );
         flame.visualShape = "spark";
         flame.heliosFlame = true;
-        flame.life = rng(0.45, 0.95);
+        flame.life = rng(this.flameLifeMin, this.flameLifeMax);
         state.bullets.push(flame);
       }
     }
@@ -1903,11 +1225,12 @@ class SolarFlareEmitter {
 }
 
 class FireColumn {
-  constructor(x, width = 16, duration = 1.2) {
+  constructor(x, width = 16, duration = 1.2, sparksPerFrame = 8) {
     this.x = x;
     this.width = width;
     this.life = duration;
     this.maxLife = duration;
+    this.sparksPerFrame = sparksPerFrame;
   }
   update(dt) {
     this.life -= dt;
@@ -1920,7 +1243,7 @@ class FireColumn {
         if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
       }
     }
-    for (let p = 0; p < 8; p++) {
+    for (let p = 0; p < this.sparksPerFrame; p++) {
       const spark = new Particle(this.x + rng(-this.width, this.width), rng(TOP_HUD_SAFE_Y, config.height), Math.random() < 0.5 ? "#ff4a1f" : "#ffbd45");
       spark.life = 0.22;
       spark.size = rng(2, 5);
@@ -2060,7 +1383,7 @@ class Bullet {
     this.vx = Math.cos(angle) * speed;
     this.vy = Math.sin(angle) * speed;
     this.friendly = friendly;
-    this.size = size;
+    this.size = scaleByViewport(size);
     this.life = owner === "boss" ? 6 : 6
     this.damage = damage ?? (friendly ? 9 : 6 * (state.enemyDamageMultiplier || 1));
     this.color = color || (friendly ? "#74ffce" : "#ff7676");
@@ -2077,6 +1400,7 @@ class Bullet {
     this.age = 0;
     this.baseSpeed = speed;
     this.hitCount = 0;
+    this.spawnEnemy = null;
   }
   update(dt) {
     if (!this.friendly && state.player && (state.player.boltChannelLock || 0) > 0 && state.boltCage) {
@@ -2095,6 +1419,12 @@ class Bullet {
       this.life -= dt;
     }
     this.age += dt;
+    if (!this.friendly && state.oracleChronos && state.oracleChronos.life > 0 && this.spawnEnemy && this.spawnEnemy.hp > 0) {
+      const sp = Math.max(160, Math.hypot(this.vx, this.vy) || 240);
+      const a = Math.atan2(this.spawnEnemy.y - this.y, this.spawnEnemy.x - this.x);
+      this.vx = Math.cos(a) * sp;
+      this.vy = Math.sin(a) * sp;
+    }
     if (this.friendly && this.seraphRailEmitter && !this.seraphNeedle && this.life > 0) {
       this.emitAcc = (this.emitAcc || 0) + dt;
       const interval = 0.036;
@@ -2193,6 +1523,17 @@ class Bullet {
       this.vy = Math.sin(next) * sp;
     }
 
+    if (this.voidwalkerRiftBlade) {
+      const sp = Math.hypot(this.vx, this.vy) || 1;
+      this._riftTraveled = (this._riftTraveled || 0) + sp * dt;
+      const grow = 1 + this._riftTraveled * 0.0041;
+      this.size = (this._riftBaseSize || 5.2) * grow;
+      if (this.hitEllipseW != null && this.hitEllipseH != null) {
+        this.hitEllipseW = (this._riftBaseEW || 108) * (0.9 + (grow - 1) * 0.55);
+        this.hitEllipseH = (this._riftBaseEH || 16) * grow;
+      }
+    }
+
     if (this.grimstarTrail) {
       this.trailTimer = (this.trailTimer || 0) - dt;
       if (this.trailTimer <= 0) {
@@ -2253,6 +1594,17 @@ class Bullet {
         this.dartHomingPending = false;
         this.tracking = true;
         this.trackingTarget = getNearestEnemy(this.x, this.y);
+      }
+    }
+    if (this.oracleGuidancePending) {
+      this.oracleGuidanceArmDelay -= dt;
+      if (this.oracleGuidanceArmDelay <= 0) {
+        this.oracleGuidancePending = false;
+        const t = getNearestEnemy(this.x, this.y);
+        if (t) {
+          this.tracking = true;
+          this.trackingTarget = t;
+        }
       }
     }
     if (this.tracking) {
@@ -2372,7 +1724,7 @@ class Bullet {
     if (this.friendly && this.infernoGlob && Math.random() < 0.45) {
       state.particles.push(new Particle(this.x + rng(-4, 4), this.y + rng(-4, 4), "#ff6b2a"));
     }
-    if (this.heliosFlame && Math.random() < 0.72) {
+    if (this.heliosFlame && Math.random() < 0.26) {
       const p = new Particle(this.x + rng(-3, 3), this.y + rng(-3, 3), Math.random() < 0.5 ? "#ff5a2a" : "#ffb347");
       p.life = 0.18;
       p.size = rng(1.5, 3.4);
@@ -2477,6 +1829,29 @@ class Bullet {
   }
   draw(ctx) {
     ctx.save();
+    if (this.friendly && this.specterPhantasmOrb) {
+      const pulse = 0.88 + Math.sin(this.age * 14) * 0.12;
+      const s = this.size * pulse;
+      const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, s * 2.8);
+      g.addColorStop(0, "rgba(255, 255, 255, 0.98)");
+      g.addColorStop(0.28, "rgba(230, 228, 255, 0.82)");
+      g.addColorStop(0.55, "rgba(180, 170, 255, 0.55)");
+      g.addColorStop(1, "rgba(120, 100, 200, 0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, s * 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 252, 255, 0.92)";
+      ctx.lineWidth = 2.4;
+      ctx.shadowBlur = 22;
+      ctx.shadowColor = "#d8d0ff";
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, s * 1.05, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+      return;
+    }
     if (this.friendly && this.boltIonOrb) {
       const pulse = 0.82 + Math.sin(this.age * 11) * 0.18;
       const s = this.size * pulse;
@@ -2720,7 +2095,7 @@ class PowerUp {
     this.x = x;
     this.y = y;
     this.kind = kind;
-    this.size = 12;
+    this.size = scaleByViewport(12);
     this.life = 10;
     this.vy = 20 + Math.random() * 20;
     this.vx = Math.random() * 30 - 15;
@@ -2756,12 +2131,12 @@ class Drone {
     this.x = x;
     this.y = y;
     this.angle = 0;
-    this.orbitRadius = 60;
+    this.orbitRadius = scaleByViewport(60);
     this.orbitSpeed = 2;
     this.fireTimer = 0;
     this.life = 5; 
     this.maxLife = 5;
-    this.size = 8;
+    this.size = scaleByViewport(8);
     this.waveSpawned = state.wave; 
   }
   update(dt, player) {
@@ -2930,6 +2305,184 @@ class Barrier {
   }
 }
 
+class EclipseUmbralWall {
+  constructor(x, y, angle, length) {
+    this.x = x;
+    this.y = y;
+    this.angle = angle;
+    this.length = length;
+    this.width = 36;
+    this.life = 7;
+    this.maxLife = 7;
+    this.shootAcc = 0;
+  }
+  distToLine(px, py) {
+    const x1 = this.x + Math.cos(this.angle) * this.length / 2;
+    const y1 = this.y + Math.sin(this.angle) * this.length / 2;
+    const x2 = this.x - Math.cos(this.angle) * this.length / 2;
+    const y2 = this.y - Math.sin(this.angle) * this.length / 2;
+    const A = px - x1;
+    const B = py - y1;
+    const C = x2 - x1;
+    const D = y2 - y1;
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = -1;
+    if (lenSq !== 0) param = dot / lenSq;
+    let xx, yy;
+    if (param < 0) {
+      xx = x1;
+      yy = y1;
+    } else if (param > 1) {
+      xx = x2;
+      yy = y2;
+    } else {
+      xx = x1 + param * C;
+      yy = y1 + param * D;
+    }
+    return dist(px, py, xx, yy);
+  }
+  update(dt) {
+    this.life -= dt;
+    this.shootAcc += dt;
+    const pl = state.player;
+    const dm = pl ? pl.damageMultiplier * (pl.abilityDamageMultiplier || 1) : 1;
+    const sm = pl ? pl.shotSpeedMultiplier : 1;
+    while (this.shootAcc >= 0.072) {
+      this.shootAcc -= 0.072;
+      let anyEnemy = false;
+      for (const en of state.enemies) {
+        if (en && en.hp > 0) {
+          anyEnemy = true;
+          break;
+        }
+      }
+      if (!anyEnemy) continue;
+      for (const tu of [-0.36, 0.36]) {
+        const hx = this.x + Math.cos(this.angle) * (this.length * 0.5 * tu);
+        const hy = this.y + Math.sin(this.angle) * (this.length * 0.5 * tu);
+        const nx = Math.cos(this.angle + Math.PI / 2);
+        const ny = Math.sin(this.angle + Math.PI / 2);
+        let best = null;
+        let bd = 1e9;
+        for (const en of state.enemies) {
+          if (!en || en.hp <= 0) continue;
+          const d = dist(en.x, en.y, hx, hy);
+          if (d < bd) {
+            bd = d;
+            best = en;
+          }
+        }
+        if (!best) continue;
+        const ang = Math.atan2(best.y - hy, best.x - hx);
+        const orb = new Bullet(hx + nx * 14, hy + ny * 14, ang, 515 * sm, true, 5.4, "#d8a8ff", 3.1 * dm);
+        orb.life = 1.2;
+        orb.eclipseTurretOrb = true;
+        state.bullets.push(orb);
+      }
+    }
+    for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
+      const bullet = state.enemyBullets[i];
+      if (this.distToLine(bullet.x, bullet.y) < this.width / 2 + bullet.size) {
+        state.enemyBullets.splice(i, 1);
+        for (let j = 0; j < 7; j++) {
+          state.particles.push(new Particle(bullet.x, bullet.y, j % 2 ? "#c4a0ff" : "#8a62cc"));
+        }
+      }
+    }
+  }
+  draw(ctx) {
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    const x1 = this.x + Math.cos(this.angle) * this.length / 2;
+    const y1 = this.y + Math.sin(this.angle) * this.length / 2;
+    const x2 = this.x - Math.cos(this.angle) * this.length / 2;
+    const y2 = this.y - Math.sin(this.angle) * this.length / 2;
+    ctx.save();
+    ctx.globalAlpha = 0.92 * alpha;
+    const g = ctx.createLinearGradient(x1, y1, x2, y2);
+    g.addColorStop(0, "rgba(60, 20, 90, 0.45)");
+    g.addColorStop(0.15, "rgba(120, 70, 180, 0.72)");
+    g.addColorStop(0.5, "rgba(180, 130, 255, 0.88)");
+    g.addColorStop(0.85, "rgba(100, 50, 160, 0.7)");
+    g.addColorStop(1, "rgba(50, 15, 85, 0.48)");
+    ctx.strokeStyle = "rgba(220, 190, 255, 0.95)";
+    ctx.lineWidth = this.width + 18;
+    ctx.lineCap = "butt";
+    ctx.shadowBlur = 28;
+    ctx.shadowColor = "#a070ff";
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.strokeStyle = "rgba(140, 80, 200, 0.55)";
+    ctx.lineWidth = this.width;
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.fillStyle = g;
+    ctx.lineWidth = 0;
+    const perp = this.angle + Math.PI / 2;
+    const px = Math.cos(perp) * (this.width * 0.5);
+    const py = Math.sin(perp) * (this.width * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(x1 + px, y1 + py);
+    ctx.lineTo(x2 + px, y2 + py);
+    ctx.lineTo(x2 - px, y2 - py);
+    ctx.lineTo(x1 - px, y1 - py);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 0.85 * alpha;
+    ctx.strokeStyle = "rgba(240, 220, 255, 0.9)";
+    ctx.lineWidth = 2.2;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(x1 + px * 0.92, y1 + py * 0.92);
+    ctx.lineTo(x2 + px * 0.92, y2 + py * 0.92);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x1 - px * 0.92, y1 - py * 0.92);
+    ctx.lineTo(x2 - px * 0.92, y2 - py * 0.92);
+    ctx.stroke();
+    const segments = Math.max(4, Math.floor(this.length / 44));
+    for (let s = 1; s < segments; s++) {
+      const t = s / segments - 0.5;
+      const sx = this.x + Math.cos(this.angle) * (this.length * t);
+      const sy = this.y + Math.sin(this.angle) * (this.length * t);
+      ctx.strokeStyle = `rgba(200, 170, 255, ${0.35 * alpha})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(sx - px * 0.35, sy - py * 0.35);
+      ctx.lineTo(sx + px * 0.35, sy + py * 0.35);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255, 250, 255, ${0.2 * alpha})`;
+      ctx.beginPath();
+      ctx.arc(sx + px * 0.55, sy + py * 0.55, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const tu of [-0.36, 0.36]) {
+      const tx = this.x + Math.cos(this.angle) * (this.length * 0.5 * tu);
+      const ty = this.y + Math.sin(this.angle) * (this.length * 0.5 * tu);
+      ctx.fillStyle = `rgba(40, 10, 70, ${0.75 * alpha})`;
+      ctx.strokeStyle = `rgba(230, 200, 255, ${0.9 * alpha})`;
+      ctx.lineWidth = 2;
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = "#c8a0ff";
+      ctx.beginPath();
+      ctx.arc(tx, ty, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = `rgba(200, 160, 255, ${0.5 * alpha})`;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
 class ScreenLaser {
   constructor(config = {}) {
     this.orientation = config.orientation || "vertical";
@@ -2977,6 +2530,93 @@ class ScreenLaser {
     ctx.restore();
   }
 }
+
+class BossHazardLaser {
+  constructor(config = {}) {
+    this.x = config.x ?? 0;
+    this.y = config.y ?? 0;
+    this.angle = config.angle ?? 0;
+    this.length = config.length ?? 720;
+    this.width = config.width ?? 22;
+    this.windup = Math.max(0, config.windup ?? 2);
+    this.armDuration = config.armDuration ?? 1.35;
+    this.damagePerSecond = config.damagePerSecond ?? 90;
+    this.windupElapsed = 0;
+    this.armed = this.windup <= 0;
+    this.armElapsed = 0;
+    this.dead = false;
+  }
+  pointInBeam(px, py, pr) {
+    const dx = px - this.x;
+    const dy = py - this.y;
+    const c = Math.cos(-this.angle);
+    const s = Math.sin(-this.angle);
+    const lx = dx * c - dy * s;
+    const ly = dx * s + dy * c;
+    const halfL = this.length * 0.5;
+    const halfW = this.width * 0.5 + pr;
+    return lx >= -halfL && lx <= halfL && Math.abs(ly) <= halfW;
+  }
+  update(dt) {
+    if (!this.armed) {
+      this.windupElapsed += dt;
+      if (this.windupElapsed >= this.windup) {
+        this.armed = true;
+        this.armElapsed = 0;
+        for (let i = 0; i < 14; i++) {
+          const t = i / 14;
+          const lx = (t - 0.5) * this.length;
+          const px = this.x + Math.cos(this.angle) * lx;
+          const py = this.y + Math.sin(this.angle) * lx;
+          state.particles.push(new Particle(px + rng(-5, 5), py + rng(-5, 5), "#ff7eb0"));
+        }
+      }
+      return;
+    }
+    this.armElapsed += dt;
+    const p = state.player;
+    if (p && !p.invincible && this.pointInBeam(p.x, p.y, p.getHullHitRadius())) {
+      absorbDamage(this.damagePerSecond * dt);
+    }
+    if (this.armElapsed >= this.armDuration) this.dead = true;
+  }
+  draw(ctx) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    const dim = !this.armed;
+    const windProg = this.windup > 0 ? Math.min(1, this.windupElapsed / this.windup) : 1;
+    let alpha;
+    if (dim) {
+      alpha = 0.07 + 0.2 * windProg;
+    } else {
+      const fadeOut = this.armDuration > 0 ? Math.min(1, (this.armDuration - this.armElapsed) / 0.35) : 1;
+      alpha = Math.min(0.96, 0.88 * fadeOut + 0.08);
+    }
+    ctx.globalAlpha = alpha;
+    const w = this.length;
+    const h = this.width;
+    const g = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+    if (dim) {
+      g.addColorStop(0, "rgba(255, 90, 130, 0.12)");
+      g.addColorStop(0.5, "rgba(255, 140, 180, 0.2)");
+      g.addColorStop(1, "rgba(255, 90, 130, 0.12)");
+    } else {
+      g.addColorStop(0, "rgba(255, 40, 90, 0.88)");
+      g.addColorStop(0.5, "rgba(255, 220, 240, 0.98)");
+      g.addColorStop(1, "rgba(255, 40, 90, 0.88)");
+    }
+    ctx.fillStyle = g;
+    ctx.shadowBlur = dim ? 10 : 32;
+    ctx.shadowColor = dim ? "rgba(255,100,150,0.35)" : "#ff3d6b";
+    ctx.beginPath();
+    if (typeof ctx.roundRect === "function") ctx.roundRect(-w / 2, -h / 2, w, h, 5);
+    else ctx.rect(-w / 2, -h / 2, w, h);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+window.BossHazardLaser = BossHazardLaser;
 
 class OrbitalAegisShield {
   constructor(index, total, duration = 4) {
@@ -3219,24 +2859,14 @@ class TimeDilationField {
     for (let i = 0; i < state.enemies.length; i++) {
       const enemy = state.enemies[i];
       const d = dist(this.x, this.y, enemy.x, enemy.y);
-      
+
       if (d < this.radius) {
-        
-        if (!enemy.originalSpeed) {
-          enemy.originalSpeed = enemy.speed;
-        }
-        
-        enemy.speed = enemy.originalSpeed * 0.3;
-        
+        enemy.timeDilationSlowFactor = 0.3;
         if (Math.random() < 0.05) {
           state.particles.push(new Particle(enemy.x, enemy.y, "#90ff90"));
         }
-      } else {
-        
-        if (enemy.originalSpeed) {
-          enemy.speed = enemy.originalSpeed;
-          enemy.originalSpeed = null;
-        }
+      } else if (enemy.timeDilationSlowFactor != null) {
+        enemy.timeDilationSlowFactor = 1;
       }
     }
   }
@@ -3292,3125 +2922,7 @@ class TimeDilationField {
   }
 }
 
-class Enemy {
-  constructor(kind, x, y, wave, bossType = null) {
-    this.kind = kind;
-    this.bossType = bossType; 
-    this.x = x;
-    this.y = y;
-    
-    
-    if (kind === "boss") {
-      const baseHp = { titan: 1200, sniper: 800, swarmlord: 900, vortex: 850 }[bossType] || 800;
-      this.hp = baseHp + wave * 100;
-    } else {
-      const hpMap = { swarm: 25, shooter: 15, charger: 18, defender: 250, dart: 15, orbiter: 30, splitter: 22 };
-      
-      this.hp = (hpMap[kind] || 20) + Math.floor(wave * 0.8) + Math.floor(wave * wave * 0.08);
-    }
-    this.maxHp = this.hp;
-    
-    
-    const speedMap = {
-      swarm: 80, shooter: 55, charger: 120, defender: 35, dart: 180, orbiter: 65, splitter: 70,
-      boss: 55
-    };
-    this.speed = speedMap[kind] || 70;
-    
-    
-    if (kind === "boss") {
-      this.size = { titan: 60, sniper: 35, swarmlord: 45, vortex: 40 }[bossType] || 40;
-    } else {
-      const sizeMap = { swarm: 18, shooter: 20, charger: 16, defender: 24, dart: 14, orbiter: 19, splitter: 18 };
-      this.size = sizeMap[kind] || 18;
-    }
-    
-    this.fireTimer = kind === "boss" ? 0.6 : rng(1.1, 2.4);
-    this.wave = wave;
-    this.phase = Math.random() * Math.PI * 2;
-    this.vx = 0; 
-    this.vy = 0;
-    this.smoothVx = 0; 
-    this.smoothVy = 0;
-    
-    
-    if (kind === "boss") {
-      this.bossPattern = null;
-      this.patternTimer = 0;
-      this.spiralAngle = 0;
-      this.radialCooldown = 0;
-      this.minionSpawnTimer = bossType === "swarmlord" ? 1 : 0;
-      this.orbitRadius = 0;
-      this.orbitAngle = 0;
-      
-      this.chargeTimer = 0; 
-      this.rapidFireCount = 0; 
-      this.tripleShotCount = 0; 
-      this.reboundBullets = []; 
-    }
-    
-    
-    if (kind === "orbiter") {
-      this.orbitRadius = rng(80, 150);
-      this.orbitAngle = Math.random() * Math.PI * 2;
-      this.orbitSpeed = rng(1.5, 2.5);
-    }
-    if (this.kind === "splitter") {
-      this.hasSplit = false;
-    }
-    this.stunTimer = 0;
-    clampEnemyBelowHud(this);
-  }
-  update(dt, player, bulletsOut) {
-    
-    if (this.deathMarked && this.deathMarkTimer) {
-      this.deathMarkTimer -= dt;
-      if (this.deathMarkTimer <= 0) {
-        this.deathMarked = false;
-        this.deathMarkTimer = 0;
-      }
-    }
-    if ((this.stunTimer || 0) > 0) {
-      this.stunTimer = Math.max(0, this.stunTimer - dt);
-      clampEnemyBelowHud(this);
-      return;
-    }
-    const targetActor = getEnemyTargetFor(this, player);
-    const angle = Math.atan2(targetActor.y - this.y, targetActor.x - this.x);
-    const movementDt = this.reaperChainSlowTimer && this.reaperChainSlowTimer > 0 ? dt * 0.5 : dt;
-    if (this.reaperChainSlowTimer) this.reaperChainSlowTimer = Math.max(0, this.reaperChainSlowTimer - dt);
-    if (this.kind === "swarm") {
-      this.vx = Math.cos(angle) * this.speed;
-      this.vy = Math.sin(angle) * this.speed;
-      
-      const smoothing = 0.15; 
-      this.smoothVx += (this.vx - this.smoothVx) * smoothing;
-      this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * movementDt;
-      this.y += this.vy * movementDt;
-    } else if (this.kind === "charger") {
-      this.speed = 120 + Math.sin(performance.now() / 300) * 60;
-      this.vx = Math.cos(angle) * this.speed;
-      this.vy = Math.sin(angle) * this.speed;
-      
-      const smoothing = 0.15;
-      this.smoothVx += (this.vx - this.smoothVx) * smoothing;
-      this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * movementDt;
-      this.y += this.vy * movementDt;
-    } else if (this.kind === "shooter") {
-      
-      const minY = config.height - 200;
-      if (this.y < minY) {
-        this.vx = 0;
-        this.vy = 80;
-        this.smoothVx += (this.vx - this.smoothVx) * 0.15;
-        this.smoothVy += (this.vy - this.smoothVy) * 0.15;
-        this.y += this.vy * movementDt;
-        this.y = Math.min(this.y, minY);
-      } else {
-        const targetY = minY + Math.sin(performance.now() / 700 + this.phase) * 50;
-        this.vx = Math.cos(performance.now() / 600 + this.phase) * this.speed * 0.4;
-        this.vy = (targetY - this.y) * 2.5;
-        this.smoothVx += (this.vx - this.smoothVx) * 0.15;
-        this.smoothVy += (this.vy - this.smoothVy) * 0.15;
-        this.x += this.vx * movementDt;
-        this.y += this.vy * movementDt;
-      }
-    } else if (this.kind === "defender") {
-      
-      this.vx = Math.cos(angle) * this.speed * 0.6;
-      this.vy = Math.sin(angle) * this.speed * 0.6;
-      
-      const smoothing = 0.15;
-      this.smoothVx += (this.vx - this.smoothVx) * smoothing;
-      this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * movementDt;
-      this.y += this.vy * movementDt;
-    } else if (this.kind === "dart") {
-      
-      const burstSpeed = this.speed * (1.5 + Math.sin(performance.now() / 200) * 0.5);
-      this.vx = Math.cos(angle) * burstSpeed;
-      this.vy = Math.sin(angle) * burstSpeed;
-      
-      const smoothing = 0.2; 
-      this.smoothVx += (this.vx - this.smoothVx) * smoothing;
-      this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * movementDt;
-      this.y += this.vy * movementDt;
-    } else if (this.kind === "orbiter") {
-      
-      this.orbitAngle += this.orbitSpeed * dt;
-      const targetX = player.x + Math.cos(this.orbitAngle) * this.orbitRadius;
-      const targetY = player.y + Math.sin(this.orbitAngle) * this.orbitRadius;
-      this.vx = (targetX - this.x) * 3;
-      this.vy = (targetY - this.y) * 3;
-      
-      const smoothing = 0.2;
-      this.smoothVx += (this.vx - this.smoothVx) * smoothing;
-      this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * movementDt;
-      this.y += this.vy * movementDt;
-    } else if (this.kind === "splitter") {
-      
-      this.vx = Math.cos(angle) * this.speed;
-      this.vy = Math.sin(angle) * this.speed;
-      
-      const smoothing = 0.15;
-      this.smoothVx += (this.vx - this.smoothVx) * smoothing;
-      this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * movementDt;
-      this.y += this.vy * movementDt;
-    } else if (this.kind === "boss") {
-      
-      if (this.bossType === "titan") {
-        
-        this.vx = Math.cos(performance.now() / 1200) * this.speed * 0.7;
-        this.vy = Math.sin(performance.now() / 1000) * this.speed * 0.7;
-        this.x += this.vx * dt;
-        this.y += this.vy * dt;
-      } else if (this.bossType === "sniper") {
-        
-        this.vx = Math.cos(performance.now() / 1500) * this.speed * 0.5;
-        this.vy = Math.sin(performance.now() / 1100) * this.speed * 0.4;
-        this.x += this.vx * dt;
-      this.y = clamp(this.y + this.vy * dt, TOP_HUD_SAFE_Y + this.size, 180);
-      } else if (this.bossType === "swarmlord") {
-        
-        this.vx = Math.cos(performance.now() / 800) * this.speed;
-        this.vy = Math.sin(performance.now() / 600) * this.speed;
-        this.x += this.vx * dt;
-        this.y += this.vy * dt;
-      } else if (this.bossType === "vortex") {
-        
-        this.orbitAngle += dt * 2;
-        const centerX = config.width / 2;
-        const centerY = 150;
-        const newX = centerX + Math.cos(this.orbitAngle) * 100;
-        const newY = centerY + Math.sin(this.orbitAngle) * 60;
-        this.vx = (newX - this.x) / dt;
-        this.vy = (newY - this.y) / dt;
-        this.x = newX;
-        this.y = newY;
-      } else {
-        
-        this.vx = Math.cos(performance.now() / 900) * this.speed;
-        this.vy = Math.sin(performance.now() / 700) * this.speed;
-        this.x += this.vx * dt;
-        this.y += this.vy * dt;
-      }
-      this.updateBossPattern(dt, player, bulletsOut);
-      this.x = clamp(this.x, 80, config.width - 80);
-      this.y = clamp(this.y, TOP_HUD_SAFE_Y + this.size, config.height - 200);
-      return;
-    } else {
-      this.vx = Math.cos(performance.now() / 500 + this.x) * this.speed * 0.2;
-      this.vy = 40 + this.wave * 3;
-      
-      const smoothing = 0.15;
-      this.smoothVx += (this.vx - this.smoothVx) * smoothing;
-      this.smoothVy += (this.vy - this.smoothVy) * smoothing;
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
-    }
-
-    this.x = clamp(this.x, 30, config.width - 30);
-    const bottomClamp = this.kind === "shooter" ? config.height - 140 : config.height - 80;
-    this.y = clamp(this.y, TOP_HUD_SAFE_Y + this.size, bottomClamp);
-
-    this.fireTimer -= dt;
-    if (this.fireTimer <= 0) {
-      if (this.kind === "boss") {
-        
-        this.fireTimer = 1.0;
-      } else if (this.kind === "shooter") {
-        this.fireTimer = rng(0.8, 1.2);
-        this.shootAngle = angle; 
-        bulletsOut.push(
-          new Bullet(this.x, this.y, angle, 180, false, 5, undefined, undefined, "shooter")
-        );
-      } else if (this.kind === "defender") {
-        this.fireTimer = rng(1.5, 2.5);
-        this.shootAngle = angle; 
-        
-        bulletsOut.push(
-          new Bullet(this.x, this.y, angle, 90, false, 6, undefined, 12, "enemy")
-        );
-      } else if (this.kind === "dart") {
-        this.fireTimer = rng(0.4, 0.8);
-        this.shootAngle = angle; 
-        
-        bulletsOut.push(
-          new Bullet(this.x, this.y, angle, 200, false, 3, undefined, 5, "enemy")
-        );
-      } else if (this.kind === "orbiter") {
-        this.fireTimer = rng(1.2, 1.8);
-        this.shootAngle = angle; 
-        
-        bulletsOut.push(
-          new Bullet(this.x, this.y, angle, 140, false, 4, undefined, undefined, "enemy")
-        );
-      } else if (this.kind === "splitter") {
-        this.fireTimer = rng(1.0, 1.5);
-        this.shootAngle = angle; 
-        
-        for (let i = 0; i < 3; i++) {
-          const offset = (i - 1) * 0.15;
-          bulletsOut.push(
-            new Bullet(this.x, this.y, angle + offset, 120, false, 4, undefined, undefined, "enemy")
-          );
-        }
-      } else {
-        
-        this.fireTimer = rng(1.0, 1.6);
-        this.shootAngle = angle; 
-        bulletsOut.push(
-          new Bullet(this.x, this.y, angle, 130, false, 4, undefined, undefined, "enemy")
-        );
-      }
-    }
-  }
-  pickBossPattern() {
-    if (this.bossType === "titan") {
-      
-      const patterns = ["largeBullets", "chargedShot", "explosiveShells"];
-      this.bossPattern = patterns[Math.floor(Math.random() * patterns.length)];
-      this.patternTimer = this.bossPattern === "chargedShot" ? 5 : this.bossPattern === "explosiveShells" ? 4 : 4;
-    } else if (this.bossType === "sniper") {
-      
-      const patterns = ["precise", "tripleShot", "piercing"];
-      this.bossPattern = patterns[Math.floor(Math.random() * patterns.length)];
-      this.patternTimer = this.bossPattern === "tripleShot" ? 3.5 : this.bossPattern === "piercing" ? 4 : 3;
-    } else if (this.bossType === "swarmlord") {
-      
-      const patterns = ["summon", "supportFire", "massSummon"];
-      this.bossPattern = patterns[Math.floor(Math.random() * patterns.length)];
-      this.patternTimer = this.bossPattern === "massSummon" ? 5 : this.bossPattern === "supportFire" ? 4 : 3;
-    } else if (this.bossType === "vortex") {
-      
-      const patterns = ["rapidSpray", "rebounding", "concentratedStream"];
-      this.bossPattern = patterns[Math.floor(Math.random() * patterns.length)];
-      this.patternTimer = this.bossPattern === "rapidSpray" ? 3 : this.bossPattern === "rebounding" ? 4 : 3.5;
-    } else {
-      
-      const patterns = ["spread", "spiral", "burst"];
-      this.bossPattern = patterns[Math.floor(Math.random() * patterns.length)];
-      this.patternTimer = this.bossPattern === "spread" ? 3.5 : this.bossPattern === "spiral" ? 3.5 : 3;
-    }
-    this.fireTimer = 0;
-    this.radialCooldown = 0;
-    this.chargeTimer = 0;
-    this.rapidFireCount = 0;
-    this.tripleShotCount = 0;
-  }
-  updateBossPattern(dt, player, bulletsOut) {
-    if (!this.bossPattern || this.patternTimer <= 0) {
-      this.pickBossPattern();
-    }
-    this.patternTimer -= dt;
-    const bossActionRate = getDifficulty().bossActionRate || 1;
-    
-    if (this.bossType === "titan") {
-      
-      if (this.bossPattern === "largeBullets") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 1.2; 
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          
-          bulletsOut.push(new Bullet(this.x, this.y, aim, 140, false, 14, "#ff4444", 25, "boss"));
-          for (let i = 0; i < 2; i++) {
-            const offset = (i - 0.5) * 0.15;
-            const bullet = new Bullet(this.x, this.y, aim + offset, 140, false, 14, "#ff4444", 25, "boss");
-            bulletsOut.push(bullet);
-          }
-        }
-      } else if (this.bossPattern === "chargedShot") {
-        
-        this.chargeTimer += dt * bossActionRate;
-        if (this.chargeTimer >= 2.5) {
-          
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          const bullet = new Bullet(this.x, this.y, aim, 100, false, 20, "#ff0000", 35, "boss");
-          bulletsOut.push(bullet);
-          this.chargeTimer = 0;
-          this.fireTimer = 0.5; 
-        }
-      } else if (this.bossPattern === "explosiveShells") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 1.5;
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          
-          const directBullet = new Bullet(this.x, this.y, aim, 120, false, 12, "#ff8800", 20, "boss");
-          directBullet.explosive = true;
-          bulletsOut.push(directBullet);
-          const offsetBullet = new Bullet(this.x, this.y, aim + 0.2, 120, false, 12, "#ff8800", 20, "boss");
-          offsetBullet.explosive = true;
-          bulletsOut.push(offsetBullet);
-        }
-      }
-    } else if (this.bossType === "sniper") {
-      
-      if (this.bossPattern === "precise") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.08; 
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          
-          bulletsOut.push(new Bullet(this.x, this.y, aim, 320, false, 6, "#00ffff", 5, "boss"));
-          
-          for (let i = 0; i < 7; i++) {
-            const offset = (i < 3.5 ? (i - 3.5) * 0.25 : (i - 2.5) * 0.25);
-            bulletsOut.push(
-              new Bullet(this.x, this.y, aim + offset, 320, false, 6, "#00ffff", 5, "boss")
-            );
-          }
-        }
-      } else if (this.bossPattern === "tripleShot") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          if (this.tripleShotCount < 5) {
-            this.fireTimer = 0.05; 
-            this.tripleShotCount++;
-            const aim = Math.atan2(player.y - this.y, player.x - this.x);
-            this.shootAngle = aim; 
-            
-            bulletsOut.push(new Bullet(this.x, this.y, aim, 320, false, 6, "#00ffff", 5, "boss"));
-            
-            for (let i = 0; i < 5; i++) {
-              const offset = (i < 2.5 ? (i - 2.5) * 0.2 : (i - 1.5) * 0.2);
-              bulletsOut.push(
-                new Bullet(this.x, this.y, aim + offset, 320, false, 6, "#00ffff", 5, "boss")
-              );
-            }
-          } else {
-            this.fireTimer = 0.3; 
-            this.tripleShotCount = 0;
-          }
-        }
-      } else if (this.bossPattern === "piercing") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.15; 
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          
-          const directPiercing = new Bullet(this.x, this.y, aim, 300, false, 7, "#00ffff", 5, "boss");
-          directPiercing.piercing = true;
-          directPiercing.life = 8;
-          bulletsOut.push(directPiercing);
-          
-          for (let i = 0; i < 9; i++) {
-            const offset = (i < 4.5 ? (i - 4.5) * 0.2 : (i - 3.5) * 0.2);
-            const bullet = new Bullet(this.x, this.y, aim + offset, 300, false, 7, "#00ffff", 5, "boss");
-            bullet.piercing = true;
-            bullet.life = 8; 
-            bulletsOut.push(bullet);
-          }
-        }
-      }
-    } else if (this.bossType === "swarmlord") {
-      
-      if (this.bossPattern === "summon") {
-        
-        this.minionSpawnTimer -= dt * bossActionRate;
-        if (this.minionSpawnTimer <= 0) {
-          this.minionSpawnTimer = 1.2; 
-          
-          const count = 8 + Math.floor(Math.random() * 4); 
-          for (let i = 0; i < count; i++) {
-            const angle = (i / count) * Math.PI * 2;
-            const spawnX = this.x + Math.cos(angle) * 80;
-            const spawnY = this.y + Math.sin(angle) * 80;
-            if (spawnX > 40 && spawnX < config.width - 40 && spawnY > 40 && spawnY < config.height - 100) {
-              
-              for (let j = 0; j < 15; j++) {
-                const particleAngle = Math.random() * Math.PI * 2;
-                const particleDist = Math.random() * 30;
-                const p = new Particle(
-                  spawnX + Math.cos(particleAngle) * particleDist,
-                  spawnY + Math.sin(particleAngle) * particleDist,
-                  "#ff7dd1"
-                );
-                p.vx = Math.cos(particleAngle) * rng(50, 150);
-                p.vy = Math.sin(particleAngle) * rng(50, 150);
-                p.life = rng(0.3, 0.6);
-                state.particles.push(p);
-              }
-              
-              const enemyType = Math.random() < 0.4 ? "charger" : "swarm";
-              state.enemies.push(new Enemy(enemyType, spawnX, spawnY, this.wave));
-            }
-          }
-        }
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.6;
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          bulletsOut.push(
-            new Bullet(this.x, this.y, aim, 200, false, 4, "#ff7dd1", 3, "boss")
-          );
-        }
-      } else if (this.bossPattern === "supportFire") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.4;
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          
-          bulletsOut.push(new Bullet(this.x, this.y, aim, 180, false, 4, "#ff7dd1", 3, "boss"));
-          bulletsOut.push(new Bullet(this.x, this.y, aim - 0.12, 180, false, 4, "#ff7dd1", 3, "boss"));
-          bulletsOut.push(new Bullet(this.x, this.y, aim + 0.12, 180, false, 4, "#ff7dd1", 3, "boss"));
-        }
-        
-        this.minionSpawnTimer -= dt * bossActionRate;
-        if (this.minionSpawnTimer <= 0) {
-          this.minionSpawnTimer = 1.5; 
-          
-          const spawnCount = 3 + Math.floor(Math.random() * 3); 
-          for (let i = 0; i < spawnCount; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const spawnX = this.x + Math.cos(angle) * 70;
-            const spawnY = this.y + Math.sin(angle) * 70;
-            if (spawnX > 40 && spawnX < config.width - 40 && spawnY > 40 && spawnY < config.height - 100) {
-              
-              for (let j = 0; j < 12; j++) {
-                const particleAngle = Math.random() * Math.PI * 2;
-                const particleDist = Math.random() * 25;
-                const p = new Particle(
-                  spawnX + Math.cos(particleAngle) * particleDist,
-                  spawnY + Math.sin(particleAngle) * particleDist,
-                  "#ff7dd1"
-                );
-                p.vx = Math.cos(particleAngle) * rng(50, 150);
-                p.vy = Math.sin(particleAngle) * rng(50, 150);
-                p.life = rng(0.3, 0.6);
-                state.particles.push(p);
-              }
-              
-              const enemyType = Math.random() < 0.4 ? "charger" : "swarm";
-              state.enemies.push(new Enemy(enemyType, spawnX, spawnY, this.wave));
-            }
-          }
-        }
-      } else if (this.bossPattern === "massSummon") {
-        
-        this.minionSpawnTimer -= dt * bossActionRate;
-        if (this.minionSpawnTimer <= 0) {
-          this.minionSpawnTimer = 3; 
-          
-          const count = 12 + Math.floor(Math.random() * 4); 
-          for (let i = 0; i < count; i++) {
-            const angle = (i / count) * Math.PI * 2;
-            const spawnX = this.x + Math.cos(angle) * 90;
-            const spawnY = this.y + Math.sin(angle) * 90;
-            if (spawnX > 40 && spawnX < config.width - 40 && spawnY > 40 && spawnY < config.height - 100) {
-              
-              for (let j = 0; j < 20; j++) {
-                const particleAngle = Math.random() * Math.PI * 2;
-                const particleDist = Math.random() * 35;
-                const p = new Particle(
-                  spawnX + Math.cos(particleAngle) * particleDist,
-                  spawnY + Math.sin(particleAngle) * particleDist,
-                  "#ff7dd1"
-                );
-                p.vx = Math.cos(particleAngle) * rng(50, 200);
-                p.vy = Math.sin(particleAngle) * rng(50, 200);
-                p.life = rng(0.3, 0.7);
-                state.particles.push(p);
-              }
-              
-              const rand = Math.random();
-              const enemyType = rand < 0.3 ? "charger" : rand < 0.6 ? "swarm" : "shooter";
-              state.enemies.push(new Enemy(enemyType, spawnX, spawnY, this.wave));
-            }
-          }
-        }
-      }
-    } else if (this.bossType === "vortex") {
-      
-      if (this.bossPattern === "rapidSpray") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.05; 
-          this.rapidFireCount++;
-          if (this.rapidFireCount < 30) {
-            const aim = Math.atan2(player.y - this.y, player.x - this.x);
-            this.shootAngle = aim; 
-            
-            if (this.rapidFireCount % 3 === 0) {
-              bulletsOut.push(new Bullet(this.x, this.y, aim, 250, false, 3, "#9b7fff", 2, "boss"));
-            } else {
-              const spread = (Math.random() - 0.5) * 0.4; 
-              bulletsOut.push(new Bullet(this.x, this.y, aim + spread, 250, false, 3, "#9b7fff", 2, "boss"));
-            }
-          } else {
-            this.rapidFireCount = 0;
-            this.fireTimer = 0.8; 
-          }
-        }
-      } else if (this.bossPattern === "rebounding") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.4;
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          
-          for (let i = 0; i < 4; i++) {
-            const angle = (i / 4) * Math.PI * 2;
-            const bullet = new Bullet(this.x, this.y, angle, 200, false, 4, "#9b7fff", 3, "boss");
-            bullet.maxRebounds = 3; 
-            bulletsOut.push(bullet);
-          }
-        }
-      } else if (this.bossPattern === "concentratedStream") {
-        
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.1;
-          this.rapidFireCount++;
-          if (this.rapidFireCount < 20) {
-            const aim = Math.atan2(player.y - this.y, player.x - this.x);
-            this.shootAngle = aim; 
-            
-            bulletsOut.push(new Bullet(this.x, this.y, aim, 280, false, 4, "#9b7fff", 3, "boss"));
-            bulletsOut.push(new Bullet(this.x, this.y, aim - 0.08, 280, false, 4, "#9b7fff", 3, "boss"));
-            bulletsOut.push(new Bullet(this.x, this.y, aim + 0.08, 280, false, 4, "#9b7fff", 3, "boss"));
-          } else {
-            this.rapidFireCount = 0;
-            this.fireTimer = 0.6; 
-          }
-        }
-      }
-    } else {
-      
-      if (this.bossPattern === "spread") {
-        this.fireTimer -= dt * bossActionRate;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.55;
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          const spread = 5;
-          
-          bulletsOut.push(new Bullet(this.x, this.y, aim, 210, false, 6, "#ff7dd1", 5, "boss"));
-          
-          for (let i = 0; i < spread - 1; i++) {
-            const offset = (i < 2 ? (i - 2) * 0.15 : (i - 1) * 0.15);
-            bulletsOut.push(
-              new Bullet(this.x, this.y, aim + offset, 210, false, 6, "#ff7dd1", 5, "boss")
-            );
-          }
-        }
-      } else if (this.bossPattern === "spiral") {
-        this.fireTimer -= dt;
-        this.spiralAngle += dt * 2.5;
-        if (this.fireTimer <= 0) {
-          this.fireTimer = 0.09;
-          const ang = this.spiralAngle;
-          this.shootAngle = ang; 
-          bulletsOut.push(
-            new Bullet(this.x, this.y, ang, 170, false, 5, "#ffa8ff", 5, "boss")
-          );
-        }
-      } else if (this.bossPattern === "burst") {
-        this.radialCooldown -= dt;
-        if (this.radialCooldown <= 0) {
-          this.radialCooldown = 1.1;
-          const aim = Math.atan2(player.y - this.y, player.x - this.x);
-          this.shootAngle = aim; 
-          const rays = 10;
-          const base = performance.now() / 500;
-          
-          bulletsOut.push(new Bullet(this.x, this.y, aim, 200, false, 5, "#ff5f9e", 5, "boss"));
-          
-          for (let i = 0; i < rays - 1; i++) {
-            const ang = base + (i / (rays - 1)) * Math.PI * 2;
-            bulletsOut.push(
-              new Bullet(this.x, this.y, ang, 200, false, 5, "#ff5f9e", 5, "boss")
-            );
-          }
-        }
-      }
-    }
-  }
-  draw(ctx) {
-    ctx.save();
-    ctx.translate(this.x, this.y);
-    
-    
-    let colors;
-    if (this.kind === "boss") {
-      
-      if (this.bossType === "titan") {
-        colors = { core: "#ff4444", glow: "rgba(255, 68, 68, 0.8)", inner: "#cc0000", accent: "#ff6666" };
-      } else if (this.bossType === "sniper") {
-        colors = { core: "#00ffff", glow: "rgba(0, 255, 255, 0.8)", inner: "#00cccc", accent: "#66ffff" };
-      } else if (this.bossType === "swarmlord") {
-        colors = { core: "#ff7dd1", glow: "rgba(255, 125, 209, 0.8)", inner: "#ff5f9e", accent: "#ffa8ff" };
-      } else if (this.bossType === "vortex") {
-        colors = { core: "#9b7fff", glow: "rgba(155, 127, 255, 0.8)", inner: "#7d5fff", accent: "#b89fff" };
-      } else {
-        colors = { core: "#ff00a8", glow: "rgba(255, 0, 168, 0.8)", inner: "#ff5f9e", accent: "#ff7dd1" };
-      }
-    } else {
-      
-      const colorMap = {
-        swarm: { core: "#ff6b6b", glow: "rgba(255, 107, 107, 0.6)", inner: "#ff4444", accent: "#ff8888" },
-        shooter: { core: "#ffc857", glow: "rgba(255, 200, 87, 0.6)", inner: "#ffb020", accent: "#ffd888" },
-        charger: { core: "#79ffb7", glow: "rgba(121, 255, 183, 0.6)", inner: "#4dff99", accent: "#9bffc7" },
-        defender: { core: "#ffaa44", glow: "rgba(255, 170, 68, 0.6)", inner: "#ff8800", accent: "#ffcc66" },
-        dart: { core: "#44ff88", glow: "rgba(68, 255, 136, 0.6)", inner: "#00ff66", accent: "#66ffaa" },
-        orbiter: { core: "#44aaff", glow: "rgba(68, 170, 255, 0.6)", inner: "#0088ff", accent: "#66bbff" },
-        splitter: { core: "#ff88ff", glow: "rgba(255, 136, 255, 0.6)", inner: "#ff44ff", accent: "#ffaaff" }
-      };
-      colors = colorMap[this.kind] || colorMap.swarm;
-    }
-    
-    const rotation = this.kind === "boss" ? performance.now() / 400 : performance.now() / 600;
-    const pulse = Math.sin(performance.now() / 300) * 0.1 + 1;
-    
-    
-    
-    
-    const speed = Math.hypot(this.smoothVx, this.smoothVy);
-    let angle;
-    if (speed > 0.1) {
-      
-      angle = Math.atan2(this.smoothVy, this.smoothVx);
-    } else {
-      
-      const currentSpeed = Math.hypot(this.vx || 0, this.vy || 0);
-      if (currentSpeed > 0.1) {
-        angle = Math.atan2(this.vy || 0, this.vx || 0);
-      } else {
-        
-        angle = 0;
-      }
-    }
-    
-    ctx.rotate(angle + Math.PI + Math.PI / 2);
-    
-    
-    const glowGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, this.size * 2.2 * pulse);
-    glowGradient.addColorStop(0, colors.glow);
-    glowGradient.addColorStop(0.4, colors.glow.replace("0.6", "0.2").replace("0.8", "0.3"));
-    glowGradient.addColorStop(1, "transparent");
-    ctx.fillStyle = glowGradient;
-    ctx.beginPath();
-    ctx.arc(0, 0, this.size * 2.2 * pulse, 0, Math.PI * 2);
-    ctx.fill();
-    
-    
-    const engineGradient = ctx.createRadialGradient(0, this.size * 0.6, 0, 0, this.size * 0.6, this.size * 0.4);
-    engineGradient.addColorStop(0, colors.glow);
-    engineGradient.addColorStop(0.5, colors.glow.replace("0.6", "0.3").replace("0.8", "0.4"));
-    engineGradient.addColorStop(1, "transparent");
-    ctx.fillStyle = engineGradient;
-    ctx.beginPath();
-    ctx.arc(0, this.size * 0.6, this.size * 0.4, 0, Math.PI * 2);
-    ctx.fill();
-    
-    
-    ctx.fillStyle = colors.core;
-    ctx.strokeStyle = colors.accent;
-    ctx.lineWidth = 2.5;
-    ctx.shadowBlur = 6;
-    ctx.shadowColor = colors.core;
-    
-    if (this.kind === "boss") {
-      
-      if (this.bossType === "titan") {
-        
-        ctx.beginPath();
-        ctx.moveTo(0, -this.size * 1.2);
-        ctx.lineTo(this.size * 0.35, -this.size * 1.0); 
-        ctx.lineTo(this.size * 0.4, -this.size * 0.5);
-        ctx.lineTo(this.size * 0.42, -this.size * 0.2);
-        ctx.lineTo(this.size * 0.42, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.42, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.42, -this.size * 0.2);
-        ctx.lineTo(-this.size * 0.4, -this.size * 0.5);
-        ctx.lineTo(-this.size * 0.35, -this.size * 1.0);
-        ctx.closePath();
-        ctx.fill();
-        
-        ctx.beginPath();
-        ctx.moveTo(this.size * 0.2, -this.size * 0.2);
-        ctx.lineTo(this.size * 1.2, -this.size * 0.4);
-        ctx.lineTo(this.size * 1.0, 0);
-        ctx.lineTo(this.size * 1.2, this.size * 0.4);
-        ctx.lineTo(this.size * 0.2, this.size * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(-this.size * 0.2, -this.size * 0.2);
-        ctx.lineTo(-this.size * 1.2, -this.size * 0.4);
-        ctx.lineTo(-this.size * 1.0, 0);
-        ctx.lineTo(-this.size * 1.2, this.size * 0.4);
-        ctx.lineTo(-this.size * 0.2, this.size * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      } else if (this.bossType === "sniper") {
-        
-        ctx.beginPath();
-        ctx.moveTo(0, -this.size * 1.1);
-        ctx.lineTo(this.size * 0.15, -this.size * 0.9);
-        ctx.lineTo(this.size * 0.18, -this.size * 0.5);
-        ctx.lineTo(this.size * 0.2, -this.size * 0.15);
-        ctx.lineTo(this.size * 0.2, this.size * 0.25);
-        ctx.lineTo(-this.size * 0.2, this.size * 0.25);
-        ctx.lineTo(-this.size * 0.2, -this.size * 0.15);
-        ctx.lineTo(-this.size * 0.18, -this.size * 0.5);
-        ctx.lineTo(-this.size * 0.15, -this.size * 0.9);
-        ctx.closePath();
-        ctx.fill();
-        
-        ctx.beginPath();
-        ctx.moveTo(this.size * 0.15, -this.size * 0.1);
-        ctx.lineTo(this.size * 0.95, -this.size * 0.45);
-        ctx.lineTo(this.size * 0.85, this.size * 0.05);
-        ctx.lineTo(this.size * 0.7, this.size * 0.35);
-        ctx.lineTo(this.size * 0.15, this.size * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(-this.size * 0.15, -this.size * 0.1);
-        ctx.lineTo(-this.size * 0.95, -this.size * 0.45);
-        ctx.lineTo(-this.size * 0.85, this.size * 0.05);
-        ctx.lineTo(-this.size * 0.7, this.size * 0.35);
-        ctx.lineTo(-this.size * 0.15, this.size * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      } else if (this.bossType === "swarmlord") {
-        
-        ctx.beginPath();
-        ctx.moveTo(0, -this.size * 1.2);
-        ctx.lineTo(this.size * 0.2, -this.size * 1.0);
-        ctx.lineTo(this.size * 0.25, -this.size * 0.5);
-        ctx.lineTo(this.size * 0.28, -this.size * 0.2);
-        ctx.lineTo(this.size * 0.32, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.32, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.28, -this.size * 0.2);
-        ctx.lineTo(-this.size * 0.25, -this.size * 0.5);
-        ctx.lineTo(-this.size * 0.2, -this.size * 1.0);
-        ctx.closePath();
-        ctx.fill();
-        
-        for (let i = 0; i < 3; i++) {
-          const wingAngle = (i / 3) * Math.PI * 2 + rotation;
-          const rootX = Math.cos(wingAngle) * this.size * 0.2;
-          const rootY = Math.sin(wingAngle) * this.size * 0.3;
-          ctx.beginPath();
-          ctx.moveTo(rootX, rootY);
-          ctx.lineTo(rootX + Math.cos(wingAngle - 0.3) * this.size * 0.9, rootY + Math.sin(wingAngle - 0.3) * this.size * 0.5);
-          ctx.lineTo(rootX + Math.cos(wingAngle) * this.size * 0.8, rootY + Math.sin(wingAngle) * this.size * 0.3);
-          ctx.lineTo(rootX + Math.cos(wingAngle + 0.3) * this.size * 0.9, rootY + Math.sin(wingAngle + 0.3) * this.size * 0.5);
-          ctx.closePath();
-          ctx.fill();
-        }
-        ctx.stroke();
-      } else if (this.bossType === "vortex") {
-        
-        ctx.beginPath();
-        ctx.moveTo(0, -this.size * 1.2);
-        ctx.lineTo(this.size * 0.2, -this.size * 1.0);
-        ctx.lineTo(this.size * 0.25, -this.size * 0.5);
-        ctx.lineTo(this.size * 0.28, -this.size * 0.2);
-        ctx.lineTo(this.size * 0.3, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.3, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.28, -this.size * 0.2);
-        ctx.lineTo(-this.size * 0.25, -this.size * 0.5);
-        ctx.lineTo(-this.size * 0.2, -this.size * 1.0);
-        ctx.closePath();
-        ctx.fill();
-        
-        for (let i = 0; i < 4; i++) {
-          const wingAngle = (i / 4) * Math.PI * 2;
-          const rootX = Math.cos(wingAngle) * this.size * 0.2;
-          const rootY = Math.sin(wingAngle) * this.size * 0.3;
-          ctx.beginPath();
-          ctx.moveTo(rootX, rootY);
-          ctx.lineTo(rootX + Math.cos(wingAngle - 0.25) * this.size * 0.85, rootY + Math.sin(wingAngle - 0.25) * this.size * 0.45);
-          ctx.lineTo(rootX + Math.cos(wingAngle) * this.size * 0.75, rootY + Math.sin(wingAngle) * this.size * 0.25);
-          ctx.lineTo(rootX + Math.cos(wingAngle + 0.25) * this.size * 0.85, rootY + Math.sin(wingAngle + 0.25) * this.size * 0.45);
-          ctx.closePath();
-          ctx.fill();
-        }
-        ctx.stroke();
-      } else {
-        
-        ctx.beginPath();
-        ctx.moveTo(0, -this.size * 1.2);
-        ctx.lineTo(this.size * 0.2, -this.size * 1.0);
-        ctx.lineTo(this.size * 0.25, -this.size * 0.5);
-        ctx.lineTo(this.size * 0.28, -this.size * 0.2);
-        ctx.lineTo(this.size * 0.28, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.28, this.size * 0.3);
-        ctx.lineTo(-this.size * 0.28, -this.size * 0.2);
-        ctx.lineTo(-this.size * 0.25, -this.size * 0.5);
-        ctx.lineTo(-this.size * 0.2, -this.size * 1.0);
-        ctx.closePath();
-        ctx.fill();
-        
-        ctx.beginPath();
-        ctx.moveTo(this.size * 0.2, -this.size * 0.1);
-        ctx.lineTo(this.size * 1.05, -this.size * 0.5);
-        ctx.lineTo(this.size * 0.95, this.size * 0.1);
-        ctx.lineTo(this.size * 0.75, this.size * 0.4);
-        ctx.lineTo(this.size * 0.2, this.size * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(-this.size * 0.2, -this.size * 0.1);
-        ctx.lineTo(-this.size * 1.05, -this.size * 0.5);
-        ctx.lineTo(-this.size * 0.95, this.size * 0.1);
-        ctx.lineTo(-this.size * 0.75, this.size * 0.4);
-        ctx.lineTo(-this.size * 0.2, this.size * 0.2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
-    } else if (this.kind === "swarm") {
-      
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 1.0);
-      ctx.lineTo(this.size * 0.15, -this.size * 0.8);
-      ctx.lineTo(this.size * 0.18, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.2, -this.size * 0.15);
-      ctx.lineTo(this.size * 0.2, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.2, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.2, -this.size * 0.15);
-      ctx.lineTo(-this.size * 0.18, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.15, -this.size * 0.8);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.15, -this.size * 0.08);
-      ctx.lineTo(this.size * 0.75, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.65, this.size * 0.05);
-      ctx.lineTo(this.size * 0.5, this.size * 0.9);
-      ctx.lineTo(this.size * 0.15, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.15, -this.size * 0.08);
-      ctx.lineTo(-this.size * 0.75, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.65, this.size * 0.05);
-      ctx.lineTo(-this.size * 0.5, this.size * 0.9);
-      ctx.lineTo(-this.size * 0.15, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-    } else if (this.kind === "shooter") {
-      
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 1.1);
-      ctx.lineTo(this.size * 0.18, -this.size * 0.9);
-      ctx.lineTo(this.size * 0.22, -this.size * 0.5);
-      ctx.lineTo(this.size * 0.25, -this.size * 0.18);
-      ctx.lineTo(this.size * 0.25, this.size * 0.25);
-      ctx.lineTo(-this.size * 0.25, this.size * 0.25);
-      ctx.lineTo(-this.size * 0.25, -this.size * 0.18);
-      ctx.lineTo(-this.size * 0.22, -this.size * 0.5);
-      ctx.lineTo(-this.size * 0.18, -this.size * 0.9);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.18, -this.size * 0.12);
-      ctx.lineTo(this.size * 0.95, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.85, this.size * 0.08);
-      ctx.lineTo(this.size * 0.7, this.size * 0.95);
-      ctx.lineTo(this.size * 0.18, this.size * 0.25);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.18, -this.size * 0.12);
-      ctx.lineTo(-this.size * 0.95, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.85, this.size * 0.08);
-      ctx.lineTo(-this.size * 0.7, this.size * 0.95);
-      ctx.lineTo(-this.size * 0.18, this.size * 0.25);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      ctx.fillStyle = colors.accent;
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.95, -this.size * 0.2);
-      ctx.lineTo(this.size * 1.1, -this.size * 0.25);
-      ctx.lineTo(this.size * 1.1, this.size * 0.25);
-      ctx.lineTo(this.size * 0.95, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.95, -this.size * 0.2);
-      ctx.lineTo(-this.size * 1.1, -this.size * 0.25);
-      ctx.lineTo(-this.size * 1.1, this.size * 0.25);
-      ctx.lineTo(-this.size * 0.95, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = colors.core;
-      
-    } else if (this.kind === "charger") {
-      
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 1.0);
-      ctx.lineTo(this.size * 0.12, -this.size * 0.8);
-      ctx.lineTo(this.size * 0.15, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.18, -this.size * 0.15);
-      ctx.lineTo(this.size * 0.18, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.18, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.18, -this.size * 0.15);
-      ctx.lineTo(-this.size * 0.15, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.12, -this.size * 0.8);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.12, -this.size * 0.08);
-      ctx.lineTo(this.size * 0.85, -this.size * 0.5);
-      ctx.lineTo(this.size * 0.75, this.size * 0.05);
-      ctx.lineTo(this.size * 0.6, this.size * 0.9);
-      ctx.lineTo(this.size * 0.12, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.12, -this.size * 0.08);
-      ctx.lineTo(-this.size * 0.85, -this.size * 0.5);
-      ctx.lineTo(-this.size * 0.75, this.size * 0.05);
-      ctx.lineTo(-this.size * 0.6, this.size * 0.9);
-      ctx.lineTo(-this.size * 0.12, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-    } else if (this.kind === "defender") {
-      
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 1.2);
-      ctx.lineTo(this.size * 0.2, -this.size * 1.0);
-      ctx.lineTo(this.size * 0.25, -this.size * 0.5);
-      ctx.lineTo(this.size * 0.28, -this.size * 0.22);
-      ctx.lineTo(this.size * 0.32, this.size * 0.3);
-      ctx.lineTo(-this.size * 0.32, this.size * 0.3);
-      ctx.lineTo(-this.size * 0.28, -this.size * 0.22);
-      ctx.lineTo(-this.size * 0.25, -this.size * 0.5);
-      ctx.lineTo(-this.size * 0.2, -this.size * 1.0);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.25, -this.size * 0.9);
-      ctx.lineTo(this.size * 1.05, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.95, this.size * 0.9);
-      ctx.lineTo(this.size * 0.8, this.size * 0.3);
-      ctx.lineTo(this.size * 0.25, this.size * 0.9);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.25, -this.size * 0.9);
-      ctx.lineTo(-this.size * 1.05, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.95, this.size * 0.9);
-      ctx.lineTo(-this.size * 0.8, this.size * 0.3);
-      ctx.lineTo(-this.size * 0.25, -this.size * 0.9);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-        
-      ctx.fillStyle = colors.accent;
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 0.12);
-      ctx.lineTo(this.size * 0.12, -this.size * 0.08);
-      ctx.lineTo(this.size * 0.12, this.size * 0.12);
-      ctx.lineTo(-this.size * 0.12, this.size * 0.12);
-      ctx.lineTo(-this.size * 0.12, -this.size * 0.08);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = colors.core;
-      
-    } else if (this.kind === "dart") {
-      
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 1.0);
-      ctx.lineTo(this.size * 0.12, -this.size * 0.8);
-      ctx.lineTo(this.size * 0.15, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.18, -this.size * 0.15);
-      ctx.lineTo(this.size * 0.18, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.18, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.18, -this.size * 0.15);
-      ctx.lineTo(-this.size * 0.15, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.12, -this.size * 0.8);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.1, -this.size * 0.1);
-      ctx.lineTo(this.size * 0.75, -this.size * 0.5);
-      ctx.lineTo(this.size * 0.65, this.size * 0.05);
-      ctx.lineTo(this.size * 0.5, this.size * 0.9);
-      ctx.lineTo(this.size * 0.1, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.1, -this.size * 0.1);
-      ctx.lineTo(-this.size * 0.75, -this.size * 0.5);
-      ctx.lineTo(-this.size * 0.65, this.size * 0.05);
-      ctx.lineTo(-this.size * 0.5, this.size * 0.9);
-      ctx.lineTo(-this.size * 0.1, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-    } else if (this.kind === "orbiter") {
-      
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 1.1);
-      ctx.lineTo(this.size * 0.2, -this.size * 0.9);
-      ctx.lineTo(this.size * 0.25, -this.size * 0.5);
-      ctx.lineTo(this.size * 0.28, -this.size * 0.2);
-      ctx.lineTo(this.size * 0.28, this.size * 0.25);
-      ctx.lineTo(-this.size * 0.28, this.size * 0.25);
-      ctx.lineTo(-this.size * 0.28, -this.size * 0.2);
-      ctx.lineTo(-this.size * 0.25, -this.size * 0.5);
-      ctx.lineTo(-this.size * 0.2, -this.size * 0.9);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.2, -this.size * 0.12);
-      ctx.lineTo(this.size * 0.88, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.8, this.size * 0.05);
-      ctx.lineTo(this.size * 0.65, this.size * 0.95);
-      ctx.lineTo(this.size * 0.2, this.size * 0.25);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.2, -this.size * 0.12);
-      ctx.lineTo(-this.size * 0.88, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.8, this.size * 0.05);
-      ctx.lineTo(-this.size * 0.65, this.size * 0.95);
-      ctx.lineTo(-this.size * 0.2, this.size * 0.25);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      ctx.fillStyle = colors.accent;
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.88, -this.size * 0.15);
-      ctx.lineTo(this.size * 0.98, -this.size * 0.2);
-      ctx.lineTo(this.size * 0.98, this.size * 0.2);
-      ctx.lineTo(this.size * 0.88, this.size * 0.15);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.88, -this.size * 0.15);
-      ctx.lineTo(-this.size * 0.98, -this.size * 0.2);
-      ctx.lineTo(-this.size * 0.98, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.88, this.size * 0.15);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = colors.core;
-      
-    } else if (this.kind === "splitter") {
-      
-      ctx.beginPath();
-      ctx.moveTo(0, -this.size * 1.0);
-      ctx.lineTo(this.size * 0.15, -this.size * 0.8);
-      ctx.lineTo(this.size * 0.18, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.2, -this.size * 0.15);
-      ctx.lineTo(this.size * 0.2, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.2, this.size * 0.2);
-      ctx.lineTo(-this.size * 0.2, -this.size * 0.15);
-      ctx.lineTo(-this.size * 0.18, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.15, -this.size * 0.8);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(this.size * 0.15, -this.size * 0.08);
-      ctx.lineTo(this.size * 0.85, -this.size * 0.4);
-      ctx.lineTo(this.size * 0.75, this.size * 0.08);
-      ctx.lineTo(this.size * 0.6, this.size * 0.9);
-      ctx.lineTo(this.size * 0.15, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-this.size * 0.15, -this.size * 0.08);
-      ctx.lineTo(-this.size * 0.85, -this.size * 0.4);
-      ctx.lineTo(-this.size * 0.75, this.size * 0.08);
-      ctx.lineTo(-this.size * 0.6, this.size * 0.9);
-      ctx.lineTo(-this.size * 0.15, this.size * 0.2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    }
-    
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = 1;
-    
-    
-    ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-    ctx.beginPath();
-    ctx.arc(0, 0, this.size * 0.12, 0, Math.PI * 2);
-    ctx.fill();
-    
-    
-    if (this.hp < this.maxHp) {
-      ctx.restore();
-      ctx.save();
-      ctx.translate(this.x, this.y - this.size - 8);
-      const barWidth = this.size * 2;
-      const barHeight = 3;
-      const hpPercent = clamp(this.hp / this.maxHp, 0, 1);
-      
-      
-      ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-      ctx.fillRect(-barWidth / 2, -barHeight / 2, barWidth, barHeight);
-      
-      
-      const hpGradient = ctx.createLinearGradient(-barWidth / 2, 0, barWidth / 2, 0);
-      hpGradient.addColorStop(0, colors.core);
-      hpGradient.addColorStop(1, colors.inner);
-      ctx.fillStyle = hpGradient;
-      ctx.fillRect(-barWidth / 2, -barHeight / 2, barWidth * hpPercent, barHeight);
-      
-      ctx.restore();
-      
-      
-      if (this.deathMarked && this.deathMarkTimer > 0) {
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        const pulse = Math.sin(performance.now() / 100) * 0.2 + 0.8;
-        ctx.globalAlpha = pulse * 0.7;
-        ctx.strokeStyle = "#8b0000";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(0, 0, this.size * 1.5, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(0, 0, this.size * 1.8, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-        ctx.restore();
-      }
-      
-      return;
-    }
-    
-    
-    if (this.deathMarked && this.deathMarkTimer > 0) {
-      ctx.save();
-      ctx.translate(this.x, this.y);
-      const pulse = Math.sin(performance.now() / 100) * 0.2 + 0.8;
-      ctx.globalAlpha = pulse * 0.7;
-      ctx.strokeStyle = "#8b0000";
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(0, 0, this.size * 1.5, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(0, 0, this.size * 1.8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.restore();
-    }
-    
-    ctx.restore();
-  }
-}
-
-class Player {
-  constructor(loadout = shipLoadouts.striker) {
-    this.x = config.width / 2;
-    this.y = config.height - 100;
-    this.vx = 0;
-    this.vy = 0;
-    this.speed = loadout.speed;
-    this.hp = loadout.maxHp;
-    this.maxHp = loadout.maxHp;
-    this.shield = loadout.maxShield * 0.9;
-    this.maxShield = loadout.maxShield;
-    this.energy = loadout.maxEnergy;
-    this.maxEnergy = loadout.maxEnergy;
-    this.cooldown = 0;
-    this.baseCooldown = loadout.baseCooldown;
-    this.rapidTimer = 0;
-    this.burstTimer = 0;
-    const tierScale = getTierPowerScale(loadout.tier);
-    this.damageMultiplier = loadout.damageMultiplier * tierScale.basic;
-    this.shotSpeedMultiplier = loadout.shotSpeedMultiplier;
-    this.energyRegenMultiplier = loadout.energyRegenMultiplier;
-    this.shieldRegenMultiplier = loadout.shieldRegenMultiplier;
-    this.extraProjectiles = 0;
-    this.novaDamageMultiplier = 1;
-    this.abilityDamageMultiplier = tierScale.ability;
-    this.abilities = loadout.abilities || [];
-    this.shipId = loadout.id;
-    this.eclipseShotToggle = 0;
-    this.foresightTimer = 0;
-    this.titanFuryTimer = 0;
-    this.invincible = false;
-    this.invincibleTimer = 0;
-    this.shieldColorOverride = null;
-    this.shieldColorTimer = 0;
-    this.infiniteShield = false;
-    this.infiniteShieldTimer = 0;
-    this.rapidVolleyActive = false;
-    this.rapidVolleyTimer = 0;
-    this.wickSprayTimer = 0;
-    this.wickSprayAcc = 0;
-    this.wickSprayShotsRemaining = 0;
-    this.dartTwinPierceTimer = 0;
-    this.dartFlockWavesLeft = 0;
-    this.dartFlockWaveAcc = 0;
-    this.fortifyActive = false;
-    this.fortifyTimer = 0;
-    this.seraphSweepTimer = 0;
-    this.seraphSweepPhase = 0;
-    this.infernoPyroTimer = 0;
-    this.aimAngle = -Math.PI / 2;
-    this.boltChannelLock = 0;
-  }
-  getShieldRadius() {
-    const shieldPercent = this.shield / this.maxShield;
-    const baseRadius = 20;
-    const maxShieldBonus = (this.maxShield / 100) * 8;
-    return baseRadius + (shieldPercent * (12 + maxShieldBonus));
-  }
-  update(dt) {
-    let accel = 600;
-    let friction = 8;
-    let shipSpeedMultiplier = 1;
-    if (this.shipId === "glacier") {
-      accel = 500;
-      friction = 5.8; 
-    } else if (this.shipId === "phantom" || this.shipId === "specter" || this.shipId === "voidwalker") {
-      accel = 700;
-      friction = 9.5;
-    } else if (this.shipId === "aphelion") {
-      accel = 760;
-      friction = 7;
-      shipSpeedMultiplier = this.energy > this.maxEnergy * 0.7 ? 1.24 : 1.08;
-      if (Math.random() < 0.6) {
-        state.particles.push(new Particle(this.x - 10, this.y, "#ff8f2a"));
-      }
-    }
-    const wasMoving = Math.abs(this.vx) > 1 || Math.abs(this.vy) > 1;
-    
-    const canMove = !state.tutorialMode || state.tutorialStep >= 0 || state.tutorialTestWave;
-    const boltLocked = (this.boltChannelLock || 0) > 0;
-    if (canMove && !boltLocked) {
-      
-      if (input.keys.has("w") || input.keys.has("arrowup")) this.vy -= accel * dt;
-      if (input.keys.has("s") || input.keys.has("arrowdown")) this.vy += accel * dt;
-      if (input.keys.has("a") || input.keys.has("arrowleft")) this.vx -= accel * dt;
-      if (input.keys.has("d") || input.keys.has("arrowright")) this.vx += accel * dt;
-    }
-    if (boltLocked) {
-      this.vx = 0;
-      this.vy = 0;
-    }
-    
-    
-    if (state.tutorialMode && !state.tutorialProgress.moved && !state.tutorialTestWave) {
-      const isMoving = Math.abs(this.vx) > 1 || Math.abs(this.vy) > 1;
-      if (isMoving && !wasMoving) {
-        state.tutorialProgress.moved = true;
-        checkTutorialStepCompletion();
-      }
-    }
-
-    this.vx -= this.vx * friction * dt;
-    this.vy -= this.vy * friction * dt;
-
-    const speedBoost =
-      this.rapidTimer > 0 ? 1.15 : this.burstTimer > 0 ? 1.05 : 1;
-    let maxSpeed = this.speed * speedBoost * shipSpeedMultiplier;
-    if (this.shipId === "wick" && (this.wickSprayTimer || 0) > 0) {
-      maxSpeed *= 0.5;
-    }
-    this.vx = clamp(this.vx, -maxSpeed, maxSpeed);
-    this.vy = clamp(this.vy, -maxSpeed, maxSpeed);
-
-    this.x = clamp(this.x + this.vx * dt, 20, config.width - 20);
-    this.y = clamp(this.y + this.vy * dt, playerMinY(), config.height - 20);
-
-    this.cooldown = Math.max(this.cooldown - dt, 0);
-    const prevShield = this.shield;
-    this.shield = clamp(
-      this.shield + dt * 0.5 * this.shieldRegenMultiplier,
-      0,
-      this.maxShield
-    );
-    recordShieldRegen(this.shield - prevShield);
-    
-    const energyRegenMultiplier = this.fortifyActive 
-      ? this.energyRegenMultiplier * 3 
-      : this.energyRegenMultiplier;
-    const prevEnergy = this.energy;
-    this.energy = clamp(
-      this.energy + dt * 40 * energyRegenMultiplier,
-      0,
-      this.maxEnergy
-    );
-    recordEnergyRegen(this.energy - prevEnergy);
-    this.rapidTimer = Math.max(this.rapidTimer - dt, 0);
-    this.burstTimer = Math.max(this.burstTimer - dt, 0);
-    this.invincibleTimer = Math.max(this.invincibleTimer - dt, 0);
-    if (this.invincibleTimer <= 0) this.invincible = false;
-    this.shieldColorTimer = Math.max(this.shieldColorTimer - dt, 0);
-    if (this.shieldColorTimer <= 0) this.shieldColorOverride = null;
-    this.infiniteShieldTimer = Math.max(this.infiniteShieldTimer - dt, 0);
-    if (this.infiniteShieldTimer <= 0) this.infiniteShield = false;
-    this.rapidVolleyTimer = Math.max(this.rapidVolleyTimer - dt, 0);
-    if (this.rapidVolleyTimer <= 0) this.rapidVolleyActive = false;
-    this.fortifyTimer = Math.max(this.fortifyTimer - dt, 0);
-    if (this.fortifyTimer <= 0) this.fortifyActive = false;
-    this.boltChannelLock = Math.max((this.boltChannelLock || 0) - dt, 0);
-    if (this.boltChannelLock <= 0) state.boltCage = null;
-    this.seraphSweepTimer = Math.max(this.seraphSweepTimer - dt, 0);
-    this.infernoPyroTimer = Math.max(this.infernoPyroTimer - dt, 0);
-    this.foresightTimer = Math.max(this.foresightTimer - dt, 0);
-    this.titanFuryTimer = Math.max(this.titanFuryTimer - dt, 0);
-    this.dartTwinPierceTimer = Math.max((this.dartTwinPierceTimer || 0) - dt, 0);
-    this.seraphSweepPhase += dt;
-    if (this.shipId === "dart" && (this.dartFlockWavesLeft || 0) > 0) {
-      this.dartFlockWaveAcc = (this.dartFlockWaveAcc || 0) + dt;
-      const gap = 0.38;
-      const sm = this.shotSpeedMultiplier;
-      const dm = this.damageMultiplier * this.abilityDamageMultiplier;
-      while (this.dartFlockWaveAcc >= gap && (this.dartFlockWavesLeft || 0) > 0) {
-        this.dartFlockWaveAcc -= gap;
-        this.dartFlockWavesLeft--;
-        const baseAng = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
-        for (let i = 0; i < 6; i++) {
-          const a = baseAng + (i - 2.5) * 0.085;
-          const wb = new Bullet(this.x, this.y, a, 455 * sm, true, 2.25, "#f5f8ff", 5.1 * dm);
-          wb.noTrail = true;
-          wb.visualShape = "needle";
-          wb.life = 1.05;
-          state.bullets.push(wb);
-        }
-      }
-      if ((this.dartFlockWavesLeft || 0) <= 0) this.dartFlockWaveAcc = 0;
-    }
-    if (this.shipId === "wick") {
-      if ((this.wickSprayTimer || 0) > 0) {
-        this.wickSprayTimer -= dt;
-        this.wickSprayAcc = (this.wickSprayAcc || 0) + dt * (50 / 3);
-        while (this.wickSprayAcc >= 1 && (this.wickSprayShotsRemaining || 0) > 0) {
-          this.wickSprayAcc -= 1;
-          this.wickSprayShotsRemaining--;
-          const a = rng(0, Math.PI * 2);
-          const sm = this.shotSpeedMultiplier;
-          const dm = this.damageMultiplier * this.abilityDamageMultiplier;
-          const bb = new Bullet(
-            this.x,
-            this.y,
-            a,
-            rng(240, 420) * sm,
-            true,
-            4.35,
-            Math.random() < 0.5 ? "#ffdd77" : "#ff9800",
-            5.35 * dm
-          );
-          bb.noTrail = true;
-          bb.visualShape = "heavyOrb";
-          bb.life = 0.95;
-          state.bullets.push(bb);
-        }
-      }
-      if ((this.wickSprayTimer || 0) <= 0 && (this.wickSprayShotsRemaining || 0) > 0) {
-        while ((this.wickSprayShotsRemaining || 0) > 0) {
-          this.wickSprayShotsRemaining--;
-          const a = rng(0, Math.PI * 2);
-          const sm = this.shotSpeedMultiplier;
-          const dm = this.damageMultiplier * this.abilityDamageMultiplier;
-          const bb = new Bullet(
-            this.x,
-            this.y,
-            a,
-            rng(240, 420) * sm,
-            true,
-            4.35,
-            Math.random() < 0.5 ? "#ffdd77" : "#ff9800",
-            5.35 * dm
-          );
-          bb.noTrail = true;
-          bb.visualShape = "heavyOrb";
-          bb.life = 0.95;
-          state.bullets.push(bb);
-        }
-        this.wickSprayAcc = 0;
-      }
-    }
-    if (this.shipId === "seraph") {
-      this.aimAngle = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
-      const ca = Math.cos(this.aimAngle);
-      const sa = Math.sin(this.aimAngle);
-      const beamFwd = 40;
-      const beamLen = config.width * 1.2;
-      const mx = this.x + ca * beamFwd;
-      const my = this.y + sa * beamFwd;
-      const beamEndX = this.x + ca * beamLen;
-      const beamEndY = this.y + sa * beamLen;
-      const beamWidth = 16;
-      const shotInterval = Math.max(this.baseCooldown * 0.2, 0.04);
-      const primaryDps = (24 * this.damageMultiplier) / shotInterval;
-      const sweepPhaseRate = 2.85;
-      const sweepDps = primaryDps * 4.75;
-      const railPerp = 40;
-      const applyBeamToEnemies = (x0, y0, x1, y1, width, dps, bumpFire) => {
-        for (let i = state.enemies.length - 1; i >= 0; i--) {
-          const enemy = state.enemies[i];
-          const d = pointToSegmentDistance(enemy.x, enemy.y, x0, y0, x1, y1);
-          if (d > width + enemy.size * 0.48) continue;
-          const dmg = dps * dt;
-          enemy.hp -= dmg;
-          recordDamageDealt(dmg);
-          if (bumpFire) enemy.fireTimer += 0.06;
-          if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
-        }
-      };
-      applyBeamToEnemies(mx, my, beamEndX, beamEndY, beamWidth, primaryDps, true);
-      if (this.seraphSweepTimer > 0) {
-        const perp = this.aimAngle + Math.PI / 2;
-        const cp = Math.cos(perp);
-        const sp = Math.sin(perp);
-        const swing = Math.sin(this.seraphSweepPhase * sweepPhaseRate) * 0.7;
-        for (const side of [-1, 1]) {
-          const sideAngle = this.aimAngle + side * swing;
-          const sx = this.x + cp * side * railPerp + ca * beamFwd;
-          const sy = this.y + sp * side * railPerp + sa * beamFwd;
-          const ex = sx + Math.cos(sideAngle) * beamLen;
-          const ey = sy + Math.sin(sideAngle) * beamLen;
-          applyBeamToEnemies(sx, sy, ex, ey, beamWidth, sweepDps, true);
-        }
-      }
-    }
-  }
-  shoot(bullets) {
-    if (this.cooldown > 0 && !this.rapidVolleyActive) return;
-    
-    
-    
-    const canShoot = !state.tutorialMode || state.tutorialStep >= 2 || state.tutorialTestWave;
-    if (!canShoot) return;
-    
-    
-    if (state.tutorialMode && !state.tutorialProgress.shot && !state.tutorialTestWave) {
-      
-      const mouseMoved = Math.abs(input.mouse.x - config.width / 2) > 50 || Math.abs(input.mouse.y - config.height / 2) > 50;
-      if (mouseMoved) {
-        state.tutorialProgress.shot = true;
-        checkTutorialStepCompletion();
-      }
-    }
-    const angle = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
-    playSfx.shoot(this.shipId);
-    const burstActive = this.burstTimer > 0;
-    const rapidActive = this.rapidTimer > 0;
-    const rapidVolleyActive = this.rapidVolleyActive;
-    
-    
-    if (rapidVolleyActive) {
-      const perpAngle = angle + Math.PI / 2; 
-      const offset = 8; 
-      const leftVolley = new Bullet(
-          this.x + Math.cos(perpAngle) * offset,
-          this.y + Math.sin(perpAngle) * offset,
-          angle, 
-          500 * this.shotSpeedMultiplier,
-          true,
-          5,
-          "#ffd166",
-          11 * this.damageMultiplier
-        );
-      const rightVolley = new Bullet(
-          this.x - Math.cos(perpAngle) * offset,
-          this.y - Math.sin(perpAngle) * offset,
-          angle, 
-          500 * this.shotSpeedMultiplier,
-          true,
-          5,
-          "#ffd166",
-          11 * this.damageMultiplier
-        );
-      if (this.shipId === "glacier") {
-        leftVolley.color = "#8be7ff";
-        rightVolley.color = "#8be7ff";
-        leftVolley.freezeFactor = 0.55;
-        rightVolley.freezeFactor = 0.55;
-      } else if (this.shipId === "aphelion") {
-        leftVolley.color = "#ff8f2a";
-        rightVolley.color = "#ff8f2a";
-        leftVolley.burnDamage = leftVolley.damage * 0.35;
-        rightVolley.burnDamage = rightVolley.damage * 0.35;
-        leftVolley.knockback = 52;
-        rightVolley.knockback = 52;
-      } else if (this.shipId === "myrmidon") {
-        leftVolley.color = "#ff4d4d";
-        rightVolley.color = "#ff4d4d";
-        leftVolley.size = 3.2;
-        rightVolley.size = 3.2;
-      } else if (this.shipId === "dart" || this.shipId === "wick") {
-        leftVolley.color = this.shipId === "dart" ? "#f5f8ff" : "#ff9a3c";
-        rightVolley.color = leftVolley.color;
-        leftVolley.size = this.shipId === "dart" ? 2.4 : 2.8;
-        rightVolley.size = leftVolley.size;
-        leftVolley.noTrail = true;
-        rightVolley.noTrail = true;
-      } else if (this.shipId === "bolt") {
-        leftVolley.color = "#4d9fff";
-        rightVolley.color = "#4d9fff";
-        leftVolley.lineShot = true;
-        rightVolley.lineShot = true;
-        leftVolley.size = 2;
-        rightVolley.size = 2;
-      } else if (this.shipId === "ember") {
-        leftVolley.color = "#ff7a45";
-        rightVolley.color = "#ff9e6a";
-        leftVolley.burnDamage = leftVolley.damage * 0.22;
-        rightVolley.burnDamage = rightVolley.damage * 0.22;
-      } else if (this.shipId === "claw") {
-        leftVolley.color = "#5cff8a";
-        rightVolley.color = "#7dffb3";
-      } else if (this.shipId === "stinger") {
-        leftVolley.color = "#ffe94d";
-        rightVolley.color = "#fff176";
-        leftVolley.size = 2.2;
-        rightVolley.size = 2.2;
-      } else if (this.shipId === "buckler") {
-        leftVolley.color = "#ffb347";
-        rightVolley.color = "#ffb347";
-        leftVolley.size = 4.2;
-        rightVolley.size = 4.2;
-      }
-      bullets.push(leftVolley);
-      bullets.push(rightVolley);
-      this.cooldown = this.baseCooldown * (1 / 1.3); 
-      return;
-    }
-
-    const dm = this.damageMultiplier;
-    const sm = this.shotSpeedMultiplier;
-
-    if (this.shipId === "sparrow") {
-      const volleyId = `sparrow-${performance.now()}-${Math.random()}`;
-      for (let i = 0; i < 5; i++) {
-        const b = new Bullet(this.x - Math.cos(angle) * i * 5, this.y - Math.sin(angle) * i * 5, angle + (i - 2) * 0.018, 650 * sm, true, 2.4, "#ffdd33", 3.2 * dm);
-        b.noTrail = true;
-        b.visualShape = "feather";
-        b.wobbleAmp = 0.035;
-        b.sparrowFeather = true;
-        b.volleyId = volleyId;
-        b.life = 1.1;
-        bullets.push(b);
-      }
-      this.cooldown = this.baseCooldown * 0.92;
-      return;
-    }
-    if (this.shipId === "dart" && (this.dartTwinPierceTimer || 0) > 0) {
-      const perp = angle + Math.PI / 2;
-      const lane = 7;
-      for (const sign of [-1, 1]) {
-        const b = new Bullet(
-          this.x + Math.cos(perp) * lane * sign,
-          this.y + Math.sin(perp) * lane * sign,
-          angle,
-          455 * sm,
-          true,
-          2.15,
-          "#f7fbff",
-          6.4 * dm
-        );
-        b.visualShape = "needle";
-        b.noTrail = true;
-        b.infinitePierce = true;
-        b.life = 1.65;
-        bullets.push(b);
-      }
-      this.cooldown = this.baseCooldown * 0.78;
-      return;
-    }
-    if (this.shipId === "dart") {
-      const b = new Bullet(this.x, this.y, angle, 430 * sm, true, 2.1, "#f7fbff", 7.0 * dm);
-      b.visualShape = "needle";
-      b.dartBasic = true;
-      b.life = 1.75;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.78;
-      return;
-    }
-    if (this.shipId === "pebble") {
-      const b = new Bullet(this.x, this.y, angle, 420 * sm, true, 4.2, "#8f979e", 7.5 * dm);
-      configurePebbleRicochetOrb(b);
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.88;
-      return;
-    }
-    if (this.shipId === "wick") {
-      const perp = angle + Math.PI / 2;
-      const lane = 7;
-      const sp = 520 * sm;
-      const dmgEach = 2.9 * dm;
-      for (const sign of [-1, 1]) {
-        const b = new Bullet(
-          this.x + Math.cos(perp) * lane * sign,
-          this.y + Math.sin(perp) * lane * sign,
-          angle,
-          sp,
-          true,
-          2.5,
-          "#ff9a3c",
-          dmgEach
-        );
-        b.noTrail = true;
-        b.lineShot = true;
-        b.wickBasic = true;
-        b.life = 1.15;
-        bullets.push(b);
-      }
-      this.cooldown = this.baseCooldown * 0.72;
-      return;
-    }
-    if (this.shipId === "bolt") {
-      const b = new Bullet(this.x, this.y, angle, 540 * sm, true, 2.2, "#4d9fff", 7.2 * dm);
-      b.lineShot = true;
-      b.chainArc = true;
-      b.chainDamagePct = 0.15;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.8;
-      return;
-    }
-    if (this.shipId === "bulwark") {
-      const b = new Bullet(this.x, this.y, angle, 300 * sm, true, 7.2, "#ff8c42", 12.5 * dm);
-      b.visualShape = "shieldDisc";
-      b.bulwarkPush = true;
-      b.life = 0.85;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 1.12;
-      return;
-    }
-    if (this.shipId === "myrmidon") {
-      for (let i = 0; i < 3; i++) {
-        const b = new Bullet(this.x - Math.cos(angle) * i * 7, this.y - Math.sin(angle) * i * 7, angle + (i - 1) * 0.015, 600 * sm, true, 2.1, "#ff3333", 3.2 * dm);
-        b.noTrail = true;
-        b.visualShape = "starPellet";
-        b.myrmidonDot = true;
-        b.life = 0.85;
-        bullets.push(b);
-      }
-      this.cooldown = this.baseCooldown * 0.34;
-      return;
-    }
-    if (this.shipId === "knave") {
-      const startX = this.x + Math.cos(angle) * 14;
-      const startY = this.y + Math.sin(angle) * 14;
-      const b = new Bullet(startX, startY, angle, 480 * sm, true, 3.8, "#b86bff", 8.2 * dm);
-      b.wobbleAmp = 0.14;
-      b.knaveLeftCurveTimer = 0.2;
-      b.visualShape = "raggedShard";
-      b.knaveSteal = true;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.62;
-      return;
-    }
-    if (this.shipId === "buckler") {
-      const b = new Bullet(this.x, this.y, angle, 440 * sm, true, 4.8, "#ffb347", 8 * dm);
-      b.visualShape = "heavyOrb";
-      b.bucklerGuard = true;
-      b.wobbleAmp = 0.025;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.72;
-      return;
-    }
-    if (this.shipId === "ember") {
-      const b = new Bullet(this.x, this.y, angle, 500 * sm, true, 3.2, "#ff7a45", 5.6 * dm);
-      b.burnDamage = b.damage * 0.12;
-      b.visualShape = "spark";
-      b.emberPuddle = true;
-      b.life = 0.55;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.68;
-      return;
-    }
-    if (this.shipId === "claw") {
-      const b = new Bullet(this.x, this.y, angle, 430 * sm, true, 4.8, "#5cff8a", 7.0 * dm);
-      b.visualShape = "pawShot";
-      b.clawBasic = true;
-      b.knockback = 58;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.7;
-      return;
-    }
-    if (this.shipId === "picket") {
-      const perp = angle + Math.PI / 2;
-      const b = new Bullet(this.x + Math.cos(perp) * 3, this.y + Math.sin(perp) * 3, angle, 500 * sm, true, 3.2, "#f0f6ff", 7.4 * dm);
-      b.picketTri = true;
-      b.life = 0.95;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.74;
-      return;
-    }
-    if (this.shipId === "stinger") {
-      for (let i = -1; i <= 1; i++) {
-        const b = new Bullet(this.x, this.y, angle + i * 0.08, 430 * sm, true, 5.2, "#a0ff7a", 4.2 * dm);
-        b.visualShape = "clawHook";
-        b.stingerPoison = true;
-        b.stingerPoisonPerTick = 1.8 * dm;
-        b.life = 1.1;
-        bullets.push(b);
-      }
-      this.cooldown = this.baseCooldown * 0.62;
-      return;
-    }
-    if (this.shipId === "phantom") {
-      const b = new Bullet(this.x, this.y, angle, 400 * sm, true, 3.8, "rgba(200,190,255,0.75)", 8.5 * dm);
-      b.piercing = true;
-      b.pierceCount = 1;
-      b.visualShape = "ghostBolt";
-      b.phantomPhaseBasic = true;
-      b.life = 1.15;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.72;
-      return;
-    }
-    if (this.shipId === "tempest") {
-      const b = new Bullet(this.x, this.y, angle, 260 * sm, true, 5.2, "#fff176", 8.2 * dm);
-      b.visualShape = "heavyOrb";
-      b.tempestOrb = true;
-      b.life = 1.6;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.62;
-      return;
-    }
-    if (this.shipId === "vanguard") {
-      const b = new Bullet(this.x, this.y, angle, 440 * sm, true, 5.2, "#f2f6ff", 9.2 * dm);
-      b.knockback = 38;
-      b.visualShape = "lineShot";
-      b.vanguardTrail = true;
-      state.visualBeams.push({ x1: this.x, y1: this.y, x2: this.x - Math.cos(angle) * 90, y2: this.y - Math.sin(angle) * 90, color: "rgba(255,255,255,0.45)", width: 8, life: 0.22, maxLife: 0.22, phase: 0 });
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.78;
-      return;
-    }
-    if (this.shipId === "lancer") {
-      const b = new Bullet(this.x, this.y, angle, 620 * sm, true, 2.4, "#66ff99", 9.8 * dm);
-      b.piercing = true;
-      b.pierceCount = b.age > 0.65 ? 2 : 1;
-      b.noTrail = true;
-      b.visualShape = "needle";
-      b.lancerGrow = true;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.68;
-      return;
-    }
-    if (this.shipId === "halberd") {
-      const b = new Bullet(this.x, this.y, angle + rng(-0.04, 0.04), 340 * sm, true, 7, "#ffe066", 10.5 * dm);
-      b.piercing = true;
-      b.pierceCount = 2;
-      b.visualShape = "axeBlade";
-      b.halberdBlade = true;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.92;
-      return;
-    }
-    if (this.shipId === "raven") {
-      const nearest = getNearestEnemy(this.x, this.y);
-      const b = new Bullet(this.x, this.y, angle, 480 * sm, true, 3.2, "#4a2a6a", 8 * dm);
-      b.visualShape = "bird";
-      b.ravenBird = true;
-      if (nearest) {
-        b.tracking = true;
-        b.trackingTarget = nearest;
-        b.trackingTurnRate = 28;
-      }
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.62;
-      return;
-    }
-    if (this.shipId === "warden") {
-      const pulse = 0.85 + 0.15 * Math.sin(performance.now() / 500);
-      const b = new Bullet(this.x, this.y, angle, 280 * sm, true, 6.5 * pulse, "#f5e6a8", 9.5 * dm);
-      b.visualShape = "heavyOrb";
-      b.baseSize = b.size;
-      b.wardenAbsorb = true;
-      b.life = 1.2;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 1.05;
-      return;
-    }
-    if (this.shipId === "marauder") {
-      const b = new Bullet(this.x, this.y, angle + rng(-0.1, 0.1), 440 * sm, true, 4.2, "#cc3344", 8.8 * dm);
-      b.marauderShard = true;
-      b.visualShape = "raggedShard";
-      b.marauderGeneration = 0;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.64;
-      return;
-    }
-    if (this.shipId === "gallant") {
-      const b = new Bullet(this.x, this.y, angle, 470 * sm, true, 3.8, "#c8e0ff", 8.4 * dm);
-      b.visualShape = "needle";
-      b.gallantHeal = true;
-      b.life = 0.55;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.7;
-      return;
-    }
-    if (this.shipId === "aegis") {
-      const main = new Bullet(this.x, this.y, angle, 320 * sm, true, 7.2, "#78c0ff", 8.2 * dm);
-      main.aegisDisc = true;
-      main.aegisReflectDisc = true;
-      main.aegisBasicWide = true;
-      main.hitEllipseW = 15;
-      main.hitEllipseH = 3.1;
-      main.life = 1.85;
-      bullets.push(main);
-      this.cooldown = this.baseCooldown * 0.95;
-      return;
-    }
-    if (this.shipId === "glacier") {
-      const b = new Bullet(this.x, this.y, angle, 300 * sm, true, 5, "#9ce8ff", 9 * dm);
-      b.visualShape = "iceShard";
-      b.glacierPrimary = true;
-      b.glacierFreezeDuration = 3;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.88;
-      return;
-    }
-    if (this.shipId === "reaper") {
-      const b = new Bullet(this.x, this.y, angle + 0.12, 380 * sm, true, 5.5, "#4a0018", 10 * dm);
-      b.burnDamage = 4 * dm;
-      b.reaperCrescent = true;
-      b.reaperBoomerang = true;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.82;
-      return;
-    }
-    if (this.shipId === "helios") {
-      for (let i = 0; i < 54; i++) {
-        const a = angle + rng(-0.28, 0.28);
-        const flame = new Bullet(this.x + Math.cos(a) * 18, this.y + Math.sin(a) * 18, a, rng(260, 700) * sm, true, rng(2.2, 5.2), Math.random() < 0.5 ? "#ff4a1f" : "#ff9a2f", 1.15 * dm);
-        flame.visualShape = "spark";
-        flame.heliosFlame = true;
-        flame.life = rng(0.42, 1.18);
-        bullets.push(flame);
-      }
-      this.cooldown = 0.045;
-      return;
-    }
-    if (this.shipId === "grimstar") {
-      const main = new Bullet(this.x, this.y, angle + rng(-0.025, 0.025), 470 * sm, true, 6.6, "#8b62ff", 10.2 * dm);
-      main.visualShape = "starShot";
-      main.grimstarTrail = true;
-      main.thinPurpleTrail = true;
-      main.life = 0.72;
-      bullets.push(main);
-      for (const phase of [0, Math.PI]) {
-        const side = new Bullet(this.x, this.y, angle, 455 * sm, true, 4.8, "#a783ff", 7.4 * dm);
-        side.visualShape = "starShot";
-        side.grimstarTrail = true;
-        side.thinPurpleTrail = true;
-        side.sinePath = true;
-        side.sineOrigin = { x: this.x, y: this.y };
-        side.sineAngle = angle;
-        side.sineSpeed = 455 * sm;
-        side.sineAmplitude = 20;
-        side.sineFrequency = 12;
-        side.sinePhase = phase;
-        side.life = 0.78;
-        bullets.push(side);
-      }
-      this.cooldown = this.baseCooldown * 0.58;
-      return;
-    }
-    if (this.shipId === "eclipse") {
-      this.eclipseShotToggle ^= 1;
-      const dark = this.eclipseShotToggle === 0;
-      const col = dark ? "#1a0a28" : "#f0f0ff";
-      const b = new Bullet(this.x, this.y, angle, 500 * sm, true, 3.8, col, 8.8 * dm);
-      b.visualShape = dark ? "singularity" : "lineShot";
-      b.eclipseBlind = dark;
-      b.eclipseHeal = !dark;
-      b.life = 0.95;
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.76;
-      return;
-    }
-    if (this.shipId === "oracle") {
-      const nearest = getNearestEnemy(this.x, this.y);
-      const b = new Bullet(this.x, this.y, angle, 480 * sm, true, 3.6, "#b8fff8", 8.6 * dm);
-      b.visualShape = "rune";
-      if (nearest) {
-        const lvx = nearest.smoothVx !== undefined ? nearest.smoothVx : nearest.vx;
-        const lvy = nearest.smoothVy !== undefined ? nearest.smoothVy : nearest.vy;
-        const lead = Math.atan2(nearest.y + lvy * 0.45 - this.y, nearest.x + lvx * 0.45 - this.x);
-        b.vx = Math.cos(lead) * 480 * sm;
-        b.vy = Math.sin(lead) * 480 * sm;
-        b.tracking = true;
-        b.trackingTarget = nearest;
-        b.trackingTurnRate = 7;
-      }
-      bullets.push(b);
-      this.cooldown = this.baseCooldown * 0.7;
-      return;
-    }
-
-    if (this.shipId === "seraph") {
-      const perp = angle + Math.PI / 2;
-      const sideOffsets = [-46, -17, 17, 46];
-      for (const off of sideOffsets) {
-        const bx = this.x + Math.cos(perp) * off;
-        const by = this.y + Math.sin(perp) * off;
-        const bullet = new Bullet(bx, by, angle, 760 * this.shotSpeedMultiplier, true, 4, "#ff1a1a", 14 * this.damageMultiplier);
-        bullet.seraphRailEmitter = true;
-        bullet.emitAcc = 0;
-        bullets.push(bullet);
-      }
-      this.cooldown = this.baseCooldown * 0.2;
-      return;
-    }
-
-    
-    if (this.shipId === "titan") {
-      const sz = this.titanFuryTimer > 0 ? 28 : 22;
-      const core = new Bullet(this.x + Math.cos(angle) * 10, this.y + Math.sin(angle) * 10, angle, 95 * this.shotSpeedMultiplier, true, sz, "#d94a0a", 24 * this.damageMultiplier);
-      core.life = 2.3;
-      core.titanMegaOrb = true;
-      core.piercing = true;
-      core.pierceCount = 8;
-      core.knockback = 90;
-      core.burnDamage = core.damage * 0.35;
-      bullets.push(core);
-      this.cooldown = this.baseCooldown * 1.15;
-      return;
-    }
-    if (this.shipId === "inferno") {
-      const count = this.infernoPyroTimer > 0 ? 3 : 1;
-      for (let i = 0; i < count; i++) {
-        const offset = count === 1 ? 0 : (i - 1) * 0.14;
-        const glo = new Bullet(this.x, this.y, angle + offset + rng(-0.04, 0.04), 220 * this.shotSpeedMultiplier, true, 8.8, "#ff5a2a", 11.5 * this.damageMultiplier);
-        glo.life = 1.1;
-        glo.burnDamage = 6.5 * this.damageMultiplier;
-        glo.knockback = 24;
-        glo.infernoGlob = true;
-        glo.maxRebounds = 1;
-        glo.puddleOnExpire = true;
-        bullets.push(glo);
-      }
-      this.cooldown = this.baseCooldown * (this.infernoPyroTimer > 0 ? 0.43 : 0.86);
-      return;
-    }
-    if (this.shipId === "aurora") {
-      const phase = Math.floor(performance.now() / 500) % 3;
-      const colors = [
-        { key: "green", color: "#78ffb4" },
-        { key: "cyan", color: "#78f0ff" },
-        { key: "purple", color: "#c896ff" },
-      ];
-      const c = colors[phase];
-      for (const dir of [-1, 1]) {
-        const ribbon = new Bullet(this.x, this.y, angle, 460 * this.shotSpeedMultiplier, true, 5.6, c.color, 7.2 * this.damageMultiplier);
-        ribbon.visualShape = "lineShot";
-        ribbon.auroraColor = c.key;
-        ribbon.sinePath = true;
-        ribbon.sineOrigin = { x: this.x, y: this.y };
-        ribbon.sineAngle = angle;
-        ribbon.sineSpeed = 460 * this.shotSpeedMultiplier;
-        ribbon.sineAmplitude = 28;
-        ribbon.sineFrequency = 12;
-        ribbon.sinePhase = dir < 0 ? 0 : Math.PI;
-        ribbon.life = 1.1;
-        bullets.push(ribbon);
-      }
-      this.cooldown = this.baseCooldown * 0.75;
-      return;
-    }
-    if (this.shipId === "specter") {
-      const lance = new Bullet(this.x, this.y, angle, 920 * this.shotSpeedMultiplier, true, 2.2, "rgba(220,220,240,0.02)", 11 * this.damageMultiplier);
-      lance.piercing = true;
-      lance.pierceCount = 4;
-      lance.life = 1.35;
-      lance.noTrail = true;
-      lance.specterNeedle = true;
-      lance.noHitParticle = true;
-      state.visualBeams.push({ x1: 0, y1: this.y - 4, x2: config.width, y2: this.y + 4, color: "rgba(220,220,255,0.04)", width: 2, life: 0.08, maxLife: 0.08, phase: 0 });
-      bullets.push(lance);
-      this.cooldown = this.baseCooldown * 0.72;
-      return;
-    }
-    if (this.shipId === "voidwalker") {
-      const sequence = [0, 0.12, -0.12];
-      for (let i = 0; i < sequence.length; i++) {
-        const slash = new Bullet(this.x - Math.cos(angle) * i * 12, this.y - Math.sin(angle) * i * 12, angle + sequence[i], 620 * this.shotSpeedMultiplier, true, 4.2, "#b27bff", 7.5 * this.damageMultiplier);
-        slash.visualShape = "lineShot";
-        slash.voidwalkerSlash = true;
-        slash.voidwalkerScale = 1;
-        slash.infinitePierce = true;
-        slash.life = 0.55 + i * 0.08;
-        bullets.push(slash);
-      }
-      this.cooldown = this.baseCooldown * 0.8;
-      return;
-    }
-    if (this.shipId === "nova") {
-      const star = new Bullet(this.x, this.y, angle, 380 * this.shotSpeedMultiplier, true, 3.2, "#ffffff", 6.2 * this.damageMultiplier);
-      star.life = 1.0;
-      star.visualShape = "starPellet";
-      star.novaPrimaryPop = true;
-      bullets.push(star);
-      this.cooldown = this.baseCooldown * 0.62;
-      return;
-    }
-    if (this.shipId === "aphelion") {
-      
-      const baseDamage = 8.5 * this.damageMultiplier;
-      const frontArc = 0.39; 
-      const frontCount = 28;
-      const laneCount = 7;
-      const forwardDist = [180, 260, 350];
-      const perp = angle + Math.PI / 2;
-      
-      const lanes = [];
-      for (let l = 0; l < laneCount; l++) {
-        const laneOffset = (l - (laneCount - 1) / 2) * 24;
-        const laneDepth = forwardDist[l % forwardDist.length];
-        lanes.push({
-          x: this.x + Math.cos(angle) * laneDepth + Math.cos(perp) * laneOffset,
-          y: this.y + Math.sin(angle) * laneDepth + Math.sin(perp) * laneOffset,
-        });
-      }
-      for (let i = 0; i < frontCount; i++) {
-        const lane = lanes[i % lanes.length];
-        const laneAngle = Math.atan2(lane.y - this.y, lane.x - this.x);
-        const spread = ((i / (frontCount - 1)) - 0.5) * frontArc;
-        const a = laneAngle + spread * 0.35 + rng(-0.03, 0.03);
-        const centerBias = Math.abs(spread);
-        let color = "#ff6a3a"; 
-        let dmg = baseDamage;
-        if (centerBias < 0.06) {
-          color = "#ff1f1f"; 
-          dmg = baseDamage * 1.45;
-        } else if (centerBias > 0.13) {
-          color = "#ffb766"; 
-          dmg = baseDamage * 0.9;
-        }
-        const bolt = new Bullet(this.x, this.y, a, (430 + (i % 6) * 20) * this.shotSpeedMultiplier, true, 4.8, color, dmg);
-        bolt.burnDamage = baseDamage * 0.34;
-        bolt.knockback = 40;
-        if (i % 6 === 0) {
-          bolt.explosive = true;
-          bolt.size += 0.8;
-        }
-        bullets.push(bolt);
-      }
-      
-      const nearest = getNearestEnemy(this.x, this.y);
-      for (const side of [-1, 1]) {
-        for (let i = 0; i < 3; i++) {
-          const sideAngle = angle + side * (0.28 + i * 0.08);
-          const seeker = new Bullet(this.x, this.y, sideAngle, (360 + i * 24) * this.shotSpeedMultiplier, true, 4.2, "#ffb14a", baseDamage * 0.95);
-          seeker.burnDamage = baseDamage * 0.3;
-          if (nearest) {
-            seeker.tracking = true;
-            seeker.trackingTarget = nearest;
-            seeker.trackingTurnRate = 14;
-          }
-          bullets.push(seeker);
-        }
-      }
-      this.cooldown = this.baseCooldown * 0.7;
-      return;
-    }
-    
-    const baseShots = 1 + this.extraProjectiles;
-    const shots = burstActive ? baseShots + 1 : baseShots;
-    const spread =
-      shots > 1 ? 0.08 * (shots - 1) : burstActive ? 0.16 : 0;
-    const bulletColor = rapidActive
-      ? "#ffd166"
-      : burstActive
-      ? "#d16bff"
-      : undefined;
-    const bulletSize = rapidActive || burstActive ? 5 : 4;
-    const baseSpeed = rapidActive ? 520 : burstActive ? 480 : 460;
-    const bulletSpeed = baseSpeed * this.shotSpeedMultiplier;
-    const bulletDamage = 9 * this.damageMultiplier;
-    for (let i = 0; i < shots; i++) {
-      const offset = spread ? (i - (shots - 1) / 2) * spread : 0;
-      const projectile = new Bullet(
-          this.x,
-          this.y,
-          angle + offset,
-          bulletSpeed,
-          true,
-          bulletSize,
-          bulletColor,
-          bulletDamage
-        );
-      if (this.shipId === "glacier") {
-        projectile.color = "#8be7ff";
-        projectile.freezeFactor = 0.6;
-        projectile.vx *= 0.9;
-        projectile.vy *= 0.9;
-      } else if (this.shipId === "tempest") {
-        projectile.color = "#ffe866";
-        projectile.chainArc = true;
-      } else if (this.shipId === "titan") {
-        projectile.color = "#ff8866";
-        projectile.knockback = 46;
-      } else if (this.shipId === "specter" || this.shipId === "voidwalker") {
-        projectile.color = "#c28cff";
-        projectile.piercing = true;
-        projectile.pierceCount = 2;
-      } else if (this.shipId === "aphelion") {
-        projectile.color = "#ff8f2a";
-        projectile.size += 1;
-        projectile.damage *= 1.18;
-        projectile.burnDamage = projectile.damage * 0.45;
-        projectile.knockback = 62;
-        if (Math.random() < 0.28) projectile.explosive = true;
-      }
-      bullets.push(projectile);
-    }
-    this.cooldown = this.baseCooldown * (this.rapidTimer > 0 ? 0.45 : 1);
-  }
-  draw(ctx) {
-    ctx.save();
-    ctx.translate(this.x, this.y);
-    const angle = Math.atan2(input.mouse.y - this.y, input.mouse.x - this.x);
-    ctx.rotate(angle);
-    if (this.shipId === "seraph") {
-      const beamDrawStart = 36;
-      const len = config.width * 0.92;
-      const drawLen = Math.max(len - beamDrawStart, 120);
-      const bw = 18;
-      ctx.save();
-      ctx.globalAlpha = 1;
-      const g = ctx.createLinearGradient(beamDrawStart, 0, len, 0);
-      g.addColorStop(0, "rgba(255, 200, 200, 1)");
-      g.addColorStop(0.2, "rgba(255, 70, 70, 1)");
-      g.addColorStop(0.45, "rgba(255, 30, 30, 1)");
-      g.addColorStop(0.62, "rgba(255, 220, 220, 1)");
-      g.addColorStop(0.78, "rgba(255, 45, 45, 1)");
-      g.addColorStop(1, "rgba(255, 80, 80, 1)");
-      ctx.fillStyle = g;
-      ctx.shadowBlur = 22;
-      ctx.shadowColor = "#ff2222";
-      ctx.fillRect(beamDrawStart, -bw / 2, drawLen, bw);
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(beamDrawStart, -bw / 2, drawLen, bw);
-      if (this.seraphSweepTimer > 0) {
-        const sweepPhaseRate = 2.85;
-        const swing = Math.sin(this.seraphSweepPhase * sweepPhaseRate) * 0.7;
-        const sweepLen = len * 0.95;
-        const railDraw = 38;
-        ctx.lineCap = "round";
-        for (const side of [-1, 1]) {
-          const ox = beamDrawStart;
-          const oy = side * railDraw;
-          const dx = Math.cos(side * swing);
-          const dy = Math.sin(side * swing);
-          const sx2 = ox + dx * sweepLen;
-          const sy2 = oy + dy * sweepLen;
-          ctx.strokeStyle = "rgba(255, 50, 50, 1)";
-          ctx.lineWidth = 10;
-          ctx.shadowBlur = 20;
-          ctx.shadowColor = "#ff0000";
-          ctx.beginPath();
-          ctx.moveTo(ox, oy);
-          ctx.lineTo(sx2, sy2);
-          ctx.stroke();
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.98)";
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(ox, oy);
-          ctx.lineTo(sx2, sy2);
-          ctx.stroke();
-        }
-      }
-      ctx.shadowBlur = 0;
-      ctx.restore();
-    }
-
-    let coreColor, glowColor, accentColor;
-    const powerUpActive = this.rapidTimer > 0 || this.burstTimer > 0;
-    
-    if (this.rapidTimer > 0) {
-      coreColor = "#ffd166";
-      glowColor = "rgba(255, 209, 102, 0.7)";
-      accentColor = "#ffb020";
-    } else if (this.burstTimer > 0) {
-      coreColor = "#d16bff";
-      glowColor = "rgba(209, 107, 255, 0.7)";
-      accentColor = "#b84dff";
-    } else {
-      
-      if (this.shipId === "aegis") {
-        coreColor = "#78c0ff";
-        glowColor = "rgba(120, 192, 255, 0.7)";
-        accentColor = "#4da8ff";
-      } else if (this.shipId === "phantom") {
-        coreColor = "#9b7fff";
-        glowColor = "rgba(155, 127, 255, 0.7)";
-        accentColor = "#7d5fff";
-      } else if (this.shipId === "tempest") {
-        coreColor = "#ffff00";
-        glowColor = "rgba(255, 255, 0, 0.7)";
-        accentColor = "#ffcc00";
-      } else if (this.shipId === "titan") {
-        coreColor = "#ff4444";
-        glowColor = "rgba(255, 68, 68, 0.7)";
-        accentColor = "#cc0000";
-      } else if (this.shipId === "specter") {
-        coreColor = "#9b7fff";
-        glowColor = "rgba(155, 127, 255, 0.7)";
-        accentColor = "#6b4fff";
-      } else if (this.shipId === "glacier") {
-        coreColor = "#9cefff";
-        glowColor = "rgba(156, 239, 255, 0.75)";
-        accentColor = "#5dc9ff";
-      } else if (this.shipId === "aphelion") {
-        coreColor = "#ffb14a";
-        glowColor = "rgba(255, 177, 74, 0.8)";
-        accentColor = "#ff662b";
-      } else if (this.shipId === "inferno") {
-        coreColor = "#ff8844";
-        glowColor = "rgba(255, 136, 68, 0.76)";
-        accentColor = "#ff4d2a";
-      } else if (this.shipId === "seraph") {
-        coreColor = "#ff5a5a";
-        glowColor = "rgba(255, 90, 90, 0.78)";
-        accentColor = "#ff2020";
-      } else if (this.shipId === "aurora") {
-        coreColor = "#97f8ff";
-        glowColor = "rgba(151, 248, 255, 0.76)";
-        accentColor = "#6ac8ff";
-      } else {
-        
-        coreColor = "#74ffce";
-        glowColor = "rgba(116, 255, 206, 0.7)";
-        accentColor = "#4dffb3";
-      }
-    }
-    
-    
-    const engineGradient = ctx.createRadialGradient(-15, 0, 0, -15, 0, 12);
-    engineGradient.addColorStop(0, glowColor);
-    engineGradient.addColorStop(0.5, glowColor.replace("0.7", "0.3"));
-    engineGradient.addColorStop(1, "transparent");
-    ctx.fillStyle = engineGradient;
-    ctx.beginPath();
-    ctx.arc(-15, 0, 12, 0, Math.PI * 2);
-    ctx.fill();
-    
-    
-    
-    const shieldPercent = this.shield / this.maxShield;
-    const baseRadius = 30; 
-    const maxShieldBonus = (this.maxShield / 100) * 12; 
-    const shieldRadius = baseRadius + (shieldPercent * (18 + maxShieldBonus)); 
-    
-    
-    const shieldColor = this.shieldColorOverride || glowColor;
-    const shieldGradient = ctx.createRadialGradient(0, 0, 0, 0, 0, shieldRadius);
-    shieldGradient.addColorStop(0, "transparent");
-    shieldGradient.addColorStop(0.7, "transparent");
-    
-    const colorForGradient = this.shieldColorOverride 
-      ? this.shieldColorOverride.replace(/[\d\.]+\)$/, "0.4)")
-      : shieldColor.replace("0.7", "0.4");
-    const colorForEdge = this.shieldColorOverride
-      ? this.shieldColorOverride.replace(/[\d\.]+\)$/, "0.1)")
-      : shieldColor.replace("0.7", "0.1");
-    shieldGradient.addColorStop(0.9, colorForGradient);
-    shieldGradient.addColorStop(1, colorForEdge);
-    ctx.strokeStyle = shieldGradient;
-    ctx.lineWidth = 2 + shieldPercent * 1.5; 
-    ctx.beginPath();
-    ctx.arc(0, 0, shieldRadius, 0, Math.PI * 2);
-    ctx.stroke();
-    
-    
-    if (this.infiniteShield) {
-      ctx.strokeStyle = shieldColor;
-      ctx.lineWidth = 4;
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = shieldColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldRadius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-    
-    
-    if (this.fortifyActive) {
-      ctx.strokeStyle = "#ffe29b";
-      ctx.lineWidth = 3;
-      ctx.shadowBlur = 25;
-      ctx.shadowColor = "#ffe29b";
-      ctx.beginPath();
-      ctx.arc(0, 0, shieldRadius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    }
-    
-    
-    const bodyGradient = ctx.createLinearGradient(20, 0, -15, 0);
-    bodyGradient.addColorStop(0, "#ffffff");
-    bodyGradient.addColorStop(0.2, coreColor);
-    bodyGradient.addColorStop(0.5, accentColor);
-    bodyGradient.addColorStop(0.8, accentColor + "cc");
-    bodyGradient.addColorStop(1, accentColor + "80");
-    ctx.fillStyle = bodyGradient;
-    ctx.strokeStyle = coreColor;
-    ctx.lineWidth = 2.5;
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = coreColor;
-    
-    if (this.shipId === "striker") {
-      
-      
-      ctx.beginPath();
-      ctx.moveTo(22, 0); 
-      ctx.lineTo(18, -3); 
-      ctx.lineTo(12, -4); 
-      ctx.lineTo(4, -5); 
-      ctx.lineTo(-6, -4); 
-      ctx.lineTo(-12, -2); 
-      ctx.lineTo(-14, 0); 
-      ctx.lineTo(-12, 2); 
-      ctx.lineTo(-6, 4); 
-      ctx.lineTo(4, 5); 
-      ctx.lineTo(12, 4); 
-      ctx.lineTo(18, 3); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(4, -5); 
-      ctx.lineTo(2, -6);
-      ctx.lineTo(-8, -18); 
-      ctx.lineTo(-10, -14); 
-      ctx.lineTo(-2, -8); 
-      ctx.lineTo(4, -4); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(4, 5); 
-      ctx.lineTo(2, 6);
-      ctx.lineTo(-8, 18); 
-      ctx.lineTo(-10, 14); 
-      ctx.lineTo(-2, 8); 
-      ctx.lineTo(4, 4); 
-      ctx.closePath();
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "rgba(200, 240, 255, 0.7)";
-      ctx.beginPath();
-      ctx.ellipse(6, 0, 4, 3, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(20, 0, 2, 0, Math.PI * 2);
-      ctx.fill();
-      
-    } else if (this.shipId === "aegis") {
-      
-      
-      ctx.beginPath();
-      ctx.moveTo(20, 0); 
-      ctx.lineTo(16, -4); 
-      ctx.lineTo(10, -6); 
-      ctx.lineTo(2, -7); 
-      ctx.lineTo(-6, -6); 
-      ctx.lineTo(-12, -4); 
-      ctx.lineTo(-14, 0); 
-      ctx.lineTo(-12, 4); 
-      ctx.lineTo(-6, 6); 
-      ctx.lineTo(2, 7); 
-      ctx.lineTo(10, 6); 
-      ctx.lineTo(16, 4); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(2, -7); 
-      ctx.lineTo(0, -8);
-      ctx.lineTo(-10, -20); 
-      ctx.lineTo(-12, -16); 
-      ctx.lineTo(-4, -10); 
-      ctx.lineTo(2, -6); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(2, 7); 
-      ctx.lineTo(0, 8);
-      ctx.lineTo(-10, 20); 
-      ctx.lineTo(-12, 16); 
-      ctx.lineTo(-4, 10); 
-      ctx.lineTo(2, 6); 
-      ctx.closePath();
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "rgba(200, 240, 255, 0.7)";
-      ctx.beginPath();
-      ctx.ellipse(8, 0, 5, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.fillStyle = coreColor;
-      ctx.beginPath();
-      ctx.ellipse(-4, -5, 3, 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(-4, 5, 3, 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-    } else if (this.shipId === "phantom") {
-      
-      
-      ctx.beginPath();
-      ctx.moveTo(24, 0); 
-      ctx.lineTo(20, -2); 
-      ctx.lineTo(14, -3); 
-      ctx.lineTo(6, -4); 
-      ctx.lineTo(-4, -3); 
-      ctx.lineTo(-10, -1); 
-      ctx.lineTo(-12, 0); 
-      ctx.lineTo(-10, 1); 
-      ctx.lineTo(-4, 3); 
-      ctx.lineTo(6, 4); 
-      ctx.lineTo(14, 3); 
-      ctx.lineTo(20, 2); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(6, -4); 
-      ctx.lineTo(4, -5);
-      ctx.lineTo(24, -10); 
-      ctx.lineTo(22, -6); 
-      ctx.lineTo(10, -2); 
-      ctx.lineTo(6, -3); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(6, 4); 
-      ctx.lineTo(4, 5);
-      ctx.lineTo(24, 10); 
-      ctx.lineTo(22, 6); 
-      ctx.lineTo(10, 2); 
-      ctx.lineTo(6, 3); 
-      ctx.closePath();
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "rgba(200, 200, 255, 0.6)";
-      ctx.beginPath();
-      ctx.ellipse(8, 0, 3, 2.5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.strokeStyle = accentColor;
-      ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.6;
-      ctx.beginPath();
-      ctx.moveTo(4, -3);
-      ctx.lineTo(0, -4);
-      ctx.lineTo(2, -2);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(4, 3);
-      ctx.lineTo(0, 4);
-      ctx.lineTo(2, 2);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      
-    } else if (this.shipId === "tempest") {
-      
-      
-      ctx.beginPath();
-      ctx.moveTo(22, 0); 
-      ctx.lineTo(18, -3); 
-      ctx.lineTo(12, -4); 
-      ctx.lineTo(4, -5); 
-      ctx.lineTo(-6, -4); 
-      ctx.lineTo(-12, -2); 
-      ctx.lineTo(-14, 0); 
-      ctx.lineTo(-12, 2); 
-      ctx.lineTo(-6, 4); 
-      ctx.lineTo(4, 5); 
-      ctx.lineTo(12, 4); 
-      ctx.lineTo(18, 3); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(4, -5); 
-      ctx.lineTo(2, -6);
-      ctx.lineTo(-8, -18); 
-      ctx.lineTo(-10, -14); 
-      ctx.lineTo(-2, -8); 
-      ctx.lineTo(4, -4); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(4, 5); 
-      ctx.lineTo(2, 6);
-      ctx.lineTo(-8, 18); 
-      ctx.lineTo(-10, 14); 
-      ctx.lineTo(-2, 8); 
-      ctx.lineTo(4, 4); 
-      ctx.closePath();
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "#ffff00";
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = "#ffff00";
-      ctx.beginPath();
-      ctx.arc(-8, -16, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(-8, 16, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(-8, -16, 1, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(-8, 16, 1, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "rgba(255, 255, 200, 0.7)";
-      ctx.beginPath();
-      ctx.ellipse(6, 0, 4, 3, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.strokeStyle = "#ffff00";
-      ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.6;
-      ctx.beginPath();
-      ctx.moveTo(4, -5);
-      ctx.lineTo(2, -6);
-      ctx.lineTo(-8, -16);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(4, 5);
-      ctx.lineTo(2, 6);
-      ctx.lineTo(-8, 16);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      
-    } else if (this.shipId === "titan") {
-      
-      
-      ctx.beginPath();
-      ctx.moveTo(18, 0); 
-      ctx.lineTo(14, -5); 
-      ctx.lineTo(8, -7); 
-      ctx.lineTo(0, -8); 
-      ctx.lineTo(-8, -7); 
-      ctx.lineTo(-14, -5); 
-      ctx.lineTo(-16, 0); 
-      ctx.lineTo(-14, 5); 
-      ctx.lineTo(-8, 7); 
-      ctx.lineTo(0, 8); 
-      ctx.lineTo(8, 7); 
-      ctx.lineTo(14, 5); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(0, -8); 
-      ctx.lineTo(-2, -9);
-      ctx.lineTo(-12, -22); 
-      ctx.lineTo(-14, -18); 
-      ctx.lineTo(-6, -12); 
-      ctx.lineTo(0, -7); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(0, 8); 
-      ctx.lineTo(-2, 9);
-      ctx.lineTo(-12, 22); 
-      ctx.lineTo(-14, 18); 
-      ctx.lineTo(-6, 12); 
-      ctx.lineTo(0, 7); 
-      ctx.closePath();
-      ctx.fill();
-      
-      
-      ctx.fillStyle = coreColor;
-      ctx.beginPath();
-      ctx.moveTo(-6, -12);
-      ctx.lineTo(-10, -14);
-      ctx.lineTo(-9, -11);
-      ctx.lineTo(-5, -10);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-6, 12);
-      ctx.lineTo(-10, 14);
-      ctx.lineTo(-9, 11);
-      ctx.lineTo(-5, 10);
-      ctx.closePath();
-      ctx.fill();
-      
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(-8, -12, 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(-8, 12, 2, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "rgba(255, 200, 200, 0.7)";
-      ctx.beginPath();
-      ctx.ellipse(10, 0, 5, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.fillStyle = coreColor;
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = coreColor;
-      ctx.beginPath();
-      ctx.arc(-6, -6, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(-6, 6, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      
-    } else if (this.shipId === "specter") {
-      
-      
-      ctx.beginPath();
-      ctx.moveTo(26, 0); 
-      ctx.lineTo(22, -2); 
-      ctx.lineTo(16, -3); 
-      ctx.lineTo(8, -4); 
-      ctx.lineTo(-2, -3); 
-      ctx.lineTo(-10, -1); 
-      ctx.lineTo(-12, 0); 
-      ctx.lineTo(-10, 1); 
-      ctx.lineTo(-2, 3); 
-      ctx.lineTo(8, 4); 
-      ctx.lineTo(16, 3); 
-      ctx.lineTo(22, 2); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      
-      
-      ctx.fillStyle = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(8, -4); 
-      ctx.lineTo(6, -5);
-      ctx.lineTo(28, -8); 
-      ctx.lineTo(26, -4); 
-      ctx.lineTo(12, -2); 
-      ctx.lineTo(8, -3); 
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(8, 4); 
-      ctx.lineTo(6, 5);
-      ctx.lineTo(28, 8); 
-      ctx.lineTo(26, 4); 
-      ctx.lineTo(12, 2); 
-      ctx.lineTo(8, 3); 
-      ctx.closePath();
-      ctx.fill();
-      
-      
-      ctx.fillStyle = "rgba(200, 200, 255, 0.6)";
-      ctx.beginPath();
-      ctx.ellipse(10, 0, 3.5, 2.5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      
-      
-      ctx.fillStyle = accentColor;
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = accentColor;
-      ctx.beginPath();
-      ctx.moveTo(-4, -3);
-      ctx.lineTo(-2, -5);
-      ctx.lineTo(-6, -5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(-4, 3);
-      ctx.lineTo(-2, 5);
-      ctx.lineTo(-6, 5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      
-      
-      ctx.globalAlpha = 0.4;
-      ctx.fillStyle = coreColor;
-      ctx.beginPath();
-      ctx.ellipse(-8, 0, 10, 4, angle + Math.PI / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    } else if (this.shipId === "glacier") {
-      ctx.beginPath();
-      ctx.moveTo(20, 0);
-      ctx.lineTo(14, -4);
-      ctx.lineTo(8, -8);
-      ctx.lineTo(-2, -7);
-      ctx.lineTo(-12, -3);
-      ctx.lineTo(-16, 0);
-      ctx.lineTo(-12, 3);
-      ctx.lineTo(-2, 7);
-      ctx.lineTo(8, 8);
-      ctx.lineTo(14, 4);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "rgba(195, 245, 255, 0.8)";
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-8, -10);
-      ctx.lineTo(-12, 0);
-      ctx.lineTo(-8, 10);
-      ctx.closePath();
-      ctx.fill();
-    } else if (this.shipId === "aphelion") {
-      ctx.beginPath();
-      ctx.moveTo(30, 0);
-      ctx.lineTo(20, -4);
-      ctx.lineTo(10, -9);
-      ctx.lineTo(-3, -9);
-      ctx.lineTo(-18, -4);
-      ctx.lineTo(-24, 0);
-      ctx.lineTo(-18, 4);
-      ctx.lineTo(-3, 9);
-      ctx.lineTo(10, 9);
-      ctx.lineTo(20, 4);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "#ffdda1";
-      ctx.shadowBlur = 18;
-      ctx.shadowColor = "#ff7c2b";
-      ctx.beginPath();
-      ctx.arc(-10, 0, 6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    } else if (this.shipId === "seraph") {
-      const railYs = [-46, -17, 17, 46];
-      const wingFill = ctx.createLinearGradient(-18, 0, 8, 0);
-      wingFill.addColorStop(0, "#2a1218");
-      wingFill.addColorStop(0.45, "#4a222c");
-      wingFill.addColorStop(1, "#5c2a36");
-      ctx.fillStyle = wingFill;
-      ctx.strokeStyle = "#8a3038";
-      ctx.lineWidth = 1.6;
-      ctx.shadowBlur = 0;
-      for (const sy of [-1, 1]) {
-        const m = sy;
-        ctx.beginPath();
-        ctx.moveTo(-2, m * 7);
-        ctx.lineTo(6, m * 9);
-        ctx.lineTo(10, m * 22);
-        ctx.lineTo(4, m * 42);
-        ctx.lineTo(-8, m * 48);
-        ctx.lineTo(-16, m * 44);
-        ctx.lineTo(-14, m * 18);
-        ctx.lineTo(-8, m * 8);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
-      for (const ry of railYs) {
-        const bw = Math.abs(ry) >= 40 ? 5.2 : 4.6;
-        const len = 13;
-        const bg = ctx.createLinearGradient(0, ry - bw / 2, len, ry + bw / 2);
-        bg.addColorStop(0, "#2a1014");
-        bg.addColorStop(0.55, "#4a1820");
-        bg.addColorStop(1, "#1a080c");
-        ctx.fillStyle = bg;
-        ctx.strokeStyle = "#3d1518";
-        ctx.lineWidth = 1.15;
-        ctx.fillRect(0, ry - bw / 2, len, bw);
-        ctx.strokeRect(0.5, ry - bw / 2 + 0.35, len - 1, bw - 0.7);
-        ctx.strokeStyle = "#ff4444";
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(0.6, ry - bw * 0.35);
-        ctx.lineTo(len - 0.6, ry - bw * 0.35);
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.moveTo(15, 0);
-      ctx.lineTo(10, -3.5);
-      ctx.lineTo(2, -5.2);
-      ctx.lineTo(-6, -4.5);
-      ctx.lineTo(-14, -2);
-      ctx.lineTo(-17, 0);
-      ctx.lineTo(-14, 2);
-      ctx.lineTo(-6, 4.5);
-      ctx.lineTo(2, 5.2);
-      ctx.lineTo(10, 3.5);
-      ctx.closePath();
-      ctx.fillStyle = bodyGradient;
-      ctx.strokeStyle = coreColor;
-      ctx.lineWidth = 2.5;
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-      ctx.shadowBlur = 8;
-      ctx.shadowColor = "#ff6666";
-      ctx.beginPath();
-      ctx.arc(4, 0, 2.6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    }
-    
-    ctx.shadowBlur = 0;
-    
-    
-    ctx.strokeStyle = coreColor;
-    ctx.lineWidth = 3;
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = coreColor;
-    ctx.beginPath();
-    if (this.shipId === "striker") {
-      ctx.moveTo(22, 0);
-      ctx.lineTo(18, -3);
-      ctx.lineTo(12, -4);
-      ctx.lineTo(4, -5);
-      ctx.lineTo(-6, -4);
-      ctx.lineTo(-12, -2);
-      ctx.lineTo(-14, 0);
-      ctx.lineTo(-12, 2);
-      ctx.lineTo(-6, 4);
-      ctx.lineTo(4, 5);
-      ctx.lineTo(12, 4);
-      ctx.lineTo(18, 3);
-      ctx.closePath();
-    } else if (this.shipId === "aegis") {
-      ctx.moveTo(20, 0);
-      ctx.lineTo(16, -4);
-      ctx.lineTo(10, -6);
-      ctx.lineTo(2, -7);
-      ctx.lineTo(-6, -6);
-      ctx.lineTo(-12, -4);
-      ctx.lineTo(-14, 0);
-      ctx.lineTo(-12, 4);
-      ctx.lineTo(-6, 6);
-      ctx.lineTo(2, 7);
-      ctx.lineTo(10, 6);
-      ctx.lineTo(16, 4);
-      ctx.closePath();
-    } else if (this.shipId === "phantom") {
-      ctx.moveTo(24, 0);
-      ctx.lineTo(20, -2);
-      ctx.lineTo(14, -3);
-      ctx.lineTo(6, -4);
-      ctx.lineTo(-4, -3);
-      ctx.lineTo(-10, -1);
-      ctx.lineTo(-12, 0);
-      ctx.lineTo(-10, 1);
-      ctx.lineTo(-4, 3);
-      ctx.lineTo(6, 4);
-      ctx.lineTo(14, 3);
-      ctx.lineTo(20, 2);
-      ctx.closePath();
-    } else if (this.shipId === "tempest") {
-      ctx.moveTo(22, 0);
-      ctx.lineTo(18, -3);
-      ctx.lineTo(12, -4);
-      ctx.lineTo(4, -5);
-      ctx.lineTo(-6, -4);
-      ctx.lineTo(-12, -2);
-      ctx.lineTo(-14, 0);
-      ctx.lineTo(-12, 2);
-      ctx.lineTo(-6, 4);
-      ctx.lineTo(4, 5);
-      ctx.lineTo(12, 4);
-      ctx.lineTo(18, 3);
-      ctx.closePath();
-    } else if (this.shipId === "titan") {
-      ctx.moveTo(18, 0);
-      ctx.lineTo(14, -5);
-      ctx.lineTo(8, -7);
-      ctx.lineTo(0, -8);
-      ctx.lineTo(-8, -7);
-      ctx.lineTo(-14, -5);
-      ctx.lineTo(-16, 0);
-      ctx.lineTo(-14, 5);
-      ctx.lineTo(-8, 7);
-      ctx.lineTo(0, 8);
-      ctx.lineTo(8, 7);
-      ctx.lineTo(14, 5);
-      ctx.closePath();
-    } else if (this.shipId === "specter") {
-      ctx.moveTo(26, 0);
-      ctx.lineTo(22, -2);
-      ctx.lineTo(16, -3);
-      ctx.lineTo(8, -4);
-      ctx.lineTo(-2, -3);
-      ctx.lineTo(-10, -1);
-      ctx.lineTo(-12, 0);
-      ctx.lineTo(-10, 1);
-      ctx.lineTo(-2, 3);
-      ctx.lineTo(8, 4);
-      ctx.lineTo(16, 3);
-      ctx.lineTo(22, 2);
-      ctx.closePath();
-    } else if (this.shipId === "glacier") {
-      ctx.moveTo(20, 0);
-      ctx.lineTo(14, -4);
-      ctx.lineTo(8, -8);
-      ctx.lineTo(-2, -7);
-      ctx.lineTo(-12, -3);
-      ctx.lineTo(-16, 0);
-      ctx.lineTo(-12, 3);
-      ctx.lineTo(-2, 7);
-      ctx.lineTo(8, 8);
-      ctx.lineTo(14, 4);
-      ctx.closePath();
-    } else if (this.shipId === "aphelion") {
-      ctx.moveTo(30, 0);
-      ctx.lineTo(20, -4);
-      ctx.lineTo(10, -9);
-      ctx.lineTo(-3, -9);
-      ctx.lineTo(-18, -4);
-      ctx.lineTo(-24, 0);
-      ctx.lineTo(-18, 4);
-      ctx.lineTo(-3, 9);
-      ctx.lineTo(10, 9);
-      ctx.lineTo(20, 4);
-      ctx.closePath();
-    } else if (this.shipId === "seraph") {
-      ctx.moveTo(15, 0);
-      ctx.lineTo(10, -3.5);
-      ctx.lineTo(2, -5.2);
-      ctx.lineTo(-6, -4.5);
-      ctx.lineTo(-14, -2);
-      ctx.lineTo(-17, 0);
-      ctx.lineTo(-14, 2);
-      ctx.lineTo(-6, 4.5);
-      ctx.lineTo(2, 5.2);
-      ctx.lineTo(10, 3.5);
-      ctx.closePath();
-    }
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    
-    
-    ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = coreColor;
-    ctx.beginPath();
-    ctx.arc(10, 0, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    
-    
-    const speed = Math.hypot(this.vx, this.vy);
-    if (speed > 50) {
-      ctx.globalAlpha = Math.min(speed / 200, 0.6);
-      for (let i = 0; i < 3; i++) {
-        const offset = (i - 1) * 4;
-        const exhaustGradient = ctx.createRadialGradient(-18 + offset, 0, 0, -18 + offset, 0, 4);
-        exhaustGradient.addColorStop(0, coreColor);
-        exhaustGradient.addColorStop(1, "transparent");
-        ctx.fillStyle = exhaustGradient;
-        ctx.beginPath();
-        ctx.arc(-18 + offset, 0, 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-    }
-
-    const tier = (shipLoadouts[this.shipId] || shipLoadouts.striker).tier;
-    const tierFx = {
-      common: { outline: "#9e9e9e", shadow: 6, ring: 20, alpha: 0.25 },
-      uncommon: { outline: "#4caf50", shadow: 8, ring: 22, alpha: 0.3 },
-      rare: { outline: "#2196f3", shadow: 10, ring: 24, alpha: 0.35 },
-      mythic: { outline: "#b14aff", shadow: 16, ring: 26, alpha: 0.45 },
-      legendary: { outline: "#ff9800", shadow: 20, ring: 28, alpha: 0.5 },
-      exotic: { outline: "#ff4d4d", shadow: 26, ring: 31, alpha: 0.62 },
-    }[tier] || { outline: "#ffffff", shadow: 6, ring: 20, alpha: 0.24 };
-    if (tier === "mythic" || tier === "legendary" || tier === "exotic") {
-      ctx.save();
-      ctx.strokeStyle = tierFx.outline;
-      ctx.globalAlpha = tierFx.alpha;
-      ctx.lineWidth = tier === "exotic" ? 3 : tier === "legendary" ? 2.6 : 2.2;
-      ctx.shadowBlur = tierFx.shadow;
-      ctx.shadowColor = tierFx.outline;
-      ctx.beginPath();
-      ctx.arc(0, 0, tierFx.ring + Math.sin(performance.now() / 220) * (tier === "exotic" ? 1.8 : 1.1), 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = tier === "exotic" ? 0.45 : 0.3;
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.arc(0, 0, tierFx.ring + 6 + Math.sin(performance.now() / 340) * 2, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
-    
-    
-    if (this.invincible) {
-      ctx.globalAlpha = 0.4;
-    }
-    
-    ctx.restore();
-  }
-}
-
+// Extracted: Enemy and Player core classes
 class ExpandingCircle {
   constructor(x, y, maxRadius, color, duration, damage = null, damagePerSecond = null) {
     this.x = x;
@@ -6424,12 +2936,46 @@ class ExpandingCircle {
     this.damage = damage; 
     this.damagePerSecond = damagePerSecond; 
     this.hitEnemies = new WeakSet(); 
-    this.lastDamageTime = 0; 
+    this.lastDamageTime = 0;
+    this.infernoIgniteDuration = 0;
+    this.infernoIgniteDps = 0;
+    this.ringFrontDamage = null;
+    this.ringFrontKnockback = 0;
+    this.ringFrontHitEnemies = null;
   }
   update(dt) {
     this.life -= dt;
+    const prevR = this.radius;
     this.radius = Math.min(this.radius + this.speed * dt, this.maxRadius);
+    const newR = this.radius;
     this.lastDamageTime += dt;
+
+    if (this.ringFrontDamage != null) {
+      if (!this.ringFrontHitEnemies) this.ringFrontHitEnemies = new WeakSet();
+      const kb = this.ringFrontKnockback || 0;
+      const rdmg = this.ringFrontDamage;
+      for (let i = state.enemies.length - 1; i >= 0; i--) {
+        const enemy = state.enemies[i];
+        if (!enemy || enemy.hp <= 0) continue;
+        if (this.ringFrontHitEnemies.has(enemy)) continue;
+        const d = dist(this.x, this.y, enemy.x, enemy.y);
+        const margin = enemy.size * 0.55 + 4;
+        if (newR + margin >= d && prevR <= d + margin) {
+          this.ringFrontHitEnemies.add(enemy);
+          let dmg = rdmg;
+          if (enemy.deathMarked) dmg *= 1.5;
+          enemy.hp -= dmg;
+          recordDamageDealt(dmg);
+          const a = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+          const f = clamp(1 - d / (this.maxRadius + enemy.size + 1), 0.2, 1);
+          enemy.x += Math.cos(a) * kb * f;
+          enemy.y += Math.sin(a) * kb * f;
+          enemy.x = clamp(enemy.x, enemy.size, config.width - enemy.size);
+          enemy.y = clamp(enemy.y, TOP_HUD_SAFE_Y + enemy.size, config.height - enemy.size);
+          if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
+        }
+      }
+    }
     
     
     if (this.damagePerSecond && this.lastDamageTime >= 0.1) {
@@ -6465,6 +3011,10 @@ class ExpandingCircle {
             damage *= 1.5;
           }
           enemy.hp -= damage;
+          if (this.infernoIgniteDuration > 0 && this.infernoIgniteDps > 0) {
+            enemy.infernoBurnTimer = Math.max(enemy.infernoBurnTimer || 0, this.infernoIgniteDuration);
+            enemy.infernoBurnDps = Math.max(enemy.infernoBurnDps || 0, this.infernoIgniteDps);
+          }
           
           if (this.color === "#ffe29b") {
             enemy.y -= 30; 
@@ -6539,6 +3089,7 @@ class NovaAnomaly {
     this.aphelionCollapse = !!config.aphelionCollapse;
     this.streamBudget = 0;
     this.streamColors = config.streamColors || ["#00ffff", "#4ddbff", "#a8ffff", "#00b8d4"];
+    this.voidwalkerHorizon = !!config.voidwalkerHorizon;
   }
   update(dt) {
     this.life -= dt;
@@ -6566,11 +3117,14 @@ class NovaAnomaly {
     for (let i = state.enemies.length - 1; i >= 0; i--) {
       const enemy = state.enemies[i];
       const d = dist(this.x, this.y, enemy.x, enemy.y);
-      if (d > this.radius + enemy.size) continue;
+      if (!this.voidwalkerHorizon && d > this.radius + enemy.size) continue;
       if (this.pullEnabled && d > 1) {
         const pullAngle = Math.atan2(this.y - enemy.y, this.x - enemy.x);
-        const pullForce = this.pullStrength * dt * (1 - d / (this.radius + 1));
-        if (this.aphelionCollapse) {
+        const radiusForFalloff = this.voidwalkerHorizon
+          ? Math.max(this.pullRadius || this.maxRadius, Math.hypot(config.width, config.height) * 0.95)
+          : this.radius + 1;
+        const pullForce = this.pullStrength * dt * Math.max(0.12, 1 - d / radiusForFalloff);
+        if (this.aphelionCollapse || this.voidwalkerHorizon) {
           const spiral = pullAngle + Math.PI / 2;
           const radial = pullForce * 0.55;
           const tang = pullForce * 0.68;
@@ -6584,17 +3138,18 @@ class NovaAnomaly {
             enemy.fireTimer = Math.max(enemy.fireTimer, 0.18);
           }
         }
-      } else if (this.aphelionCollapse) {
+      } else if (this.aphelionCollapse || this.voidwalkerHorizon) {
         enemy.fireTimer = Math.max(enemy.fireTimer, 3);
       }
       enemy.hp -= this.damagePerSecond * dt;
       if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
     }
-    if (this.aphelionCollapse) {
+    if (this.aphelionCollapse || this.voidwalkerHorizon) {
       for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
         const bullet = state.enemyBullets[i];
         const d = dist(this.x, this.y, bullet.x, bullet.y);
-        if (d > this.radius + 22) continue;
+        if (!this.voidwalkerHorizon && d > this.radius + 22) continue;
+        if (this.voidwalkerHorizon && d > (this.pullRadius || this.maxRadius) + 40) continue;
         const pullB = this.pullStrength * 1.4 * dt * (1 - d / (this.radius + 48));
         const baseAng = Math.atan2(this.y - bullet.y, this.x - bullet.x);
         const spiral = baseAng + Math.PI / 2;
@@ -6617,24 +3172,45 @@ class NovaAnomaly {
       for (let i = state.enemies.length - 1; i >= 0; i--) {
         const enemy = state.enemies[i];
         const d = dist(this.x, this.y, enemy.x, enemy.y);
-        if (d <= this.maxRadius + enemy.size) {
+        if (this.voidwalkerHorizon || d <= this.maxRadius + enemy.size) {
           enemy.hp -= this.explosionDamage;
           if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
         }
-        if (this.explosionKnockback > 0 && d <= kbR + enemy.size && enemy.hp > 0) {
+        if (
+          this.explosionKnockback > 0 &&
+          enemy.hp > 0 &&
+          (this.voidwalkerHorizon || d <= kbR + enemy.size)
+        ) {
           const a = Math.atan2(enemy.y - this.y, enemy.x - this.x);
-          const falloff = 1 - Math.min(1, d / Math.max(kbR, 1));
+          const falloff = this.voidwalkerHorizon ? 0.72 + 0.28 * (1 - Math.min(1, d / Math.max(kbR, 1))) : 1 - Math.min(1, d / Math.max(kbR, 1));
           const kb = this.explosionKnockback * falloff;
           enemy.x += Math.cos(a) * kb;
           enemy.y += Math.sin(a) * kb;
         }
       }
-      const burstTint = this.aphelionCollapse ? "#c291ff" : this.azureVortex ? "#b6ffff" : "#8ad7ff";
-      const count = this.aphelionCollapse ? 620 : this.azureVortex ? 420 : 220;
+      const burstTint = this.voidwalkerHorizon ? "#b070ff" : this.aphelionCollapse ? "#c291ff" : this.azureVortex ? "#b6ffff" : "#8ad7ff";
+      const count = this.voidwalkerHorizon ? 540 : this.aphelionCollapse ? 620 : this.azureVortex ? 420 : 220;
       for (let i = 0; i < count; i++) {
         const a = (i / count) * Math.PI * 2;
-        const dist = rng(20, this.maxRadius * (this.aphelionCollapse ? 2.1 : this.azureVortex ? 1.65 : 1.2));
-        const p = new Particle(this.x + Math.cos(a) * dist, this.y + Math.sin(a) * dist, this.aphelionCollapse ? (i % 2 ? "#9d5bff" : "#d9b2ff") : this.azureVortex && i % 2 ? "#00ffff" : burstTint);
+        const dist = rng(
+          20,
+          this.maxRadius * (this.voidwalkerHorizon ? 2.4 : this.aphelionCollapse ? 2.1 : this.azureVortex ? 1.65 : 1.2)
+        );
+        const p = new Particle(
+          this.x + Math.cos(a) * dist,
+          this.y + Math.sin(a) * dist,
+          this.voidwalkerHorizon
+            ? i % 2
+              ? "#7a3dcc"
+              : "#d4b8ff"
+            : this.aphelionCollapse
+              ? i % 2
+                ? "#9d5bff"
+                : "#d9b2ff"
+              : this.azureVortex && i % 2
+                ? "#00ffff"
+                : burstTint
+        );
         p.vx = Math.cos(a) * rng(140, 420);
         p.vy = Math.sin(a) * rng(140, 420);
         p.life = rng(0.28, 0.72);
@@ -6684,6 +3260,32 @@ class NovaAnomaly {
           ctx.lineTo(this.x + Math.cos(a) * len, this.y + Math.sin(a) * len);
           ctx.stroke();
         }
+      }
+    }
+    if (this.voidwalkerHorizon) {
+      const hudY = typeof TOP_HUD_SAFE_Y === "number" ? TOP_HUD_SAFE_Y : 0;
+      const playH = config.height - hudY;
+      ctx.globalAlpha = Math.min(0.5, alpha * 0.55);
+      ctx.fillStyle = "rgba(12, 0, 28, 0.78)";
+      ctx.fillRect(0, hudY, config.width, playH + 2);
+      ctx.globalAlpha = alpha * 0.18;
+      const maxD = Math.hypot(config.width, playH) * 0.72;
+      const g2 = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, maxD);
+      g2.addColorStop(0, "rgba(200, 120, 255, 0.35)");
+      g2.addColorStop(0.5, "rgba(90, 30, 160, 0.12)");
+      g2.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g2;
+      ctx.fillRect(0, hudY, config.width, playH + 2);
+      ctx.globalAlpha = alpha * 0.22;
+      for (let i = 0; i < 18; i++) {
+        const a = (i / 18) * Math.PI * 2 + performance.now() * 0.0012;
+        const len = Math.min(this.radius * 1.15, maxD * 0.55) * (0.55 + (i % 3) * 0.18);
+        ctx.strokeStyle = i % 2 ? "rgba(160, 90, 230, 0.55)" : "rgba(100, 40, 180, 0.45)";
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y);
+        ctx.lineTo(this.x + Math.cos(a) * len, this.y + Math.sin(a) * len);
+        ctx.stroke();
       }
     }
     ctx.restore();
@@ -6921,8 +3523,11 @@ class NovaOrbiter {
       const enemy = state.enemies[i];
       const d = dist(enemy.x, enemy.y, this.x, this.y);
       if (d < enemy.size + 12 && this.cooldown <= 0) {
+        if (this.specterDecoy) {
+          continue;
+        }
         const dmgOrb =
-          (this.specterDecoy ? 3.4 : this.infernoSwarm ? 15 : 22) *
+          (this.infernoSwarm ? 15 : 22) *
           state.player.damageMultiplier *
           state.player.abilityDamageMultiplier;
         enemy.hp -= dmgOrb;
@@ -6930,11 +3535,9 @@ class NovaOrbiter {
         const a = Math.atan2(enemy.y - state.player.y, enemy.x - state.player.x);
         enemy.x += Math.cos(a) * 16;
         enemy.y += Math.sin(a) * 16;
-        if (!this.specterDecoy) {
-          const prevHp = state.player.hp;
-          state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1.2);
-          recordHealthRegen(state.player.hp - prevHp);
-        }
+        const prevHp = state.player.hp;
+        state.player.hp = Math.min(state.player.maxHp, state.player.hp + 1.2);
+        recordHealthRegen(state.player.hp - prevHp);
         this.cooldown = 0.08;
         if (enemy.hp <= 0) onEnemyDestroyed(enemy, i);
       }
@@ -7252,6 +3855,18 @@ const state = {
   emberFog: null,
   stingerPoisonFogs: [],
   clawPawShield: null,
+  eclipseTotality: null,
+  eclipseUmbralWall: null,
+  pendingEclipseUmbralWall: null,
+  specterBladeStorm: null,
+  specterPhantasm: null,
+  wardenJudgmentChains: null,
+  oracleChronos: null,
+  oracleForesightWings: null,
+  oracleLightningStorm: null,
+  ravenUnkindnessRush: null,
+  ravenUnkindnessField: [],
+  ravenOmenSwarm: null,
   voidTrails: [],
   scytheSwings: [],
   reaperPortals: [],
@@ -7271,6 +3886,7 @@ const state = {
   expandingCircles: [],
   timeDilationFields: [],
   screenLasers: [],
+  bossHazardLasers: [],
   aphelionPortalBursts: [],
   aphelionKeelPortals: [],
   seraphBounceLasers: [],
@@ -7286,6 +3902,7 @@ const state = {
   upgradePending: false,
   awaitingUpgrade: false,
   upgradeChoices: [],
+  upgradePanelRevealTimeoutId: null,
   waveAnnouncementTimer: 0,
   lastTime: 0,
   boss: null,
@@ -7301,6 +3918,7 @@ const state = {
   totalEnemiesThisWave: 0, 
   maxSegmentsThisWave: 0, 
   abilityKeys: JSON.parse(localStorage.getItem("orbital-ability-keys") || '["1", "2", "3"]'), 
+  movementKeys: loadMovementKeys(),
   tutorialMode: false,
   tutorialStep: 0,
   tutorialTestWave: false,
@@ -7345,6 +3963,14 @@ const state = {
   killTimestamps: [],
   damageTakenTimestamps: [],
 };
+
+if (
+  mainHub &&
+  !localStorage.getItem(TUTORIAL_COMPLETED_KEY) &&
+  !state.achievements["tutorial-complete"]
+) {
+  mainHub.classList.add("hidden");
+}
 
 const hasShipAccess = (shipId) =>
   state.unlockedShips.includes(shipId) || state.tempAllShipsTrial || state.tempTrialRunActive;
@@ -7647,7 +4273,15 @@ const pickUpgradeChoices = () => {
   return Array.from(indices).map((idx) => upgradePool[idx]);
 };
 
+const clearUpgradePanelRevealTimeout = () => {
+  if (state.upgradePanelRevealTimeoutId != null) {
+    clearTimeout(state.upgradePanelRevealTimeoutId);
+    state.upgradePanelRevealTimeoutId = null;
+  }
+};
+
 const applyUpgradeChoice = (choice) => {
+  clearUpgradePanelRevealTimeout();
   choice.apply(state.player);
   upgradePanel.classList.add("hidden");
   state.upgradePending = false;
@@ -7655,18 +4289,7 @@ const applyUpgradeChoice = (choice) => {
   state.awaitingUpgrade = false;
   state.upgradeChoices = [];
   if (state.mode === "campaign" && state.wave >= state.campaignWaveTarget) {
-    unlockAchievement("campaign-clear");
-    state.campaignLevelsCompleted += 1;
-    localStorage.setItem("orbital-campaign-levels-completed", String(state.campaignLevelsCompleted));
-    state.campaignUnlockedLevel = Math.max(state.campaignUnlockedLevel, state.campaignLevel + 1);
-    localStorage.setItem("orbital-campaign-unlocked-level", String(state.campaignUnlockedLevel));
-    refreshProgressAchievements();
-    state.running = false;
-    if (campaignPanel) campaignPanel.classList.remove("hidden");
-    if (mainHub) mainHub.classList.add("hidden");
-    if (instructionsEl) instructionsEl.classList.add("hidden");
-    renderCampaignLevelGrid();
-    updateHud();
+    completeCampaignLevel();
     return;
   }
   state.wave++;
@@ -7675,6 +4298,7 @@ const applyUpgradeChoice = (choice) => {
 };
 
 const completeCampaignLevel = () => {
+  clearUpgradePanelRevealTimeout();
   unlockAchievement("campaign-clear");
   state.campaignLevelsCompleted += 1;
   localStorage.setItem("orbital-campaign-levels-completed", String(state.campaignLevelsCompleted));
@@ -7687,66 +4311,110 @@ const completeCampaignLevel = () => {
   state.awaitingUpgrade = false;
   state.upgradeChoices = [];
   if (upgradePanel) upgradePanel.classList.add("hidden");
-  if (campaignPanel) campaignPanel.classList.remove("hidden");
+  if (campaignPanel) campaignPanel.classList.add("hidden");
   if (mainHub) mainHub.classList.add("hidden");
   if (instructionsEl) instructionsEl.classList.add("hidden");
+  if (campaignCompleteTitle) {
+    campaignCompleteTitle.textContent = `Level ${state.campaignLevel} Complete`;
+  }
+  if (campaignCompleteDetails) {
+    const unlockedTo = Math.max(state.campaignUnlockedLevel, state.campaignLevel + 1);
+    campaignCompleteDetails.textContent = `Score: ${state.score} · Waves: ${state.wave} · Next unlocked level: ${unlockedTo}`;
+  }
+  if (campaignCompletePanel) campaignCompletePanel.classList.remove("hidden");
   renderCampaignLevelGrid();
   updateHud();
 };
 
 const openUpgradePanel = () => {
-  tone(520, 0.12, "triangle", audio.sfxVolume * 0.14);
-  
-  state.bullets = [];
-  state.enemyBullets = [];
-  state.particles = [];
-  state.visualBeams = [];
-  state.decorativeLightning = [];
-  state.boltCage = null;
-  state.emberFog = null;
-  state.stingerPoisonFogs = [];
-  state.clawPawShield = null;
-  state.voidTrails = [];
-  state.scytheSwings = [];
-  state.reaperPortals = [];
-  state.reaperMinions = [];
-  state.reaperChains = [];
-  state.solarFlares = [];
-  state.fireColumns = [];
-  state.grimstarWaves = [];
-  state.powerUps = [];
-  state.drones = [];
-  state.barriers = [];
-  state.blackHoles = [];
-  state.expandingCircles = [];
-  state.timeDilationFields = [];
-  state.screenLasers = [];
-  state.aphelionPortalBursts = [];
-  state.aphelionKeelPortals = [];
-  state.seraphBounceLasers = [];
-  state.aphelionShields = [];
-  state.novaAnomalies = [];
-  state.tempestEyeStorms = [];
-  state.novaOrbiters = [];
-  state.bluefallPortals = [];
-  
-  
-  state.player.x = config.width / 2;
-  state.player.y = config.height - 100;
-  state.player.boltChannelLock = 0;
-  
-  state.upgradePending = true;
-  state.paused = true;
-  upgradePanel.classList.remove("hidden");
-  upgradeOptionsEl.innerHTML = "";
-  state.upgradeChoices = pickUpgradeChoices();
-  state.upgradeChoices.forEach((choice) => {
-    const button = document.createElement("button");
-    button.className = "upgrade-option";
-    button.innerHTML = `<strong>${choice.name}</strong><span>${choice.desc}</span>`;
-    button.addEventListener("click", () => applyUpgradeChoice(choice));
-    upgradeOptionsEl.appendChild(button);
-  });
+  clearUpgradePanelRevealTimeout();
+  state.upgradeChoices = [];
+  if (upgradePanel) upgradePanel.classList.add("hidden");
+  if (upgradeOptionsEl) upgradeOptionsEl.innerHTML = "";
+
+  state.upgradePanelRevealTimeoutId = setTimeout(() => {
+    state.upgradePanelRevealTimeoutId = null;
+    if (!state.running || !state.awaitingUpgrade) return;
+    if (!state.player) return;
+
+    tone(520, 0.12, "triangle", audio.sfxVolume * 0.14);
+
+    state.bullets = [];
+    state.enemyBullets = [];
+    state.particles = [];
+    state.visualBeams = [];
+    state.decorativeLightning = [];
+    state.boltCage = null;
+    state.emberFog = null;
+    state.stingerPoisonFogs = [];
+    state.clawPawShield = null;
+    state.eclipseTotality = null;
+    state.eclipseUmbralWall = null;
+    state.pendingEclipseUmbralWall = null;
+    state.specterBladeStorm = null;
+    state.specterPhantasm = null;
+    state.wardenJudgmentChains = null;
+    state.oracleChronos = null;
+    state.oracleForesightWings = null;
+    state.oracleLightningStorm = null;
+    state.ravenUnkindnessRush = null;
+    state.ravenUnkindnessField = [];
+    state.ravenOmenSwarm = null;
+    state.voidTrails = [];
+    state.scytheSwings = [];
+    state.reaperPortals = [];
+    state.reaperMinions = [];
+    state.reaperChains = [];
+    state.solarFlares = [];
+    state.fireColumns = [];
+    state.grimstarWaves = [];
+    state.powerUps = [];
+    state.drones = [];
+    state.barriers = [];
+    state.blackHoles = [];
+    state.expandingCircles = [];
+    state.timeDilationFields = [];
+    state.screenLasers = [];
+    state.bossHazardLasers = [];
+    state.aphelionPortalBursts = [];
+    state.aphelionKeelPortals = [];
+    state.seraphBounceLasers = [];
+    state.aphelionShields = [];
+    state.novaAnomalies = [];
+    state.tempestEyeStorms = [];
+    state.novaOrbiters = [];
+    state.bluefallPortals = [];
+
+    state.player.x = config.width / 2;
+    state.player.y = config.height - 100;
+    state.player.boltChannelLock = 0;
+
+    state.upgradePending = true;
+    state.paused = true;
+    state.upgradeChoices = pickUpgradeChoices();
+    if (!state.upgradeChoices.length) {
+      state.upgradePending = false;
+      state.paused = false;
+      state.awaitingUpgrade = false;
+      state.wave++;
+      spawnWave();
+      updateHud();
+      return;
+    }
+    if (!upgradePanel || !upgradeOptionsEl) {
+      applyUpgradeChoice(state.upgradeChoices[0]);
+      return;
+    }
+    upgradePanel.classList.remove("hidden");
+    upgradeOptionsEl.innerHTML = "";
+    state.upgradeChoices.forEach((choice) => {
+      const button = document.createElement("button");
+      button.className = "upgrade-option";
+      button.innerHTML = `<strong>${choice.name}</strong><span>${choice.desc}</span>`;
+      button.addEventListener("click", () => applyUpgradeChoice(choice));
+      upgradeOptionsEl.appendChild(button);
+    });
+  }, 1000);
 };
 
 const onEnemyDestroyed = (enemy, _index) => {
@@ -7800,16 +4468,6 @@ const onEnemyDestroyed = (enemy, _index) => {
   
   for (let k = 0; k < 25; k++) {
     state.particles.push(new Particle(enemy.x, enemy.y, "#ffb347"));
-  }
-  if (Math.random() < 0.15 * diff.powerDrop) {
-    const kinds = ["heal", "shield", "rapid", "burst"];
-    state.powerUps.push(
-      new PowerUp(
-        enemy.x,
-        enemy.y,
-        kinds[Math.floor(Math.random() * kinds.length)]
-      )
-    );
   }
   if (enemy.kind === "boss") {
     unlockAchievement("boss-kill");
@@ -7897,1991 +4555,16 @@ const emitNovaShellParticles = (cx, cy, colorA = "#5ec6ff", colorB = "#d9fbff", 
   }
 };
 
-const abilityHandlers = {
-  burst: (cost) => {
-    if (!state.running || state.upgradePending) return;
-    if (state.player.shipId === "wick" && (state.player.wickSprayTimer || 0) > 0) return;
-    if (!consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "marauder") {
-      abilityParticleBurst("#aa1122", 95, 50);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      const core = new Bullet(state.player.x, state.player.y, ang, 300 * sm, true, 7, "#cc2233", 14 * dm);
-      core.marauderPlunder = true;
-      state.bullets.push(core);
-      return;
-    }
-    if (sid === "wick") {
-      abilityParticleBurst("#ffcc55", 140, 72);
-      state.player.wickSprayTimer = 3;
-      state.player.wickSprayAcc = 0;
-      state.player.wickSprayShotsRemaining = 50;
-      return;
-    }
-    if (sid === "pebble") {
-      abilityParticleBurst("#aab4bc", 88, 50);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      for (let i = 0; i < 5; i++) {
-        const a = ang + (i - 2) * 0.2;
-        const b = new Bullet(state.player.x, state.player.y, a, 398 * sm, true, 3.5, "#aab4bc", 6.4 * dm);
-        configurePebbleRicochetOrb(b);
-        b.life = 2.4;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "ember") {
-      abilityParticleBurst("#ff5a2a", 180, 95);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      state.emberFog = {
-        life: 5.6,
-        maxLife: 5.6,
-        radius: 340,
-        dps: 7.2 * dm,
-        color: "rgba(255, 70, 40, 0.18)",
-      };
-      return;
-    }
-    if (sid === "sparrow") {
-      abilityParticleBurst("#ffdd55", 90, 55);
-      const dmg = 3.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sp = 380 * state.player.shotSpeedMultiplier;
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const b = new Bullet(state.player.x, state.player.y, a, sp, true, 2.2, "#ffe566", dmg);
-        b.noTrail = true;
-        b.visualShape = "starPellet";
-        b.life = 0.55;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "tempest") {
-      abilityParticleBurst("#ffeb3b", 360, 175);
-      state.tempestEyeStorms.push(new TempestEyeStormVortex(state.player.x, state.player.y));
-      return;
-    }
-    if (sid === "aurora") {
-      abilityParticleBurst("#7dfff0", 220, 120);
-      for (let t = 0; t < 90; t++) {
-        const a = rng(0, Math.PI * 2);
-        const sp = rng(180, 520) * state.player.shotSpeedMultiplier;
-        const hues = ["#66ffe6", "#b388ff", "#7dffb3"];
-        state.bullets.push(
-          new Bullet(state.player.x, state.player.y, a, sp, true, 2.4, hues[t % 3], 4.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
-        );
-      }
-      return;
-    }
-    if (sid === "knave") {
-      abilityParticleBurst("#c86bff", 80, 45);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      const alive = state.enemies.filter((e) => e && e.hp > 0);
-      alive.sort((a, b) => dist(a.x, a.y, state.player.x, state.player.y) - dist(b.x, b.y, state.player.x, state.player.y));
-      for (let k = 0; k < 3; k++) {
-        const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-        const b = new Bullet(state.player.x, state.player.y, ang, 500 * sm, true, 3.9, "#d5a6ff", 8.5 * dm);
-        b.visualShape = "raggedShard";
-        b.wobbleAmp = 0.14;
-        b.knaveLeftCurveTimer = 0.2;
-        b.tracking = true;
-        b.trackingTarget = alive[k] || alive[k % Math.max(alive.length, 1)] || getNearestEnemy(state.player.x, state.player.y);
-        b.trackingTurnRate = 5.8;
-        b.piercing = true;
-        b.pierceCount = 3;
-        b.life = 2.2;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    abilityParticleBurst("#9bf5ff", 250, 100);
-    const sprays = 48;
-    const damage = 7 * state.player.damageMultiplier * state.player.novaDamageMultiplier * state.player.abilityDamageMultiplier;
-    const baseSpeed = 420 * state.player.shotSpeedMultiplier;
-    for (let ring = 0; ring < 2; ring++) {
-      for (let i = 0; i < sprays; i++) {
-        const angle = (i / sprays) * Math.PI * 2 + ring * 0.04;
-        state.bullets.push(
-          new Bullet(state.player.x, state.player.y, angle + rng(-0.05, 0.05), baseSpeed + ring * 60, true, 4, "#9bf5ff", damage)
-        );
-      }
-    }
-  },
-  rapidVolley: (cost) => {
-    if (!state.running || state.upgradePending) return;
-    if (state.player.shipId === "dart" && (state.player.dartTwinPierceTimer || 0) > 0) return;
-    if (!consumeAbilityEnergy(cost)) return;
-    if (state.player.shipId === "wick") {
-      abilityParticleBurst("#ffb74d", 85, 48);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      const shell = new Bullet(state.player.x, state.player.y, ang, 410 * sm, true, 9.2, "#ffcc66", 6.2 * dm);
-      shell.wickExplosiveShot = true;
-      shell.visualShape = "heavyOrb";
-      shell.noTrail = true;
-      shell.life = 2.4;
-      state.bullets.push(shell);
-      return;
-    }
-    if (state.player.shipId === "dart") {
-      abilityParticleBurst("#f5f8ff", 95, 52);
-      state.player.dartTwinPierceTimer = 3.5;
-      return;
-    }
-    if (state.player.shipId === "bolt") {
-      abilityParticleBurst("#66a8ff", 58, 36);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const sm = state.player.shotSpeedMultiplier;
-      const ion = new Bullet(state.player.x, state.player.y, ang, 118 * sm, true, 11, "#66ccff", 0.001);
-      ion.boltIonOrb = true;
-      ion.boltIonOrbDps = 42;
-      ion.infinitePierce = true;
-      ion.life = 5.2;
-      ion.noTrail = true;
-      state.bullets.push(ion);
-      return;
-    }
-    if (state.player.shipId === "myrmidon") {
-      abilityParticleBurst("#ff4444", 80, 45);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const perp = ang + Math.PI / 2;
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      for (let i = -1; i <= 1; i++) {
-        const b = new Bullet(state.player.x + Math.cos(perp) * i * 15, state.player.y + Math.sin(perp) * i * 15, ang, 620 * sm, true, 2.7, "#ff4444", 8.2 * dm);
-        b.visualShape = "lineShot";
-        b.life = 0.5;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (state.player.shipId === "claw") {
-      abilityParticleBurst("#5cff8a", 82, 45);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const b = new Bullet(state.player.x, state.player.y, ang, 390 * sm, true, 13.5, "#66ff99", 14 * dm);
-      b.clawTear = true;
-      b.clawStun = 3.5;
-      b.visualShape = "pawShot";
-      b.knockback = 120;
-      b.infinitePierce = true;
-      b.piercing = true;
-      b.life = 1.35;
-      state.bullets.push(b);
-      return;
-    }
-    if (state.player.shipId === "stinger") {
-      abilityParticleBurst("#a8ff7a", 92, 52);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const centerX = state.player.x;
-      const centerY = state.player.y;
-      const total = 10;
-      for (let i = 0; i < total; i++) {
-        const baseAng = (i / total) * Math.PI * 2;
-        const b = new Bullet(centerX, centerY, baseAng, 1, true, 4.9, "#9dff71", 5.9 * dm);
-        b.visualShape = "clawHook";
-        b.stingerSpiral = true;
-        b.stingerSpiralCx = centerX;
-        b.stingerSpiralCy = centerY;
-        b.stingerSpiralStart = baseAng;
-        b.stingerSpiralOutSpin = i % 2 === 0 ? 1 : -1;
-        b.stingerSpiralInSpin = i % 2 === 0 ? -1 : 1;
-        b.stingerSpiralMaxR = 240;
-        b.stingerSpiralTurnRate = 6.6;
-        b.life = 1.8;
-        b.noTrail = true;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    const rvCol = {
-      sparrow: "#7dffb3",
-      vanguard: "#ffd48a",
-      glacier: "#b8ecff",
-      myrmidon: "#ffb38a",
-      lancer: "#ffe2a1",
-      striker: "#ffd166",
-    }[state.player.shipId] || "#ffd166";
-    abilityParticleBurst(rvCol, 120, 60);
-    state.player.rapidVolleyActive = true;
-    state.player.rapidVolleyTimer = 0.75;
-    state.player.shoot(state.bullets);
-  },
-  energySurge: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "sparrow") {
-      abilityParticleBurst("#ffe566", 85, 48);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      for (let i = -2; i <= 2; i++) {
-        const b = new Bullet(state.player.x, state.player.y, ang + i * 0.11, 520 * sm, true, 2.2, "#ffd54a", 7.2 * dm);
-        b.lineShot = true;
-        b.life = 0.32;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "ember") {
-      abilityParticleBurst("#ff2a2a", 120, 70);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      const b = new Bullet(state.player.x, state.player.y, ang, 250 * sm, true, 16, "#ff2a2a", 18 * dm);
-      b.life = 4.6;
-      b.emberInfernoOrb = true;
-      b.emberTrailDps = 12 * dm;
-      b.knockback = 110;
-      b.noTrail = true;
-      state.bullets.push(b);
-      return;
-    }
-    if (sid === "gallant") {
-      abilityParticleBurst("#d0e8ff", 110, 60);
-      state.player.rapidTimer = Math.max(state.player.rapidTimer, 3.2);
-      state.player.burstTimer = Math.max(state.player.burstTimer, 2.4);
-      return;
-    }
-    const pal = {
-      striker: { c: "#74ffce", mul: 1 },
-      sparrow: { c: "#ff9de2", mul: 1.02 },
-      vanguard: { c: "#9fd4ff", mul: 1.05 },
-      inferno: { c: "#ff7a4a", mul: 1.08 },
-      myrmidon: { c: "#ffd27a", mul: 1 },
-    }[sid] || { c: "#74ffce", mul: 1 };
-    abilityParticleBurst(pal.c, 100, 50);
-    const orbCount = sid === "inferno" ? 72 : 64;
-    const baseSpeed = sid === "vanguard" ? 320 : 300;
-    for (let i = 0; i < orbCount; i++) {
-      const spiralAngle = (i / orbCount) * Math.PI * 4;
-      const radius = 30 + (i / orbCount) * (sid === "sparrow" ? 26 : 20);
-      const startX = state.player.x + Math.cos(spiralAngle) * radius;
-      const startY = state.player.y + Math.sin(spiralAngle) * radius;
-      const direction = spiralAngle + Math.PI / 2;
-      state.bullets.push(
-        new Bullet(
-          startX,
-          startY,
-          direction,
-          baseSpeed * state.player.shotSpeedMultiplier * pal.mul,
-          true,
-          5,
-          pal.c,
-          12 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
-        )
-      );
-    }
-  },
-  shockwave: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "bolt") {
-      abilityParticleBurst("#a8d8ff", 92, 54);
-      state.player.boltChannelLock = 6;
-      state.boltCage = {
-        startMs: performance.now(),
-        rays: 15,
-        footYOffset: 24,
-        innerRadius: 18,
-        outerRadius: 142,
-        hitBand: 26,
-      };
-      return;
-    }
-    if (sid === "titan") {
-      abilityParticleBurst("#ff7722", 210, 100);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const baseDamage = (120 + state.wave * 2) * dm;
-      const circle = new ExpandingCircle(config.width * 0.5, config.height - 52, config.width * 0.52, "#ff6622", 1.05, baseDamage, null, true);
-      state.expandingCircles.push(circle);
-      return;
-    }
-    if (sid === "buckler") {
-      abilityParticleBurst("#ffb347", 100, 55);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const c = new ExpandingCircle(state.player.x, state.player.y, 140, "#ffaa66", 0.85, 55 * dm, null, true);
-      state.expandingCircles.push(c);
-      for (const enemy of state.enemies) {
-        const d = dist(enemy.x, enemy.y, state.player.x, state.player.y);
-        if (d < 160) {
-          const push = Math.atan2(enemy.y - state.player.y, enemy.x - state.player.x);
-          enemy.x += Math.cos(push) * 36;
-          enemy.y += Math.sin(push) * 36;
-        }
-      }
-      return;
-    }
-    if (sid === "aegis") {
-      abilityParticleBurst("#78c0ff", 210, 100);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      state.expandingCircles.push(new ExpandingCircle(state.player.x, state.player.y, 270, "#78c0ff", 1.35, 84 * dm, null, true));
-      state.visualBeams.push({
-        x1: state.player.x,
-        y1: state.player.y,
-        x2: state.player.x,
-        y2: TOP_HUD_SAFE_Y,
-        color: "rgba(160, 220, 255, 0.95)",
-        width: 42,
-        life: 0.48,
-        maxLife: 0.48,
-        phase: 0,
-      });
-      return;
-    }
-    const skin = {
-      aegis: { p: "#ffe29b", ring: "#ffd27a" },
-      bulwark: { p: "#d4a574", ring: "#c49a6c" },
-      warden: { p: "#9ecfff", ring: "#7eb8f4" },
-      halberd: { p: "#ffcf8a", ring: "#f5b85c" },
-    }[sid] || { p: "#ffe29b", ring: "#ffe29b" };
-    abilityParticleBurst(skin.p, 200, 100);
-    const radius = 240;
-    const baseDamage = 140 + state.wave * 3;
-    const circle = new ExpandingCircle(state.player.x, state.player.y, radius, skin.ring, 1.5, baseDamage, null, true);
-    state.expandingCircles.push(circle);
-    for (let ring = 0; ring < 3; ring++) {
-      const ringRadius = radius * (ring + 1) / 3;
-      for (let j = 0; j < 24; j++) {
-        const angle = (j / 24) * Math.PI * 2;
-        const x = state.player.x + Math.cos(angle) * ringRadius;
-        const y = state.player.y + Math.sin(angle) * ringRadius;
-        const p = new Particle(x, y, skin.p);
-        p.vx = Math.cos(angle) * 200;
-        p.vy = Math.sin(angle) * 200;
-        p.life = 0.4;
-        state.particles.push(p);
-      }
-    }
-  },
-  shieldOvercharge: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const col = { aegis: "#7dffc8", warden: "#a6e3ff", bulwark: "#c8d8e8" }[state.player.shipId] || "#90ff90";
-    abilityParticleBurst(col, 150, 70);
-    state.timeDilationFields = state.timeDilationFields || [];
-    state.timeDilationFields.push(new TimeDilationField(state.player.x, state.player.y));
-  },
-  fortify: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "pebble") {
-      abilityParticleBurst("#8899aa", 120, 72);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      const sp = 320 * sm;
-      const b = new Bullet(state.player.x, state.player.y, ang, sp, true, 30, "#6a7580", 22 * dm);
-      b.pebbleBoulder = true;
-      b.visualShape = "spikedBoulder";
-      b.wallBounceInfinite = true;
-      b.maxRebounds = 1;
-      b.rebounds = 0;
-      b.verticalReboundOnly = false;
-      b.gravityDrop = 0;
-      b.infinitePierce = true;
-      b.life = 5;
-      b.noTrail = true;
-      b._pebbleNextDmg = 0;
-      state.bullets.push(b);
-      return;
-    }
-    if (sid === "buckler") {
-      abilityParticleBurst("#ffb347", 100, 55);
-      state.player.fortifyActive = true;
-      state.player.fortifyTimer = 1.05;
-      state.player.rapidVolleyActive = true;
-      state.player.rapidVolleyTimer = 1.05;
-      state.player.shoot(state.bullets);
-      return;
-    }
-    if (sid === "bulwark") {
-      abilityParticleBurst("#ff8c42", 130, 70);
-      state.player.fortifyActive = true;
-      state.player.fortifyTimer = 1.05;
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let ring = 0; ring < 3; ring++) {
-        for (let i = 0; i < 28; i++) {
-          const a = (i / 28) * Math.PI * 2 + ring * 0.07;
-          const b = new Bullet(state.player.x, state.player.y, a, (145 + ring * 35) * state.player.shotSpeedMultiplier, true, 6.5, "#ff8c42", 6.5 * dm);
-          b.visualShape = "heavyOrb";
-          b.life = 1.4;
-          state.bullets.push(b);
-        }
-      }
-      return;
-    }
-    if (sid === "myrmidon") {
-      abilityParticleBurst("#ff4444", 92, 52);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const axes = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
-      for (const a of axes) {
-        for (let i = 0; i < 5; i++) {
-          const b = new Bullet(state.player.x, state.player.y, a, (360 + i * 32) * state.player.shotSpeedMultiplier, true, 3.2, "#ff4444", 5.8 * dm);
-          b.visualShape = "lineShot";
-          b.life = 0.9;
-          state.bullets.push(b);
-        }
-      }
-      return;
-    }
-    const col = { aegis: "#ffe8b0", bulwark: "#c4b28a", halberd: "#e8d4a8", myrmidon: "#f0d060" }[sid] || "#ffe29b";
-    abilityParticleBurst(col, 180, 80);
-    state.player.fortifyActive = true;
-    state.player.fortifyTimer = sid === "myrmidon" ? 1.05 : 10;
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    const count = sid === "myrmidon" ? 20 : 8;
-    for (let i = 0; i < count; i++) {
-      const spread = (i / count) * Math.PI * 2;
-      state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 400 * state.player.shotSpeedMultiplier, true, 4, col, 5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
-      );
-    }
-  },
-  blink: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    const oldX = state.player.x;
-    const oldY = state.player.y;
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    const dashDistance = sid === "sparrow" ? 115 : sid === "vanguard" || sid === "lancer" || sid === "gallant" ? 135 : 180;
-    const col = sid === "sparrow" ? "#ffe566" : "#d1afff";
-    abilityParticleBurst(col, 100, 50);
-    state.player.x = clamp(state.player.x + Math.cos(angle) * dashDistance, 20, config.width - 20);
-    state.player.y = clamp(state.player.y + Math.sin(angle) * dashDistance, playerMinY(), config.height - 20);
-    abilityParticleBurst(col, 100, 50);
-    const x1 = oldX;
-    const y1 = oldY;
-    const x2 = state.player.x;
-    const y2 = state.player.y;
-    if (sid === "sparrow" || sid === "vanguard" || sid === "lancer" || sid === "gallant") {
-      const lineDps = 52 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (const enemy of state.enemies) {
-        const d = pointToSegmentDistance(enemy.x, enemy.y, x1, y1, x2, y2);
-        if (d < 12 + enemy.size * 0.42) {
-          enemy.hp -= lineDps * 0.06;
-          recordDamageDealt(lineDps * 0.06);
-          enemy.fireTimer += 0.08;
-        }
-      }
-      state.visualBeams.push({
-        x1,
-        y1,
-        x2,
-        y2,
-        color: sid === "sparrow" ? "rgba(255,230,120,0.95)" : "rgba(160,210,255,0.92)",
-        width: sid === "sparrow" ? 3 : 5,
-        life: 0.22,
-        maxLife: 0.22,
-        phase: 0,
-      });
-    }
-    for (let i = 0; i < 30; i++) {
-      const t = i / 30;
-      const x = oldX + (state.player.x - oldX) * t;
-      const y = oldY + (state.player.y - oldY) * t;
-      const p = new Particle(x, y, col);
-      p.life = 0.3;
-      state.particles.push(p);
-    }
-    const bolts = sid === "sparrow" ? 6 : 18;
-    for (let i = 0; i < bolts; i++) {
-      const spread = (i / bolts) * Math.PI * 2;
-      state.bullets.push(new Bullet(state.player.x, state.player.y, spread, 360, true, 4, col, 7 * state.player.damageMultiplier * state.player.abilityDamageMultiplier));
-    }
-  },
-  ghostfire: (cost) => {
-    if (!state.running || state.upgradePending) return;
-    if (state.player.shipId === "dart" && (state.player.dartFlockWavesLeft || 0) > 0) return;
-    if (!consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "phantom") {
-      abilityParticleBurst("#dcd0ff", 90, 50);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const b = new Bullet(state.player.x, state.player.y, ang, 520 * state.player.shotSpeedMultiplier, true, 7, "rgba(200,190,255,0.55)", 4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
-      b.piercing = true;
-      b.pierceCount = 14;
-      b.phasePassthrough = true;
-      b.life = 1.1;
-      state.bullets.push(b);
-      return;
-    }
-    if (sid === "dart") {
-      abilityParticleBurst("#f5f8ff", 75, 44);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const sm = state.player.shotSpeedMultiplier;
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let i = 0; i < 6; i++) {
-        const a = ang + (i - 2.5) * 0.085;
-        const b = new Bullet(state.player.x, state.player.y, a, 455 * sm, true, 2.25, "#f5f8ff", 5.1 * dm);
-        b.noTrail = true;
-        b.visualShape = "needle";
-        b.life = 1.05;
-        state.bullets.push(b);
-      }
-      state.player.dartFlockWavesLeft = 2;
-      state.player.dartFlockWaveAcc = 0;
-      return;
-    }
-    if (sid === "knave") {
-      abilityParticleBurst("#c89bff", 70, 40);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const speed = 500 * state.player.shotSpeedMultiplier;
-      const dmg = 6.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let burst = 0; burst < 3; burst++) {
-        const bx = state.player.x + Math.cos(ang) * burst * 12;
-        const by = state.player.y + Math.sin(ang) * burst * 12;
-        for (const config of [
-          { color: "#c86bff", phase: 0 },
-          { color: "#66a8ff", phase: Math.PI },
-        ]) {
-          const b = new Bullet(bx, by, ang, speed, true, 4.2, config.color, dmg);
-          b.visualShape = "lineShot";
-          b.sinePath = true;
-          b.sineOrigin = { x: bx, y: by };
-          b.sineAngle = ang;
-          b.sineSpeed = speed;
-          b.sineAmplitude = 10;
-          b.sineFrequency = 12;
-          b.sinePhase = config.phase;
-          b.piercing = true;
-          b.pierceCount = 6;
-          b.life = 1.45;
-          b.noTrail = true;
-          state.bullets.push(b);
-        }
-      }
-      return;
-    }
-    if (sid === "claw") {
-      abilityParticleBurst("#66ff99", 95, 54);
-      state.clawPawShield = {
-        life: 4,
-        maxLife: 4,
-        radius: 132,
-        yOffset: 0,
-      };
-      return;
-    }
-    if (sid === "marauder") {
-      abilityParticleBurst("#cc3344", 85, 48);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const sm = state.player.shotSpeedMultiplier;
-      for (let i = 0; i < 4; i++) {
-        const b = new Bullet(state.player.x, state.player.y, ang + (i - 1.5) * 0.06, 440 * sm, true, 3.4, "#ee4455", 7 * dm);
-        b.maxRebounds = 1;
-        b.rebounds = 0;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "raven") {
-      abilityParticleBurst("#4a2a6a", 100, 55);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let i = 0; i < 6; i++) {
-        const a = rng(0, Math.PI * 2);
-        const b = new Bullet(state.player.x, state.player.y, a, 320 * state.player.shotSpeedMultiplier, true, 3.4, "#6b4a9a", 6.5 * dm);
-        const near = getNearestEnemy(b.x, b.y);
-        if (near) {
-          b.tracking = true;
-          b.trackingTarget = near;
-          b.trackingTurnRate = 22;
-        }
-        state.bullets.push(b);
-      }
-      return;
-    }
-    abilityParticleBurst("#d1afff", 100, 50);
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    for (let i = 0; i < 12; i++) {
-      const offset = (i - 6) * 0.1;
-      state.bullets.push(new Bullet(state.player.x, state.player.y, angle + offset, 480 * state.player.shotSpeedMultiplier, true, 5, "#d1afff", 8 * state.player.damageMultiplier * state.player.abilityDamageMultiplier));
-    }
-    state.player.burstTimer = Math.min(state.player.burstTimer + 5, 9);
-  },
-  phaseShift: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    const col = { oracle: "#d4b8ff", aurora: "#7dfff0", phantom: "#9b7fff", voidwalker: "#6a4a9a", eclipse: "#e8e0ff" }[sid] || "#9b7fff";
-    const oldX = state.player.x;
-    const oldY = state.player.y;
-    abilityParticleBurst(col, 120, 60);
-    if (sid === "voidwalker") {
-      state.player.x = clamp(state.player.x + rng(-120, 120), 20, config.width - 20);
-      state.player.y = clamp(state.player.y + rng(-120, 120), playerMinY(), config.height - 20);
-    } else if (sid === "eclipse") {
-      state.player.x = clamp(state.player.x + rng(-220, 220), 20, config.width - 20);
-      state.player.y = clamp(state.player.y + rng(-220, 220), playerMinY(), config.height - 20);
-    } else {
-      state.player.x = clamp(state.player.x + rng(-200, 200), 20, config.width - 20);
-      state.player.y = clamp(state.player.y + rng(-200, 200), playerMinY(), config.height - 20);
-    }
-    abilityParticleBurst(col, 120, 60);
-    if (sid === "oracle") {
-      state.player.foresightTimer = 5;
-    }
-    if (sid === "phantom") {
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const back = ang + Math.PI;
-      for (let k = 0; k < 16; k++) {
-        const t = k / 16;
-        const px = oldX + (state.player.x - oldX) * t;
-        const py = oldY + (state.player.y - oldY) * t;
-        state.particles.push(new Particle(px, py, "rgba(200,180,255,0.45)"));
-      }
-      for (let i = 0; i < 5; i++) {
-        state.bullets.push(
-          new Bullet(state.player.x, state.player.y, back + (i - 2) * 0.12, 280 * state.player.shotSpeedMultiplier, true, 3, "rgba(180,160,255,0.5)", 4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
-        );
-      }
-      return;
-    }
-    if (sid === "eclipse") {
-      for (let ring = 0; ring < 22; ring++) {
-        const a = (ring / 22) * Math.PI * 2;
-        state.bullets.push(
-          new Bullet(state.player.x, state.player.y, a, 340 * state.player.shotSpeedMultiplier, true, 3.2, "#f0f0ff", 5.5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
-        );
-      }
-      return;
-    }
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    for (let i = 0; i < 6; i++) {
-      const spread = (i - 3) * 0.15;
-      state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 450 * state.player.shotSpeedMultiplier, true, 4, col, 6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
-      );
-    }
-  },
-  lightningStorm: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    const prof = {
-      tempest: { burst: "#fff44d", c0: "#ffffff", c1: "#ffff00", c2: "#ffaa00", hit: "#ffff00", top: 0, bolts: 12 },
-      oracle: { burst: "#e0c8ff", c0: "#ffffff", c1: "#d4a8ff", c2: "#b070ff", hit: "#e6c6ff", top: 42, bolts: 14 },
-      aurora: { burst: "#8ffff0", c0: "#e8ffff", c1: "#66ffe6", c2: "#3dd4ff", hit: "#7dfff4", top: 12, bolts: 11 },
-      warden: { burst: "#ffe9a8", c0: "#fffacd", c1: "#ffd700", c2: "#daa520", hit: "#fff8dc", top: 0, bolts: 10 },
-    }[sid] || { burst: "#ffff00", c0: "#ffffff", c1: "#ffff00", c2: "#ffaa00", hit: "#ffff00", top: 0, bolts: 12 };
-    abilityParticleBurst(prof.burst, 150, 70);
-    const boltCount = Math.min(prof.bolts, state.enemies.length + 5);
-    const hitEnemies = new Set();
-    for (let bolt = 0; bolt < boltCount; bolt++) {
-      const spawnX = rng(50, config.width - 50);
-      const spawnY = prof.top;
-      
-      
-      let target = null;
-      let minDist = Infinity;
-      for (let i = 0; i < state.enemies.length; i++) {
-        const enemy = state.enemies[i];
-        if (hitEnemies.has(i)) continue;
-        const d = dist(spawnX, spawnY, enemy.x, enemy.y);
-        if (d < minDist && d < 600) {
-          minDist = d;
-          target = { enemy, index: i };
-        }
-      }
-      
-      
-      const strikeX = target ? target.enemy.x : rng(100, config.width - 100);
-      const strikeY = target ? target.enemy.y : rng(100, config.height - 100);
-      
-      
-      for (let layer = 0; layer < 3; layer++) {
-        for (let k = 0; k < 60; k++) {
-          const t = k / 60;
-          const baseX = spawnX + (strikeX - spawnX) * t;
-          const baseY = spawnY + (strikeY - spawnY) * t;
-          const offset = Math.sin(t * 25 + layer) * rng(10, 25);
-          const x = baseX + Math.cos(t * Math.PI * 5) * offset;
-          const y = baseY;
-          const p = new Particle(x, y, layer === 0 ? prof.c0 : layer === 1 ? prof.c1 : prof.c2);
-          p.life = 0.4;
-          p.size = rng(3, 5);
-          state.particles.push(p);
-        }
-      }
-      if (target) {
-        hitEnemies.add(target.index);
-        target.enemy.hp -= 120 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-        for (let j = 0; j < 30; j++) {
-          state.particles.push(new Particle(target.enemy.x, target.enemy.y, prof.hit));
-        }
-        if (target.enemy.hp <= 0) {
-          const killI = state.enemies.indexOf(target.enemy);
-          if (killI > -1) onEnemyDestroyed(target.enemy, killI);
-        }
-      }
-    }
-  },
-  combatDrone: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    if (state.player.shipId === "oracle") {
-      abilityParticleBurst("#d4a8ff", 210, 95);
-      for (let i = 0; i < 14; i++) {
-        const orb = new NovaOrbiter((i / 14) * Math.PI * 2, rng(38, 132));
-        orb.oracleDrone = true;
-        state.novaOrbiters.push(orb);
-      }
-      return;
-    }
-    if (state.player.shipId === "specter") {
-      abilityParticleBurst("#f0f0ff", 160, 80);
-      for (let i = 0; i < 10; i++) {
-        const orb = new NovaOrbiter((i / 10) * Math.PI * 2, rng(42, 118));
-        orb.specterDecoy = true;
-        orb.life = 6.5;
-        orb.maxLife = 6.5;
-        state.novaOrbiters.push(orb);
-      }
-      return;
-    }
-    if (state.player.shipId === "inferno") {
-      abilityParticleBurst("#ff4500", 200, 95);
-      for (let i = 0; i < 18; i++) {
-        const orb = new NovaOrbiter((i / 18) * Math.PI * 2, rng(36, 90));
-        orb.infernoSwarm = true;
-        orb.tightOrbit = true;
-        orb.life = 5.5;
-        orb.maxLife = 5.5;
-        state.novaOrbiters.push(orb);
-      }
-      return;
-    }
-    if (state.player.shipId === "picket") {
-      abilityParticleBurst("#f0f6ff", 95, 50);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      for (const side of [-1, 1]) {
-        for (let t = 0; t < 12; t++) {
-          const orbit = (t / 12) * Math.PI * 2 * side;
-          const sx = state.player.x + Math.cos(orbit) * 38;
-          const sy = state.player.y + Math.sin(orbit) * 24;
-          const b = new Bullet(sx, sy, ang + side * 0.05, 260 * state.player.shotSpeedMultiplier, true, 3.1, "#f0f6ff", 3.6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
-          b.picketTri = true;
-          b.life = 0.35 + t * 0.02;
-          state.bullets.push(b);
-        }
-      }
-      return;
-    }
-    abilityParticleBurst("#5ec6ff", 200, 90);
-    for (let i = 0; i < 12; i++) {
-      const orb = new NovaOrbiter((i / 12) * Math.PI * 2, rng(40, 145));
-      state.novaOrbiters.push(orb);
-    }
-  },
-  chainBolt: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-    const sm = state.player.shotSpeedMultiplier;
-    if (sid === "pebble") {
-      abilityParticleBurst("#aab4bc", 95, 52);
-      const perp = ang + Math.PI / 2;
-      const step = 7;
-      for (let i = 0; i < 8; i++) {
-        const t = (i - 3.5) * step;
-        const bx = state.player.x + Math.cos(perp) * t;
-        const by = state.player.y + Math.sin(perp) * t;
-        const b = new Bullet(bx, by, ang, 455 * sm, true, 4.1, "#aab4bc", 6.2 * dm);
-        configurePebbleRicochetOrb(b);
-        b.life = 2.2;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "dart") {
-      abilityParticleBurst("#d8ecff", 88, 48);
-      for (let i = 0; i < 4; i++) {
-        const a = ang + (i - 1.5) * 0.19;
-        const b = new Bullet(state.player.x, state.player.y, a, 400 * sm, true, 2.2, "#f7fbff", 6.4 * dm);
-        b.visualShape = "needle";
-        b.noTrail = true;
-        b.life = 1.45;
-        b.dartHomingPending = true;
-        b.dartHomingArmDelay = 0.5;
-        b.trackingTurnRate = 11;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "bolt") {
-      abilityParticleBurst("#88ccff", 72, 42);
-      const base = 24 * dm;
-      const hit = [];
-      let lx = state.player.x;
-      let ly = state.player.y;
-      const maxFirst = 540;
-      const maxHop = 400;
-      for (let hop = 0; hop < 10; hop++) {
-        let best = null;
-        let bestD = 1e9;
-        const limit = hop === 0 ? maxFirst : maxHop;
-        for (const en of state.enemies) {
-          if (!en || en.hp <= 0 || hit.includes(en)) continue;
-          const d = dist(lx, ly, en.x, en.y);
-          if (d < bestD && d <= limit) {
-            bestD = d;
-            best = en;
-          }
-        }
-        if (!best) break;
-        hit.push(best);
-        const mult = Math.pow(0.9, hop);
-        const dmg = base * mult;
-        best.hp -= dmg;
-        recordDamageDealt(dmg);
-        const poly = buildLightningPolyline(lx, ly, best.x, best.y, 11, hop * 7919 + (best.x | 0) * 13 + (best.y | 0));
-        pushDecorativeLightning(poly, hop === 0 ? "rgba(170, 220, 255, 0.95)" : "rgba(130, 200, 255, 0.94)", 1.5, hop === 0 ? 3.1 : 2.9);
-        lx = best.x;
-        ly = best.y;
-        if (best.hp <= 0) {
-          const idx = state.enemies.indexOf(best);
-          if (idx > -1) onEnemyDestroyed(best, idx);
-        }
-      }
-      return;
-    }
-    if (sid === "wick") {
-      abilityParticleBurst("#ff9a3c", 130, 68);
-      const dash = 205;
-      const ox = state.player.x;
-      const oy = state.player.y;
-      const nx = clamp(ox + Math.cos(ang) * dash, 22, config.width - 22);
-      const ny = clamp(oy + Math.sin(ang) * dash, playerMinY(), config.height - 22);
-      const steps = 12;
-      for (let s = 1; s <= steps; s++) {
-        const t = s / steps;
-        state.voidTrails.push({
-          x: ox + (nx - ox) * t,
-          y: oy + (ny - oy) * t,
-          radius: 22 + t * 20,
-          life: 0.62,
-          maxLife: 0.62,
-          color: "rgba(255, 150, 70, 0.82)",
-        });
-      }
-      state.player.x = nx;
-      state.player.y = ny;
-      for (let k = 0; k < 13; k++) {
-        const a = (k / 13) * Math.PI * 2;
-        const ring = new Bullet(nx, ny, a, 395 * sm, true, 2.65, "#ffe0a0", 5.4 * dm);
-        ring.noTrail = true;
-        ring.lineShot = true;
-        ring.life = 0.88;
-        state.bullets.push(ring);
-      }
-      return;
-    }
-    if (sid === "bulwark") {
-      abilityParticleBurst("#ff8c42", 90, 50);
-      for (let i = -3; i <= 3; i++) {
-        const a = ang + i * 0.09;
-        const b = new Bullet(state.player.x, state.player.y, a, 420 * sm, true, 5.5, "#ffaa55", 10 * dm);
-        b.life = 0.22;
-        b.lineShot = true;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "myrmidon") {
-      abilityParticleBurst("#ff8844", 72, 44);
-      const b = new Bullet(state.player.x, state.player.y, ang, 380 * sm, true, 5, "#ff5533", 11 * dm);
-      b.maxRebounds = 2;
-      b.rebounds = 0;
-      b.visualShape = "shieldDisc";
-      state.bullets.push(b);
-      return;
-    }
-    if (sid === "ember") {
-      abilityParticleBurst("#ff8844", 70, 42);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const shotSpeed = 500 * state.player.shotSpeedMultiplier;
-      const baseDamage = 5.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let i = 0; i < 5; i++) {
-        const a = ang + (i - 2) * 0.075;
-        const b = new Bullet(state.player.x, state.player.y, a, shotSpeed, true, 4.2, "#ff7a45", baseDamage);
-        b.burnDamage = baseDamage * 0.3;
-        b.visualShape = "spark";
-        b.emberEnhancedBurst = true;
-        b.emberPuddle = true;
-        b.life = 1.05;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "stinger") {
-      abilityParticleBurst("#a8ff7a", 85, 48);
-      const oldX = state.player.x;
-      const oldY = state.player.y;
-      state.player.x = clamp(input.mouse.x, 24, config.width - 24);
-      state.player.y = clamp(input.mouse.y, playerMinY(), config.height - 24);
-      const burstClaws = (cx, cy) => {
-        for (let i = 0; i < 10; i++) {
-          const a = (i / 10) * Math.PI * 2;
-          const b = new Bullet(cx, cy, a, 440 * sm, true, 4.8, "#9dff71", 6.8 * dm);
-          b.visualShape = "clawHook";
-          b.knockback = 54;
-          b.stingerPoison = true;
-          b.stingerPoisonPerTick = 1.4 * dm;
-          b.life = 1.1;
-          state.bullets.push(b);
-        }
-      };
-      burstClaws(oldX, oldY);
-      burstClaws(state.player.x, state.player.y);
-      return;
-    }
-    if (sid === "claw") {
-      abilityParticleBurst("#5cff8a", 82, 45);
-      const candidates = state.enemies
-        .filter((e) => e && e.hp > 0)
-        .sort((a, b) => dist(a.x, a.y, state.player.x, state.player.y) - dist(b.x, b.y, state.player.x, state.player.y))
-        .slice(0, 5);
-      for (let i = 0; i < 5; i++) {
-        const target = candidates[i] || null;
-        const a = target
-          ? Math.atan2(target.y - state.player.y, target.x - state.player.x)
-          : ang + (i - 2) * 0.18;
-        const b = new Bullet(state.player.x, state.player.y, a, 420 * sm, true, 5.6, "#5cff8a", 1.6 * dm);
-        b.visualShape = "pawShot";
-        b.clawHoverPaw = true;
-        b.clawHoverTarget = target;
-        b.clawHoverDps = 5.2 * dm;
-        b.clawHoverStun = 0.32;
-        b.infinitePierce = true;
-        b.piercing = true;
-        b.life = 1;
-        b.noTrail = true;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    if (sid === "lancer") {
-      abilityParticleBurst("#66ff99", 85, 48);
-      const b = new Bullet(state.player.x, state.player.y, ang, 720 * sm, true, 2.8, "#66ff99", 16 * dm);
-      b.piercing = true;
-      b.pierceCount = 5;
-      let target = null;
-      let minD = 1e9;
-      for (const enemy of state.enemies) {
-        const d = dist(state.player.x, state.player.y, enemy.x, enemy.y);
-        if (d < minD && d < 420) {
-          minD = d;
-          target = enemy;
-        }
-      }
-      if (target) {
-        target.fireTimer += 1.05;
-      }
-      state.bullets.push(b);
-      return;
-    }
-    if (sid === "warden") {
-      abilityParticleBurst("#ffe9a8", 100, 55);
-      const len = 420;
-      const ex = state.player.x + Math.cos(ang) * len;
-      const ey = state.player.y + Math.sin(ang) * len;
-      for (const enemy of state.enemies) {
-        const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
-        if (d < 22 + enemy.size * 0.45) {
-          enemy.fireTimer += 0.45;
-          enemy.hp -= 42 * dm;
-          recordDamageDealt(42 * dm);
-        }
-      }
-      state.visualBeams.push({
-        x1: state.player.x,
-        y1: state.player.y,
-        x2: ex,
-        y2: ey,
-        color: "rgba(255, 230, 160, 0.92)",
-        width: 16,
-        life: 0.35,
-        maxLife: 0.35,
-        phase: 0,
-      });
-      return;
-    }
-    if (sid === "glacier") {
-      abilityParticleBurst("#e0ffff", 110, 58);
-      const len = 520;
-      const ex = state.player.x + Math.cos(ang) * len;
-      const ey = state.player.y + Math.sin(ang) * len;
-      for (const enemy of state.enemies) {
-        const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
-        if (d < 20 + enemy.size * 0.45) {
-          enemy.fireTimer += 0.55;
-          enemy.hp -= 38 * dm;
-          recordDamageDealt(38 * dm);
-        }
-      }
-      state.visualBeams.push({
-        x1: state.player.x,
-        y1: state.player.y,
-        x2: ex,
-        y2: ey,
-        color: "rgba(200, 250, 255, 0.95)",
-        width: 18,
-        life: 0.4,
-        maxLife: 0.4,
-        phase: 0,
-      });
-      return;
-    }
-    if (sid === "vanguard") {
-      abilityParticleBurst("#9fd4ff", 95, 52);
-      let w = 14;
-      const grow = 18;
-      const len = 480;
-      for (let step = 0; step < 6; step++) {
-        const ex = state.player.x + Math.cos(ang) * len;
-        const ey = state.player.y + Math.sin(ang) * len;
-        for (const enemy of state.enemies) {
-          const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
-          if (d < w + enemy.size * 0.45) {
-            enemy.hp -= 22 * dm;
-            recordDamageDealt(22 * dm);
-          }
-        }
-        state.visualBeams.push({
-          x1: state.player.x,
-          y1: state.player.y,
-          x2: ex,
-          y2: ey,
-          color: "rgba(120, 200, 255, 0.9)",
-          width: w,
-          life: 0.12,
-          maxLife: 0.12,
-          phase: step,
-        });
-        w += grow;
-      }
-      return;
-    }
-    abilityParticleBurst("#ffff00", 80, 40);
-    const angle = ang;
-    let target = null;
-    let minDist = Infinity;
-    for (const enemy of state.enemies) {
-      const d = dist(state.player.x, state.player.y, enemy.x, enemy.y);
-      if (d < minDist && d < 300) {
-        minDist = d;
-        target = enemy;
-      }
-    }
-    if (target) {
-      const bolt = new Bullet(state.player.x, state.player.y, angle, 600 * state.player.shotSpeedMultiplier, true, 6, "#ffff00", 15 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
-      state.bullets.push(bolt);
-      
-      for (let k = 0; k < 20; k++) {
-        const t = k / 20;
-        const x = state.player.x + (target.x - state.player.x) * t + Math.sin(t * 8) * 8;
-        const y = state.player.y + (target.y - state.player.y) * t + Math.cos(t * 8) * 8;
-        const p = new Particle(x, y, "#ffff00");
-        p.life = 0.15;
-        state.particles.push(p);
-      }
-    }
-  },
-  overload: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "inferno") {
-      abilityParticleBurst("#ff6b35", 200, 90);
-      const circle = new ExpandingCircle(state.player.x, state.player.y, 210, "#ff4500", 1.15, 88 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, null, true);
-      state.expandingCircles.push(circle);
-      return;
-    }
-    if (sid === "aurora") {
-      abilityParticleBurst("#7dfff0", 200, 95);
-      for (let ring = 0; ring < 3; ring++) {
-        const circle = new ExpandingCircle(
-          state.player.x,
-          state.player.y,
-          160 + ring * 70,
-          ring === 0 ? "#66ffe6" : ring === 1 ? "#b388ff" : "#7dffb3",
-          1.05,
-          (55 - ring * 8) * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          null,
-          true
-        );
-        state.expandingCircles.push(circle);
-      }
-      return;
-    }
-    if (sid === "grimstar") {
-      abilityParticleBurst("#8b62ff", 190, 90);
-      state.grimstarWaves.push(new GrimstarWave());
-      return;
-    }
-    if (sid === "aegis") {
-      abilityParticleBurst("#78c0ff", 175, 85);
-      for (let i = 0; i < 6; i++) {
-        state.aphelionShields.push(new OrbitalAegisShield(i, 6, 3));
-      }
-      const pulse = new ExpandingCircle(state.player.x, state.player.y, 230, "#78c0ff", 1.05, 62 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, null, true);
-      state.expandingCircles.push(pulse);
-      return;
-    }
-    if (sid === "helios") {
-      abilityParticleBurst("#ffbd45", 260, 120);
-      for (let i = 0; i < 5; i++) {
-        const x = ((i + 1) / 6) * config.width;
-        state.fireColumns.push(new FireColumn(x, 46, 2.1));
-        state.visualBeams.push({
-          x1: x,
-          y1: config.height,
-          x2: x,
-          y2: TOP_HUD_SAFE_Y,
-          color: "rgba(255, 180, 55, 0.88)",
-          width: 32,
-          life: 2.1,
-          maxLife: 2.1,
-          phase: i,
-        });
-      }
-      return;
-    }
-    abilityParticleBurst("#e8ff44", 200, 90);
-    const radius = 200;
-    const baseDamage = 80 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-    const circle = new ExpandingCircle(state.player.x, state.player.y, radius, "#d4ff33", 1.2, baseDamage, null, true);
-    state.expandingCircles.push(circle);
-  },
-  siegeCannon: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    if (state.player.shipId === "titan") {
-      abilityParticleBurst("#ff8f2a", 220, 110);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      const len = config.width * 0.92;
-      const ex = state.player.x + Math.cos(angle) * len;
-      const ey = state.player.y + Math.sin(angle) * len;
-      const w = 48;
-      for (const enemy of state.enemies) {
-        const d = pointToSegmentDistance(enemy.x, enemy.y, state.player.x, state.player.y, ex, ey);
-        if (d < w * 0.5 + enemy.size * 0.42) {
-          const chunk = 95 * dm;
-          enemy.hp -= chunk;
-          recordDamageDealt(chunk);
-        }
-      }
-      state.visualBeams.push({
-        x1: state.player.x,
-        y1: state.player.y,
-        x2: ex,
-        y2: ey,
-        color: "rgba(255, 140, 60, 0.92)",
-        width: w,
-        life: 0.45,
-        maxLife: 0.45,
-        phase: 0,
-      });
-      return;
-    }
-    for (let i = 0; i < 250; i++) {
-      const spread = rng(-0.4, 0.4);
-      const dist = rng(15, 50);
-      const x = state.player.x + Math.cos(angle + spread) * dist;
-      const y = state.player.y + Math.sin(angle + spread) * dist;
-      const p = new Particle(x, y, "#ff4444");
-      p.vx = Math.cos(angle + spread) * rng(100, 200);
-      p.vy = Math.sin(angle + spread) * rng(100, 200);
-      p.life = rng(0.2, 0.4);
-      state.particles.push(p);
-    }
-    for (let i = 0; i < 5; i++) {
-      const offset = (i - 2) * 0.12;
-      const bullet = new Bullet(state.player.x, state.player.y, angle + offset, 400 * state.player.shotSpeedMultiplier, true, 12, "#ff4444", 35 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
-      state.bullets.push(bullet);
-    }
-  },
-  energyBarrier: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    const aim = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    if (sid === "bulwark") {
-      abilityParticleBurst("#ffaa55", 110, 60);
-      const centerX = state.player.x + Math.cos(aim) * 55;
-      const centerY = state.player.y + Math.sin(aim) * 55;
-      const wall = new Barrier(centerX, centerY, aim);
-      wall.length = 155;
-      wall.width = 18;
-      wall.life = 2;
-      wall.maxLife = 2;
-      wall.color = "#ffaa55";
-      state.barriers.push(wall);
-      state.player.infiniteShield = true;
-      state.player.infiniteShieldTimer = 2.2;
-      state.player.shieldColorOverride = "rgba(255, 170, 80, 0.85)";
-      state.player.shieldColorTimer = 2.2;
-      return;
-    }
-    if (sid === "aegis") {
-      abilityParticleBurst("#78c0ff", 150, 75);
-      const wall = new Barrier(state.player.x, state.player.y + 32, 0);
-      wall.length = 340;
-      wall.width = 22;
-      wall.life = 4.9;
-      wall.maxLife = 4.9;
-      wall.color = "#78c0ff";
-      wall.riseVy = -200;
-      wall.aegisBulwark = true;
-      state.barriers.push(wall);
-      state.player.shieldColorOverride = "rgba(120, 192, 255, 0.9)";
-      state.player.shieldColorTimer = 2;
-      return;
-    }
-    if (sid === "picket") {
-      abilityParticleBurst("#f0f6ff", 90, 50);
-      const centerX = state.player.x + Math.cos(aim) * 40;
-      const centerY = state.player.y + Math.sin(aim) * 40;
-      const tri = new Barrier(centerX, centerY, aim);
-      tri.length = 56;
-      tri.width = 18;
-      tri.life = 2;
-      tri.maxLife = 2;
-      tri.color = "#f0f6ff";
-      state.barriers.push(tri);
-      return;
-    }
-    abilityParticleBurst("#00ffff", 150, 70);
-    
-    
-    const centerX = state.player.x;
-    const centerY = state.player.y - 60; 
-    
-    
-    state.barriers.push(new Barrier(centerX, centerY, 0)); 
-    for (let j = 0; j < 20; j++) {
-      const t = (j / 20) - 0.5;
-      const x = centerX + Math.cos(0) * t * 60;
-      const y = centerY + Math.sin(0) * t * 60;
-      state.particles.push(new Particle(x, y, "#00ffff"));
-    }
-    
-    
-    const leftX = state.player.x - 50;
-    const leftY = state.player.y - 50;
-    const leftAngle = Math.PI; 
-    state.barriers.push(new Barrier(leftX, leftY, leftAngle));
-    for (let j = 0; j < 20; j++) {
-      const t = (j / 20) - 0.5;
-      const x = leftX + Math.cos(leftAngle) * t * 60;
-      const y = leftY + Math.sin(leftAngle) * t * 60;
-      state.particles.push(new Particle(x, y, "#00ffff"));
-    }
-    
-    
-    const rightX = state.player.x + 50;
-    const rightY = state.player.y - 50;
-    const rightAngle = 0; 
-    state.barriers.push(new Barrier(rightX, rightY, rightAngle));
-    for (let j = 0; j < 20; j++) {
-      const t = (j / 20) - 0.5;
-      const x = rightX + Math.cos(rightAngle) * t * 60;
-      const y = rightY + Math.sin(rightAngle) * t * 60;
-      state.particles.push(new Particle(x, y, "#00ffff"));
-    }
-    
-    
-    state.player.infiniteShield = true;
-    state.player.infiniteShieldTimer = 5;
-    state.player.shieldColorOverride = "rgba(0, 255, 255, 0.9)";
-    state.player.shieldColorTimer = 5;
-  },
-  rampage: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    if (state.player.shipId === "titan") {
-      abilityParticleBurst("#ff6622", 200, 95);
-      state.player.titanFuryTimer = 5;
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let i = 0; i < 24; i++) {
-        const a = ang + (i / 24) * Math.PI * 2;
-        state.bullets.push(new Bullet(state.player.x, state.player.y, a, 340 * state.player.shotSpeedMultiplier, true, 5, "#ff8844", 8 * dm));
-      }
-      return;
-    }
-    abilityParticleBurst("#ff4444", 200, 90);
-    
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    for (let i = 0; i < 15; i++) {
-      const spread = (i - 7) * 0.1;
-      state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 550 * state.player.shotSpeedMultiplier, true, 6, "#ff4444", 12 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
-      );
-    }
-  },
-  blackHole: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    if (sid === "seraph") {
-      abilityParticleBurst("#ff2a2a", 150, 80);
-      const base = angle;
-      for (let k = 0; k < 4; k++) {
-        const a = base + (k / 4) * Math.PI * 2 + rng(-0.12, 0.12);
-        state.seraphBounceLasers.push(
-          new SeraphBounceLaser(
-            state.player.x + Math.cos(a) * 14,
-            state.player.y + Math.sin(a) * 14,
-            a
-          )
-        );
-      }
-      return;
-    }
-    if (sid === "aphelion") {
-      const holeX = state.player.x + Math.cos(angle) * 175;
-      const holeY = state.player.y + Math.sin(angle) * 175;
-      emitSpiralInwardParticles(holeX, holeY, "#8d4dff", 10, 82, 205, 1.2, 0.82);
-      emitSpiralInwardParticles(holeX, holeY, "#bb85ff", 8, 72, 182, -1.05, 0.75);
-      state.novaAnomalies.push(
-        new NovaAnomaly(holeX, holeY, {
-          maxRadius: 270,
-          duration: 3.4,
-          pullStrength: 460,
-          damagePerSecond: 128 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          pullEnabled: true,
-          explodeAtEnd: true,
-          explosionDamage: 340 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          explosionKnockback: 520,
-          knockbackRadius: 430,
-          color: "#7e42ff",
-          stunWhilePulled: true,
-          azureVortex: true,
-          aphelionCollapse: true,
-          streamColors: ["#a36cff", "#c291ff", "#7c4cff"],
-        })
-      );
-      return;
-    }
-    if (sid === "voidwalker") {
-      const holeX = state.player.x + Math.cos(angle) * 130;
-      const holeY = state.player.y + Math.sin(angle) * 130;
-      emitSpiralInwardParticles(holeX, holeY, "#4a2080", 8, 64, 200, 1.1, 0.7);
-      state.novaAnomalies.push(
-        new NovaAnomaly(holeX, holeY, {
-          maxRadius: 300,
-          duration: 2.85,
-          pullStrength: 480,
-          damagePerSecond: 88 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          pullEnabled: true,
-          explodeAtEnd: true,
-          explosionDamage: 265 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          explosionKnockback: 440,
-          knockbackRadius: 360,
-          color: "#2a1040",
-          stunWhilePulled: true,
-        })
-      );
-      return;
-    }
-    const distance = sid === "aphelion" ? 175 : 150;
-    const holeX = state.player.x + Math.cos(angle) * distance;
-    const holeY = state.player.y + Math.sin(angle) * distance;
-    const c1 =
-      sid === "aphelion" ? "#6ad4ff" : sid === "eclipse" ? "#b47cff" : sid === "seraph" ? "#ff6a9a" : "#9b7fff";
-    const c2 =
-      sid === "aphelion" ? "#3a6b9a" : sid === "eclipse" ? "#4a2080" : sid === "seraph" ? "#6a2040" : "#cfb7ff";
-    for (let i = 0; i < 50; i++) {
-      const t = i / 50;
-      const x = state.player.x + (holeX - state.player.x) * t;
-      const y = state.player.y + (holeY - state.player.y) * t;
-      const p = new Particle(x, y, c1);
-      p.vx = Math.cos(angle) * rng(-50, 50);
-      p.vy = Math.sin(angle) * rng(-50, 50);
-      state.particles.push(p);
-    }
-    state.blackHoles.push(new BlackHole(holeX, holeY));
-    emitSpiralInwardParticles(holeX, holeY, c1, 5, 46, 145, 1.15, 0.58);
-    emitSpiralInwardParticles(holeX, holeY, c2, 3, 38, 110, -1, 0.46);
-  },
-  shadowStep: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    if (state.player.shipId === "knave") {
-      abilityParticleBurst("#c86bff", 105, 58);
-      const count = 6;
-      const x = config.width * 0.5;
-      const baseY = config.height - 20;
-      const spacing = 18;
-      const a = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const speed = 420 * state.player.shotSpeedMultiplier;
-      const dmg = 7.6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let i = 0; i < count; i++) {
-        const y = baseY - i * spacing;
-        const b = new Bullet(x, y, a, speed, true, 5.8, "#bf83ff", dmg);
-        b.wobbleAmp = 0.14;
-        b.visualShape = "raggedShard";
-        b.knaveSteal = true;
-        b.life = 2.6;
-        state.bullets.push(b);
-      }
-      return;
-    }
-    const oldX = state.player.x;
-    const oldY = state.player.y;
-    abilityParticleBurst("#9b7fff", 100, 50);
-    const angle =
-      state.player.shipId === "knave"
-        ? Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x) + Math.PI
-        : Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    state.player.x = clamp(state.player.x + Math.cos(angle) * 120, 20, config.width - 20);
-    state.player.y = clamp(state.player.y + Math.sin(angle) * 120, playerMinY(), config.height - 20);
-    abilityParticleBurst("#9b7fff", 100, 50);
-    state.player.burstTimer = Math.min(state.player.burstTimer + 4, 8);
-  },
-  ethereal: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#9b7fff", 180, 80);
-    
-    state.player.invincible = true;
-    state.player.invincibleTimer = 10;
-  },
-  deathMark: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    abilityParticleBurst(sid === "specter" ? "#f0f0ff" : "#8b0000", 150, 70);
-    
-    let target = null;
-    let minDist = Infinity;
-    for (const enemy of state.enemies) {
-      const d = dist(state.player.x, state.player.y, enemy.x, enemy.y);
-      if (d < minDist && d < 400) {
-        minDist = d;
-        target = enemy;
-      }
-    }
-    if (sid === "reaper") {
-      const a = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      abilityParticleBurst("#ff2222", 120, 60);
-      applyScytheSwing(
-        state.player.x,
-        state.player.y,
-        a,
-        340,
-        (Math.PI * 2) / 3,
-        118 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        95,
-        "#ff2222",
-        null,
-        {
-          showHandle: true,
-          handleLength: 58,
-          pivotArcBlendRadius: 200,
-        }
-      );
-      return;
-    }
-    if (target) {
-      if (sid === "stinger") {
-        abilityParticleBurst("#9dff71", 110, 60);
-        state.stingerPoisonFogs = state.stingerPoisonFogs || [];
-        state.stingerPoisonFogs.push({
-          x: state.player.x,
-          y: state.player.y,
-          life: 16,
-          maxLife: 16,
-          radius: 120,
-          maxRadius: 900,
-          tick: 0,
-          tickRate: 0.5,
-          damagePerTick: 4.4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        });
-        return;
-      }
-      target.deathMarked = true;
-      target.deathMarkTimer = sid === "specter" ? 10 : sid === "stinger" ? 6 : 8;
-      const angle = Math.atan2(target.y - state.player.y, target.x - state.player.x);
-      const count = sid === "specter" ? 0 : sid === "stinger" ? 4 : 8;
-      for (let i = 0; i < count; i++) {
-        const spread = (i - (count - 1) / 2) * 0.16;
-        const bullet = new Bullet(
-          state.player.x,
-          state.player.y,
-          angle + spread,
-          500 * state.player.shotSpeedMultiplier,
-          true,
-          5,
-          sid === "stinger" ? "#88ff66" : "#8b0000",
-          10 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
-        );
-        bullet.tracking = true;
-        bullet.trackingTarget = target;
-        if (sid === "stinger") {
-          bullet.burnDamage = 4 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-        }
-        state.bullets.push(bullet);
-      }
-    }
-  },
-  soulHarvest: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    if (state.player.shipId === "reaper") {
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      abilityParticleBurst("#660022", 170, 85);
-      for (const offset of [-72, 72]) {
-        const px = state.player.x + Math.cos(ang + Math.PI / 2) * offset + Math.cos(ang) * 80;
-        const py = state.player.y + Math.sin(ang + Math.PI / 2) * offset + Math.sin(ang) * 80;
-        state.reaperPortals.push(new ReaperPortal(px, py, offset < 0 ? -1 : 1));
-      }
-      return;
-    }
-    if (state.player.shipId === "marauder") {
-      abilityParticleBurst("#cc3344", 100, 55);
-      let target = null;
-      let minD = 1e9;
-      for (const enemy of state.enemies) {
-        const d = dist(state.player.x, state.player.y, enemy.x, enemy.y);
-        if (d < minD && d < 320) {
-          minD = d;
-          target = enemy;
-        }
-      }
-      if (target) {
-        const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-        const steal = 18 * dm;
-        target.hp -= steal;
-        recordDamageDealt(steal);
-        state.player.hp = Math.min(state.player.maxHp, state.player.hp + 4);
-        if (target.hp <= 0) {
-          const idx = state.enemies.indexOf(target);
-          if (idx > -1) onEnemyDestroyed(target, idx);
-        }
-      }
-      return;
-    }
-    abilityParticleBurst("#8b0000", 120, 60);
-    
-    let nearbyEnemies = 0;
-    for (const enemy of state.enemies) {
-      const d = dist(state.player.x, state.player.y, enemy.x, enemy.y);
-      if (d < 250) {
-        nearbyEnemies++;
-        
-        for (let i = 0; i < 10; i++) {
-          const t = i / 10;
-          const x = state.player.x + (enemy.x - state.player.x) * t;
-          const y = state.player.y + (enemy.y - state.player.y) * t;
-          const p = new Particle(x, y, "#8b0000");
-          p.vx = (state.player.x - enemy.x) * 0.1;
-          p.vy = (state.player.y - enemy.y) * 0.1;
-          p.life = 0.3;
-          state.particles.push(p);
-        }
-      }
-    }
-    
-    const energyRestore = Math.min(40 + nearbyEnemies * 5, 80);
-    const shieldRestore = Math.min(20 + nearbyEnemies * 3, 50);
-    const prevEnergy = state.player.energy;
-    const prevShield = state.player.shield;
-    state.player.energy = Math.min(state.player.energy + energyRestore, state.player.maxEnergy);
-    state.player.shield = Math.min(state.player.shield + shieldRestore, state.player.maxShield);
-    recordEnergyRegen(state.player.energy - prevEnergy);
-    recordShieldRegen(state.player.shield - prevShield);
-  },
-  supernova: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "seraph") {
-      const vCount = 4;
-      const xStep = config.width / (vCount + 1);
-      for (let i = 1; i <= vCount; i++) {
-        state.screenLasers.push(
-          new ScreenLaser({
-            orientation: "vertical",
-            x: i * xStep,
-            width: 18,
-            life: 2.5,
-            color: "rgba(255, 40, 40, 1)",
-            damagePerSecond: 220,
-          })
-        );
-      }
-      const hCount = 3;
-      const yStep = (config.height - TOP_HUD_SAFE_Y) / (hCount + 1);
-      for (let j = 1; j <= hCount; j++) {
-        state.screenLasers.push(
-          new ScreenLaser({
-            orientation: "horizontal",
-            y: TOP_HUD_SAFE_Y + j * yStep,
-            width: 26,
-            life: 2.5,
-            delay: 1,
-            color: "rgba(255, 55, 55, 1)",
-            damagePerSecond: 300,
-          })
-        );
-      }
-      abilityParticleBurst("#ff3d3d", 220, 120);
-      return;
-    }
-    if (sid === "nova") {
-      emitNovaShellParticles(state.player.x, state.player.y, "#ffffff", "#e8ffff", 10, 88);
-      state.novaAnomalies.push(
-        new NovaAnomaly(state.player.x, state.player.y, {
-          maxRadius: 300,
-          duration: 2.35,
-          pullStrength: 290,
-          damagePerSecond: 88 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          pullEnabled: true,
-          explodeAtEnd: true,
-          explosionDamage: 260 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          explosionKnockback: 420,
-          knockbackRadius: 360,
-          color: "#ffffff",
-          stunWhilePulled: true,
-        })
-      );
-      abilityParticleBurst("#ffffff", 200, 110);
-      return;
-    }
-    if (sid === "eclipse") {
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (const enemy of state.enemies) {
-        enemy.hp -= 32 * dm;
-        recordDamageDealt(32 * dm);
-        enemy.fireTimer += 0.35;
-      }
-      state.enemyBullets.length = 0;
-      abilityParticleBurst("#f0f0ff", 220, 120);
-      return;
-    }
-    if (sid === "oracle") {
-      emitNovaShellParticles(state.player.x, state.player.y, "#d4b8ff", "#ffffff", 9, 80);
-      state.novaAnomalies.push(
-        new NovaAnomaly(state.player.x, state.player.y, {
-          maxRadius: 295,
-          duration: 2.2,
-          pullStrength: 240,
-          damagePerSecond: 95 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          pullEnabled: true,
-          explodeAtEnd: true,
-          explosionDamage: 270 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          explosionKnockback: 380,
-          knockbackRadius: 340,
-          color: "#e8d4ff",
-          stunWhilePulled: true,
-        })
-      );
-      abilityParticleBurst("#ffffff", 180, 100);
-      return;
-    }
-    if (sid === "helios") {
-      abilityParticleBurst("#fff4c2", 300, 135);
-      for (let i = 0; i < 5; i++) {
-        const t = i / 4 - 0.5;
-        const x = clamp(state.player.x + t * 260, 55, config.width - 55);
-        const y = clamp(state.player.y + Math.sin(i * 1.7) * 48, TOP_HUD_SAFE_Y + 55, config.height - 55);
-        state.solarFlares.push(new SolarFlareEmitter(x, y));
-      }
-      return;
-    }
-    if (sid === "glacier") {
-      emitNovaShellParticles(state.player.x, state.player.y, "#b8ecff", "#ffffff", 9, 78);
-      state.novaAnomalies.push(
-        new NovaAnomaly(state.player.x, state.player.y, {
-          maxRadius: 280,
-          duration: 2.45,
-          pullStrength: 200,
-          damagePerSecond: 70 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          pullEnabled: true,
-          explodeAtEnd: true,
-          explosionDamage: 210 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          explosionKnockback: 260,
-          knockbackRadius: 300,
-          color: "#c8f4ff",
-          stunWhilePulled: true,
-        })
-      );
-      return;
-    }
-    emitNovaShellParticles(state.player.x, state.player.y, "#ffb347", "#fff6d9", 8, 76);
-    state.novaAnomalies.push(
-      new NovaAnomaly(state.player.x, state.player.y, {
-        maxRadius: 250,
-        duration: 2.55,
-        pullStrength: 265,
-        damagePerSecond: 74 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        pullEnabled: true,
-        explodeAtEnd: true,
-        explosionDamage: 228 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        explosionKnockback: 180,
-        knockbackRadius: 290,
-        color: "#ff9a3c",
-        stunWhilePulled: true,
-      })
-    );
-  },
-  azureCataclysm: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    emitNovaShellParticles(state.player.x, state.player.y, "#00f5ff", "#e0ffff", 11, 96);
-    state.novaAnomalies.push(
-      new NovaAnomaly(state.player.x, state.player.y, {
-        maxRadius: 285,
-        duration: 2.92,
-        pullStrength: 305,
-        damagePerSecond: 80 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        pullEnabled: true,
-        explodeAtEnd: true,
-        explosionDamage: 248 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        explosionKnockback: 495,
-        knockbackRadius: 415,
-        color: "#00e5ff",
-        azureVortex: true,
-        streamColors: ["#00ffff", "#4ddbff", "#b6ffff", "#00b8d4"],
-        stunWhilePulled: true,
-      })
-    );
-  },
-  bluefallBarrage: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#7aebff", 160, 85);
-    const topY = 96;
-    for (let p = 0; p < 5; p++) {
-      const x = rng(110, config.width - 110);
-      state.bluefallPortals.push(new BluefallPortal(x, topY, p * 0.52));
-    }
-  },
-  novaSwarmDrones: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    abilityParticleBurst("#6ef8ff", 200, 95);
-    for (let i = 0; i < 16; i++) {
-      const orb = new NovaOrbiter((i / 16) * Math.PI * 2, 68);
-      orb.tightOrbit = true;
-      state.novaOrbiters.push(orb);
-    }
-  },
-  starfall: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "aphelion") {
-      abilityParticleBurst("#e8d4ff", 120, 70);
-      const bottomY = config.height - 26;
-      const span = config.width - 200;
-      const count = 5;
-      for (let i = 0; i < count; i++) {
-        const t = count === 1 ? 0.5 : i / (count - 1);
-        const px = 100 + t * span + rng(-14, 14);
-        state.aphelionKeelPortals.push(new AphelionKeelPortal(clamp(px, 72, config.width - 72), bottomY));
-      }
-      return;
-    }
-    if (sid === "helios") {
-      abilityParticleBurst("#ffb347", 220, 110);
-      const ang = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-      const px = clamp(state.player.x + Math.cos(ang) * 150, 65, config.width - 65);
-      const py = clamp(state.player.y + Math.sin(ang) * 150, TOP_HUD_SAFE_Y + 65, config.height - 65);
-      state.novaAnomalies.push(
-        new NovaAnomaly(px, py, {
-          maxRadius: 310,
-          duration: 4.4,
-          pullStrength: 0,
-          damagePerSecond: 54 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          pullEnabled: false,
-          explodeAtEnd: false,
-          color: "#ff5a2a",
-          opacityScale: 0.62,
-          stunWhilePulled: false,
-        })
-      );
-      for (let i = 0; i < 180; i++) {
-        const a = rng(0, Math.PI * 2);
-        const p = new Particle(px + Math.cos(a) * rng(12, 190), py + Math.sin(a) * rng(12, 150), Math.random() < 0.5 ? "#ff4a1f" : "#ffbd45");
-        p.life = rng(0.35, 0.9);
-        state.particles.push(p);
-      }
-      return;
-    }
-    if (sid === "inferno") {
-      abilityParticleBurst("#ff7a2a", 170, 90);
-      state.player.infernoPyroTimer = Math.max(state.player.infernoPyroTimer || 0, 5);
-      return;
-    }
-    if (sid === "grimstar") {
-      abilityParticleBurst("#c9a6ff", 150, 85);
-      const cx = clamp(input.mouse.x, 70, config.width - 70);
-      const cy = clamp(input.mouse.y, TOP_HUD_SAFE_Y + 70, config.height - 70);
-      state.novaAnomalies.push(
-        new NovaAnomaly(cx, cy, {
-          maxRadius: 155,
-          duration: 1.45,
-          pullStrength: 110,
-          damagePerSecond: 42 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          pullEnabled: true,
-          explodeAtEnd: true,
-          explosionDamage: 110 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-          explosionKnockback: 180,
-          knockbackRadius: 220,
-          color: "#4a2080",
-          stunWhilePulled: true,
-        })
-      );
-      for (let i = 0; i < 28; i++) {
-        const a = (i / 28) * Math.PI * 2;
-        const shard = new Bullet(cx + Math.cos(a) * 36, cy + Math.sin(a) * 36, a + rng(-0.14, 0.14), rng(250, 430) * state.player.shotSpeedMultiplier, true, rng(3.5, 7), "#8b62ff", 8.5 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
-        shard.visualShape = "starShot";
-        shard.grimstarTrail = true;
-        shard.life = 1.75;
-        state.bullets.push(shard);
-      }
-      return;
-    }
-    const profiles = {
-      helios: { burst: "#ffdca8", color: "#ffcc66", count: 48, yMin: 20, yMax: 220, spread: 50 },
-      inferno: { burst: "#ff9a4d", color: "#ff5c2e", count: 58, yMin: 30, yMax: 280, spread: 62 },
-      aphelion: { burst: "#b8fff4", color: "#7cf0ff", count: 52, yMin: 15, yMax: 200, spread: 36 },
-      grimstar: { burst: "#c9a6ff", color: "#8b62ff", count: 50, yMin: 25, yMax: 250, spread: 55 },
-    };
-    const def = profiles[sid] || profiles.helios;
-    abilityParticleBurst(def.burst, 150, 80);
-    for (let i = 0; i < def.count; i++) {
-      const spawnX = rng(35, config.width - 35);
-      const spawnY = -rng(def.yMin, def.yMax);
-      const targetX = spawnX + rng(-def.spread, def.spread);
-      const targetY = rng(120, config.height - 80);
-      const a = Math.atan2(targetY - spawnY, targetX - spawnX);
-      const orb = new Bullet(
-        spawnX,
-        spawnY,
-        a,
-        rng(165, 265) * state.player.shotSpeedMultiplier,
-        true,
-        5,
-        def.color,
-        9.2 * state.player.damageMultiplier * state.player.abilityDamageMultiplier
-      );
-      orb.life = rng(2.2, 3.2);
-      orb.novaBurst = true;
-      orb.novaNoPull = true;
-      orb.novaBurstRadius = sid === "grimstar" ? 88 : sid === "inferno" ? 98 : 92;
-      orb.novaBurstDamage = (sid === "inferno" ? 86 : 78) * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      state.bullets.push(orb);
-    }
-  },
-  voidRift: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    if (state.player.shipId === "voidwalker") {
-      abilityParticleBurst("#6a3d9a", 140, 75);
-      const dm = state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-      for (let i = -8; i <= 8; i++) {
-        state.bullets.push(
-          new Bullet(state.player.x, state.player.y, angle + (i / 20) * 0.95, 440 * state.player.shotSpeedMultiplier, true, 4.2, "#b27bff", 6.5 * dm)
-        );
-      }
-    }
-    const distance = 200;
-    const riftX = state.player.x + Math.cos(angle) * distance;
-    const riftY = state.player.y + Math.sin(angle) * distance;
-    emitRiftShearParticles(riftX, riftY, "#4a0080", 18, 200);
-    
-    state.blackHoles.push(new BlackHole(riftX, riftY));
-    
-    const circle = new ExpandingCircle(riftX, riftY, 180, "#4a0080", 1.8, 100 * state.player.damageMultiplier * state.player.abilityDamageMultiplier, null, false);
-    state.expandingCircles.push(circle);
-    
-    emitSpiralInwardParticles(riftX, riftY, "#7320b9", 2, 26, 90, 0.7, 0.38);
-  },
-  dimensionalSlash: (cost) => {
-    if (!state.running || state.upgradePending || !consumeAbilityEnergy(cost)) return;
-    const sid = state.player.shipId;
-    if (sid === "specter") {
-      abilityParticleBurst("#f8f8ff", 200, 100);
-      const y0 = TOP_HUD_SAFE_Y + 80;
-      const y1 = config.height - 70;
-      state.screenLasers.push(
-        new ScreenLaser({
-          orientation: "horizontal",
-          y: (y0 + y1) / 2,
-          width: 28,
-          life: 0.75,
-          color: "rgba(255,255,255,0.94)",
-          damagePerSecond: 520 * state.player.damageMultiplier * state.player.abilityDamageMultiplier,
-        })
-      );
-      return;
-    }
-    if (sid === "reaper") {
-      abilityParticleBurst("#ff2222", 180, 100);
-      const targets = [...state.enemies]
-        .filter((enemy) => enemy.hp > 0)
-        .sort((a, b) => dist(state.player.x, state.player.y, a.x, a.y) - dist(state.player.x, state.player.y, b.x, b.y));
-      for (const target of targets) {
-        state.reaperChains.push(new ReaperChain(target));
-      }
-      return;
-    }
-    if (sid === "seraph") {
-      state.player.seraphSweepTimer = 6;
-      abilityParticleBurst("#ff4f4f", 180, 90);
-      return;
-    }
-    if (sid === "aphelion") {
-      abilityParticleBurst("#b480ff", 170, 80);
-      state.aphelionShields = [];
-      for (let i = 0; i < 5; i++) {
-        state.aphelionShields.push(new OrbitalAegisShield(i, 5, 6.75));
-      }
-      return;
-    }
-    abilityParticleBurst("#4a0080", 150, 70);
-    const angle = Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x);
-    
-    const slashWidth = 0.8; 
-    const slashLength = 400;
-    const slashCount = 20;
-    for (let i = 0; i < slashCount; i++) {
-      const t = i / slashCount;
-      const spread = (t - 0.5) * slashWidth;
-      const x = state.player.x + Math.cos(angle + spread) * slashLength * t;
-      const y = state.player.y + Math.sin(angle + spread) * slashLength * t;
-      
-      for (let j = 0; j < 8; j++) {
-        const p = new Particle(x, y, "#4a0080");
-        p.vx = Math.cos(angle + spread) * rng(50, 150);
-        p.vy = Math.sin(angle + spread) * rng(50, 150);
-        p.life = 0.3;
-        state.particles.push(p);
-      }
-      
-      for (const enemy of state.enemies) {
-        const d = dist(x, y, enemy.x, enemy.y);
-        if (d < 40) {
-          enemy.hp -= 25 * state.player.damageMultiplier * state.player.abilityDamageMultiplier;
-          if (enemy.hp <= 0) {
-            const index = state.enemies.indexOf(enemy);
-            if (index > -1) onEnemyDestroyed(enemy, index);
-          }
-        }
-      }
-    }
-    
-    for (let i = 0; i < 12; i++) {
-      const spread = (i - 6) * 0.12;
-      state.bullets.push(
-        new Bullet(state.player.x, state.player.y, angle + spread, 550 * state.player.shotSpeedMultiplier, true, 5, "#4a0080", 12 * state.player.damageMultiplier * state.player.abilityDamageMultiplier)
-      );
-    }
-  },
-};
+// Extracted: ability handlers
 
 const triggerAbility = (abilityType) => {
   const ability = state.player.abilities.find(a => a.type === abilityType);
   if (!ability) return;
-  
-  
+
+  if (state.tutorialMode && !state.tutorialTestWave && state.tutorialStep < 2) {
+    return;
+  }
+
   if (state.tutorialMode && !state.tutorialTestWave) {
     const abilityIndex = state.player.abilities.findIndex(a => a.type === abilityType);
     if (abilityIndex === 0 && !state.tutorialProgress.usedAbility1) {
@@ -9929,6 +4612,7 @@ const spawnWave = () => {
   state.expandingCircles = [];
   state.timeDilationFields = [];
   state.screenLasers = [];
+  state.bossHazardLasers = [];
   state.aphelionPortalBursts = [];
   state.aphelionKeelPortals = [];
   state.seraphBounceLasers = [];
@@ -9952,7 +4636,7 @@ const spawnWave = () => {
   const isBossWave = state.mode === "campaign" ? isCampaignBossWave : state.wave % 5 === 0;
   if (isBossWave) {
     
-    const bossTypes = ["titan", "sniper", "swarmlord", "vortex"];
+    const bossTypes = ["titan", "sniper", "swarmlord", "vortex", "bosslaser", "sprayer"];
     let bossType = bossTypes[Math.floor(Math.random() * bossTypes.length)];
     if (bossType === state.lastBossType && bossTypes.length > 1) {
       
@@ -10055,56 +4739,134 @@ const updateBossBar = () => {
 
 const tutorialSteps = [
   {
-    title: "Welcome to Orbital Barrage!",
-    text: "This tutorial will teach you the basics. Let's start with movement.",
-    checkComplete: () => true,
-    waitForManualAdvance: true,
-  },
-  {
-    title: "Movement",
-    text: "Use <kbd>WASD</kbd> or <kbd>Arrow Keys</kbd> to move your ship. Try moving around!",
+    title: "Move",
+    text: "Keys or arrows — see overlay.",
     checkComplete: () => state.tutorialProgress.moved,
     waitForManualAdvance: true,
+    focus: "canvas",
+    showKeyLayout: true,
+    showMouseHint: false,
   },
   {
-    title: "Aiming and Shooting",
-    text: "Aim with your <kbd>Mouse</kbd> and your ship will automatically fire bullets. Try moving your mouse around to aim!",
+    title: "Aim",
+    text: "Mouse aims · auto-fire.",
     checkComplete: () => state.tutorialProgress.shot,
     waitForManualAdvance: true,
+    focus: "canvas",
+    showKeyLayout: true,
+    showMouseHint: true,
   },
   {
-    title: "Ability 1",
-    text: "Use your first ability (default <kbd>1</kbd>).",
-    checkComplete: () => state.tutorialProgress.usedAbility1,
+    title: "Abilities",
+    text: "Tap {ABILITY1} · {ABILITY2} · {ABILITY3} when icons glow.",
+    checkComplete: () =>
+      state.tutorialProgress.usedAbility1 &&
+      state.tutorialProgress.usedAbility2 &&
+      state.tutorialProgress.usedAbility3,
     waitForManualAdvance: true,
+    focus: "abilities",
+    showKeyLayout: true,
+    showMouseHint: false,
   },
   {
-    title: "Ability 2",
-    text: "Use your second ability (default <kbd>2</kbd>).",
-    checkComplete: () => state.tutorialProgress.usedAbility2,
-    waitForManualAdvance: true,
-  },
-  {
-    title: "Ability 3",
-    text: "Use your third ability (default <kbd>3</kbd>).",
-    checkComplete: () => state.tutorialProgress.usedAbility3,
-    waitForManualAdvance: true,
-  },
-  {
-    title: "HUD Elements",
-    text: "Watch your <strong>HP</strong> (health), <strong>Shield</strong> (regenerates), and <strong>Energy</strong> (for abilities). The ability icons on the left show when abilities are ready.",
+    title: "Status bars",
+    text: "Hull · shield · energy.",
     checkComplete: () => true,
     waitForManualAdvance: true,
+    focus: "hud",
+    showKeyLayout: true,
+    showMouseHint: false,
   },
   {
-    title: "Test Wave",
-    text: "Now let's test your skills! A wave of enemies will spawn. Clear them to complete the tutorial.",
+    title: "Goal",
+    text: "Clear this wave.",
     checkComplete: () => true,
     waitForManualAdvance: true,
+    focus: "canvas",
+    showKeyLayout: true,
+    showMouseHint: false,
   },
 ];
 
+const formatTutorialText = (raw) => {
+  const move = state.movementKeys || detectDefaultMovementKeys();
+  const ability = state.abilityKeys || ["1", "2", "3"];
+  const map = {
+    "{MOVE_UP}": move.up.toUpperCase(),
+    "{MOVE_LEFT}": move.left.toUpperCase(),
+    "{MOVE_DOWN}": move.down.toUpperCase(),
+    "{MOVE_RIGHT}": move.right.toUpperCase(),
+    "{ABILITY1}": getKeyDisplay(ability[0] || "1"),
+    "{ABILITY2}": getKeyDisplay(ability[1] || "2"),
+    "{ABILITY3}": getKeyDisplay(ability[2] || "3"),
+  };
+  let text = raw || "";
+  for (const [key, value] of Object.entries(map)) text = text.replaceAll(key, value);
+  return text;
+};
+
+const clearTutorialFocusHighlights = () => {
+  document.querySelectorAll(".tutorial-focus-highlight").forEach((el) => el.classList.remove("tutorial-focus-highlight"));
+};
+
+const getTutorialFocusElement = (focus) => {
+  if (!focus) return null;
+  if (focus === "canvas") return canvas;
+  if (focus === "abilities") return abilityIcons;
+  if (focus === "hud") return document.querySelector(".hud");
+  return null;
+};
+
+const drawTutorialArrowTo = (targetEl) => {
+  if (!tutorialArrow || !targetEl) return;
+  const rect = targetEl.getBoundingClientRect();
+  const startX = window.innerWidth * 0.5;
+  const startY = 140 + 60;
+  const targetX = rect.left + rect.width * 0.5;
+  const targetY = rect.top + rect.height * 0.5;
+  const dx = targetX - startX;
+  const dy = targetY - startY;
+  const len = Math.max(60, Math.hypot(dx, dy) - 30);
+  const angle = Math.atan2(dy, dx);
+  tutorialArrow.style.left = `${startX}px`;
+  tutorialArrow.style.top = `${startY}px`;
+  tutorialArrow.style.width = `${len}px`;
+  tutorialArrow.style.transform = `rotate(${angle}rad)`;
+  tutorialArrow.classList.remove("hidden");
+};
+
+const renderTutorialKeyLayout = (step) => {
+  if (!tutorialKeyLayout) return;
+  if (!step || !step.showKeyLayout) {
+    tutorialKeyLayout.classList.add("hidden");
+    tutorialKeyLayout.innerHTML = "";
+    return;
+  }
+  const move = state.movementKeys || detectDefaultMovementKeys();
+  const [a1, a2, a3] = state.abilityKeys || ["1", "2", "3"];
+  const mouseHint =
+    step.showMouseHint
+      ? `<div class="tutorial-mouse-aim-hint" aria-hidden="true"><span class="tutorial-mouse-aim-hint__glyph"></span><span>Move mouse to aim</span></div>`
+      : "";
+  tutorialKeyLayout.innerHTML = `
+    <h4>Controls</h4>
+    <div class="tutorial-keys-grid">
+      <div></div><div class="tutorial-keycap tutorial-keycap--active">${move.up.toUpperCase()}</div><div></div><div></div>
+      <div class="tutorial-keycap tutorial-keycap--active">${move.left.toUpperCase()}</div><div class="tutorial-keycap tutorial-keycap--active">${move.down.toUpperCase()}</div><div class="tutorial-keycap tutorial-keycap--active">${move.right.toUpperCase()}</div><div class="tutorial-keycap tutorial-keycap--wide">Mouse aim</div>
+      <div class="tutorial-keycap">↑</div><div class="tutorial-keycap">↓</div><div class="tutorial-keycap">←/→</div><div class="tutorial-keycap tutorial-keycap--wide">Arrows</div>
+    </div>
+    <div class="tutorial-key-layout__abilities">
+      <span class="tutorial-key-layout__badge">Ability 1: ${getKeyDisplay(a1)}</span>
+      <span class="tutorial-key-layout__badge">Ability 2: ${getKeyDisplay(a2)}</span>
+      <span class="tutorial-key-layout__badge">Ability 3: ${getKeyDisplay(a3)}</span>
+    </div>
+    ${mouseHint}
+  `;
+  tutorialKeyLayout.classList.remove("hidden");
+};
+
 const startTutorial = () => {
+  clearUpgradePanelRevealTimeout();
   state.tutorialMode = true;
   state.tutorialStep = 0;
   state.tutorialStepStartTime = performance.now();
@@ -10134,6 +4896,18 @@ const startTutorial = () => {
   state.emberFog = null;
   state.stingerPoisonFogs = [];
   state.clawPawShield = null;
+  state.eclipseTotality = null;
+  state.eclipseUmbralWall = null;
+  state.pendingEclipseUmbralWall = null;
+  state.specterBladeStorm = null;
+  state.specterPhantasm = null;
+  state.wardenJudgmentChains = null;
+  state.oracleChronos = null;
+  state.oracleForesightWings = null;
+  state.oracleLightningStorm = null;
+  state.ravenUnkindnessRush = null;
+  state.ravenUnkindnessField = [];
+  state.ravenOmenSwarm = null;
   state.voidTrails = [];
   state.scytheSwings = [];
   state.reaperPortals = [];
@@ -10149,6 +4923,7 @@ const startTutorial = () => {
   state.expandingCircles = [];
   state.timeDilationFields = [];
   state.screenLasers = [];
+  state.bossHazardLasers = [];
   state.aphelionPortalBursts = [];
   state.aphelionKeelPortals = [];
   state.seraphBounceLasers = [];
@@ -10216,20 +4991,13 @@ const startTutorial = () => {
 
 const checkTutorialStepCompletion = () => {
   if (!state.tutorialMode || state.tutorialTestWave) return;
-  
+
   const step = tutorialSteps[state.tutorialStep];
   if (!step) return;
 
-  if (step.checkComplete() && !step.completed && !step.pendingComplete) {
-    step.pendingComplete = true;
-    step.completionTimer = setTimeout(() => {
-      if (!state.tutorialMode || state.tutorialTestWave || tutorialSteps[state.tutorialStep] !== step) {
-        return;
-      }
-      step.pendingComplete = false;
-      step.completed = true;
-      updateTutorialDisplay();
-    }, 1000);
+  if (step.checkComplete() && !step.completed) {
+    step.completed = true;
+    updateTutorialDisplay();
   } else {
     updateTutorialDisplay();
   }
@@ -10265,6 +5033,9 @@ const updateTutorialDisplay = () => {
   if (state.tutorialTestWave) {
     if (tutorialOverlay) tutorialOverlay.classList.add("hidden");
     if (tutorialTextTop) tutorialTextTop.classList.add("hidden");
+    if (tutorialArrow) tutorialArrow.classList.add("hidden");
+    if (tutorialKeyLayout) tutorialKeyLayout.classList.add("hidden");
+    clearTutorialFocusHighlights();
     return;
   }
   
@@ -10280,7 +5051,7 @@ const updateTutorialDisplay = () => {
   
   
   if (tutorialTextTopContent) {
-    let text = step.text;
+    let text = formatTutorialText(step.text);
     
     text = text.replace(/<kbd>([^<]*)<\/kbd>/g, '[$1]');
     text = text.replace(/<strong>([^<]*)<\/strong>/g, '$1');
@@ -10296,11 +5067,22 @@ const updateTutorialDisplay = () => {
   if (tutorialTextTop) {
     tutorialTextTop.classList.toggle("completed", !!step.completed);
   }
+  clearTutorialFocusHighlights();
+  if (tutorialArrow) tutorialArrow.classList.add("hidden");
+  const focusEl = getTutorialFocusElement(step.focus);
+  if (focusEl) {
+    focusEl.classList.add("tutorial-focus-highlight");
+    drawTutorialArrowTo(focusEl);
+  }
+  renderTutorialKeyLayout(step);
 };
 
 const startTutorialTestWave = () => {
   state.tutorialTestWave = true;
   tutorialOverlay.classList.add("hidden");
+  if (tutorialArrow) tutorialArrow.classList.add("hidden");
+  if (tutorialKeyLayout) tutorialKeyLayout.classList.add("hidden");
+  clearTutorialFocusHighlights();
   
   
   state.difficultyKey = "recruit";
@@ -10314,17 +5096,7 @@ const startTutorialTestWave = () => {
   spawnWave();
 };
 
-const endTutorial = () => {
-  unlockAchievement("tutorial-complete");
-  refreshProgressAchievements();
-  state.tutorialMode = false;
-  state.tutorialTestWave = false;
-  if (tutorialOverlay) tutorialOverlay.classList.add("hidden");
-  if (tutorialNextStepButton) tutorialNextStepButton.classList.add("hidden");
-  const splash = document.createElement("div");
-  splash.className = "tutorial-complete-splash";
-  splash.innerHTML = `<div class="tutorial-complete-splash__inner"><div class="tutorial-complete-splash__check">&#10003;</div><h2>Tutorial Complete!</h2><p>You&rsquo;re ready to fly, pilot.</p></div>`;
-  document.body.appendChild(splash);
+const finishOnboardingReturnToHub = () => {
   state.running = false;
   if (hudSettingsButton) hudSettingsButton.classList.add("hidden");
   if (abilityIcons) abilityIcons.classList.add("hidden");
@@ -10334,18 +5106,54 @@ const endTutorial = () => {
     state.player.maxEnergy = loadout.maxEnergy;
     state.player.energy = Math.min(state.player.energy, state.player.maxEnergy);
   }
-  setTimeout(() => {
+  if (mainHub) mainHub.classList.remove("hidden");
+  instructionsEl.classList.add("hidden");
+  if (instructionsPanel) instructionsPanel.classList.add("hidden");
+  if (campaignPanel) campaignPanel.classList.add("hidden");
+  if (achievementsPanel) achievementsPanel.classList.add("hidden");
+  updateHud();
+};
+
+const endTutorial = (opts = {}) => {
+  const skipped = !!opts.skipped;
+  clearUpgradePanelRevealTimeout();
+  state.tutorialMode = false;
+  state.tutorialTestWave = false;
+  if (tutorialOverlay) tutorialOverlay.classList.add("hidden");
+  if (tutorialArrow) tutorialArrow.classList.add("hidden");
+  if (tutorialKeyLayout) tutorialKeyLayout.classList.add("hidden");
+  clearTutorialFocusHighlights();
+  if (tutorialNextStepButton) tutorialNextStepButton.classList.add("hidden");
+
+  localStorage.setItem(TUTORIAL_COMPLETED_KEY, skipped ? "skipped" : "complete");
+  if (!skipped) {
+    unlockAchievement("tutorial-complete");
+    refreshProgressAchievements();
+  }
+
+  if (skipped) {
+    finishOnboardingReturnToHub();
+    return;
+  }
+
+  const splash = document.createElement("div");
+  splash.className = "tutorial-complete-splash";
+  splash.setAttribute("role", "dialog");
+  splash.innerHTML = `<div class="tutorial-complete-splash__inner"><div class="tutorial-complete-splash__check">&#10003;</div><h2>Ready to play</h2><p class="tutorial-complete-splash__tap">Click or tap to continue</p></div>`;
+  document.body.appendChild(splash);
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
     splash.remove();
-    if (mainHub) mainHub.classList.remove("hidden");
-    instructionsEl.classList.add("hidden");
-    if (instructionsPanel) instructionsPanel.classList.add("hidden");
-    if (campaignPanel) campaignPanel.classList.add("hidden");
-    if (achievementsPanel) achievementsPanel.classList.add("hidden");
-    updateHud();
-  }, 2500);
+    finishOnboardingReturnToHub();
+  };
+  splash.addEventListener("click", dismiss);
+  setTimeout(dismiss, 1400);
 };
 
 const resetGame = () => {
+  clearUpgradePanelRevealTimeout();
   if (!hasShipAccess(state.shipKey)) {
     state.shipKey = "striker";
   }
@@ -10365,6 +5173,18 @@ const resetGame = () => {
   state.emberFog = null;
   state.stingerPoisonFogs = [];
   state.clawPawShield = null;
+  state.eclipseTotality = null;
+  state.eclipseUmbralWall = null;
+  state.pendingEclipseUmbralWall = null;
+  state.specterBladeStorm = null;
+  state.specterPhantasm = null;
+  state.wardenJudgmentChains = null;
+  state.oracleChronos = null;
+  state.oracleForesightWings = null;
+  state.oracleLightningStorm = null;
+  state.ravenUnkindnessRush = null;
+  state.ravenUnkindnessField = [];
+  state.ravenOmenSwarm = null;
   state.voidTrails = [];
   state.scytheSwings = [];
   state.reaperPortals = [];
@@ -10380,6 +5200,7 @@ const resetGame = () => {
   state.expandingCircles = [];
   state.timeDilationFields = [];
   state.screenLasers = [];
+  state.bossHazardLasers = [];
   state.aphelionPortalBursts = [];
   state.aphelionKeelPortals = [];
   state.seraphBounceLasers = [];
@@ -10709,7 +5530,7 @@ const handleCollisions = (dt) => {
           bullet.piercing = true;
           bullet.pierceCount = Math.max(bullet.pierceCount || 0, 1);
         }
-        if (bullet.voidwalkerSlash) {
+        if (bullet.voidwalkerSlash && !bullet.voidwalkerPhaseBlade) {
           hitDamage *= bullet.voidwalkerScale || 1;
           bullet.voidwalkerScale = (bullet.voidwalkerScale || 1) * 0.8;
           bullet.size = Math.max(1.6, bullet.size * 0.9);
@@ -11118,6 +5939,26 @@ const handleCollisions = (dt) => {
   const shieldRadius = state.player.getShieldRadius();
   for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
     const bullet = state.enemyBullets[i];
+    if (state.oracleChronos && state.oracleChronos.life > 0 && bullet.spawnEnemy && bullet.spawnEnemy.hp > 0) {
+      const se = bullet.spawnEnemy;
+      if (dist(bullet.x, bullet.y, se.x, se.y) < bullet.size + se.size + 8) {
+        const dmg = Math.max(bullet.damage || 6, 4);
+        se.hp -= dmg;
+        recordDamageDealt(dmg);
+        state.enemyBullets.splice(i, 1);
+        for (let jp = 0; jp < 14; jp++) {
+          state.particles.push(new Particle(se.x + rng(-10, 10), se.y + rng(-10, 10), jp % 2 ? "#d4b8ff" : "#ffffff"));
+        }
+        if (se.hp <= 0) {
+          const ix = state.enemies.indexOf(se);
+          if (ix > -1) onEnemyDestroyed(se, ix);
+        }
+        continue;
+      }
+    }
+    if (state.oracleChronos && state.oracleChronos.life > 0 && bullet.spawnEnemy) {
+      continue;
+    }
     const distToPlayer = dist(bullet.x, bullet.y, state.player.x, state.player.y);
     
     
@@ -11137,7 +5978,7 @@ const handleCollisions = (dt) => {
     }
     
     
-    if (distToPlayer < bullet.size + 16) {
+    if (distToPlayer < bullet.size + state.player.getHullHitRadius()) {
       
       if (state.player.invincible) {
         
@@ -11205,22 +6046,32 @@ const handleCollisions = (dt) => {
     }
     
     
-    if (distToPlayer < enemy.size + 20) {
+    if (distToPlayer < enemy.size + state.player.getBodyRadius()) {
       
       if (!state.player.invincible) {
-        absorbDamage(25);
+        const impactDmg =
+          enemy.kind === "charger"
+            ? Math.min(52, 30 + Math.floor((enemy.wave || 1) * 1.1))
+            : 25;
+        absorbDamage(impactDmg);
+      }
+      if (enemy.kind === "charger") {
+        state.expandingCircles.push(new ExpandingCircle(enemy.x, enemy.y, 62, "#ff9933", 0.38, null, null));
+        for (let p = 0; p < 24; p++) {
+          const a = (p / 24) * Math.PI * 2 + rng(-0.35, 0.35);
+          const part = new Particle(enemy.x + Math.cos(a) * 6, enemy.y + Math.sin(a) * 6, Math.random() < 0.5 ? "#ffcc55" : "#ff5522");
+          part.vx = Math.cos(a) * rng(90, 220);
+          part.vy = Math.sin(a) * rng(90, 220);
+          part.life = rng(0.18, 0.42);
+          part.size = rng(2, 4);
+          state.particles.push(part);
+        }
       }
       state.enemies.splice(i, 1);
     }
   }
 
-  for (let i = state.powerUps.length - 1; i >= 0; i--) {
-    const power = state.powerUps[i];
-    if (dist(power.x, power.y, state.player.x, state.player.y) < power.size + 20) {
-      applyPowerUp(power.kind);
-      state.powerUps.splice(i, 1);
-    }
-  }
+  state.powerUps.length = 0;
 };
 
 const absorbDamage = (amount) => {
@@ -11296,7 +6147,341 @@ const updateEntities = (dt) => {
   } else {
     state.emberFog = null;
   }
-  
+
+  if (state.eclipseTotality && state.eclipseTotality.life > 0) {
+    state.eclipseTotality.life = Math.max(0, state.eclipseTotality.life - dt);
+    if (state.player) {
+      state.eclipseTotality.x = state.player.x;
+      state.eclipseTotality.y = state.player.y;
+    }
+    const E = state.eclipseTotality;
+    const edps = E.damagePerSecond;
+    if (edps > 0 && state.enemies.length > 0) {
+      for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+        const enemy = state.enemies[ei];
+        if (!enemy || enemy.hp <= 0) continue;
+        const chunk = edps * dt;
+        enemy.hp -= chunk;
+        recordDamageDealt(chunk);
+        enemy.fireTimer += 0.065 * dt;
+        if (enemy.hp <= 0) onEnemyDestroyed(enemy, ei);
+      }
+    }
+    const tickD = E.lowDamageTick;
+    if (tickD > 0 && state.enemies.length > 0) {
+      E._tickAcc = (E._tickAcc || 0) + dt;
+      while (E._tickAcc >= 0.3) {
+        E._tickAcc -= 0.3;
+        for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+          const enemy = state.enemies[ei];
+          if (!enemy || enemy.hp <= 0) continue;
+          enemy.hp -= tickD;
+          recordDamageDealt(tickD);
+          enemy.fireTimer += 0.12;
+          if (enemy.hp <= 0) onEnemyDestroyed(enemy, ei);
+        }
+      }
+    }
+  } else {
+    state.eclipseTotality = null;
+  }
+
+  if (state.oracleChronos && state.oracleChronos.life > 0) {
+    const O = state.oracleChronos;
+    O.life = Math.max(0, O.life - dt);
+    O.handAngle = (O.handAngle || -Math.PI / 2) - dt * 1.35;
+    O.particleAcc = (O.particleAcc || 0) + dt;
+    while (O.particleAcc >= 0.04) {
+      O.particleAcc -= 0.04;
+      state.particles.push(
+        new Particle(
+          rng(0, config.width),
+          rng(TOP_HUD_SAFE_Y, config.height),
+          Math.random() < 0.5 ? "rgba(160, 100, 220, 0.55)" : "rgba(80, 40, 140, 0.45)"
+        )
+      );
+    }
+    const tickDm = O.tickDamage || 7;
+    O.tickAcc = (O.tickAcc || 0) + dt;
+    while (O.tickAcc >= 0.3) {
+      O.tickAcc -= 0.3;
+      for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+        const enemy = state.enemies[ei];
+        if (!enemy || enemy.hp <= 0) continue;
+        enemy.hp -= tickDm;
+        recordDamageDealt(tickDm);
+        if (enemy.hp <= 0) onEnemyDestroyed(enemy, ei);
+      }
+    }
+  } else {
+    state.oracleChronos = null;
+  }
+
+  if (state.oracleForesightWings) {
+    const w = state.oracleForesightWings;
+    const pl = state.player;
+    if (w.followLife > 0) {
+      w.followLife -= dt;
+      w.particleAcc = (w.particleAcc || 0) + dt;
+      while (w.particleAcc >= 0.03 && pl) {
+        w.particleAcc -= 0.03;
+        for (let q = 0; q < 4; q++) {
+          const a = rng(0, Math.PI * 2);
+          const rr = rng(10, 48);
+          const pt = new Particle(pl.x + Math.cos(a) * rr, pl.y + Math.sin(a) * rr, "rgba(255,255,255,0.82)");
+          pt.life = rng(0.12, 0.28);
+          pt.size = rng(1.2, 2.8);
+          state.particles.push(pt);
+        }
+      }
+    } else if (!w.exploded && pl) {
+      w.exploded = true;
+      const dm = pl.damageMultiplier * pl.abilityDamageMultiplier;
+      const rad = 215;
+      const boom = 9.5 * dm;
+      const kb = 168;
+      for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+        const en = state.enemies[ei];
+        if (!en || en.hp <= 0) continue;
+        const d = dist(en.x, en.y, pl.x, pl.y);
+        if (d > rad + en.size) continue;
+        en.hp -= boom;
+        recordDamageDealt(boom);
+        const a = Math.atan2(en.y - pl.y, en.x - pl.x);
+        const f = clamp(1 - d / (rad + 1), 0.2, 1);
+        en.x += Math.cos(a) * kb * f;
+        en.y += Math.sin(a) * kb * f;
+        en.x = clamp(en.x, en.size, config.width - en.size);
+        en.y = clamp(en.y, TOP_HUD_SAFE_Y + en.size, config.height - en.size);
+        if (en.hp <= 0) onEnemyDestroyed(en, ei);
+      }
+      for (let n = 0; n < 160; n++) {
+        const a = rng(0, Math.PI * 2);
+        const sp = rng(140, 480);
+        const p = new Particle(pl.x, pl.y, n % 2 ? "#ffffff" : "#e8f4ff");
+        p.vx = Math.cos(a) * sp;
+        p.vy = Math.sin(a) * sp;
+        p.life = rng(0.38, 0.92);
+        p.size = rng(2.2, 5.5);
+        state.particles.push(p);
+      }
+      state.oracleForesightWings = null;
+    } else {
+      state.oracleForesightWings = null;
+    }
+  }
+
+  if (state.oracleLightningStorm && state.oracleLightningStorm.queue && state.oracleLightningStorm.queue.length) {
+    const L = state.oracleLightningStorm;
+    L.acc = (L.acc || 0) + dt;
+    const interval = L.interval != null ? L.interval : 0.052;
+    const perBurst = L.perBurst != null ? L.perBurst : 3;
+    let burstsThisFrame = 0;
+    const maxBurstsThisFrame = 3;
+    while (L.acc >= interval && L.queue.length > 0 && burstsThisFrame < maxBurstsThisFrame) {
+      L.acc -= interval;
+      burstsThisFrame++;
+      for (let b = 0; b < perBurst && L.queue.length > 0; b++) {
+        const job = L.queue.shift();
+        applyOracleLightningBolt(job.spawnX, job.spawnY, L.hitEnemies, L.dm, L.prof);
+      }
+    }
+    if (L.queue.length === 0) {
+      state.oracleLightningStorm = null;
+    }
+  } else if (state.oracleLightningStorm) {
+    state.oracleLightningStorm = null;
+  }
+
+  if (state.wardenJudgmentChains && state.player) {
+    const J = state.wardenJudgmentChains;
+    J.life = Math.max(0, J.life - dt);
+    const alive = [];
+    for (const en of state.enemies) {
+      if (!en || en.hp <= 0) continue;
+      alive.push(en);
+      en.stunTimer = Math.max(en.stunTimer || 0, 0.12);
+      en.vx = 0;
+      en.vy = 0;
+      en.smoothVx = 0;
+      en.smoothVy = 0;
+    }
+    if (alive.length > 0) {
+      J.tickAcc = (J.tickAcc || 0) + dt;
+      while (J.tickAcc >= 0.2 && alive.length > 0) {
+        J.tickAcc -= 0.2;
+        const each = (J.dpsPool * 0.2) / alive.length;
+        for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+          const en = state.enemies[ei];
+          if (!en || en.hp <= 0) continue;
+          en.hp -= each;
+          recordDamageDealt(each);
+          if (Math.random() < 0.35) {
+            state.particles.push(new Particle(en.x + rng(-6, 6), en.y + rng(-6, 6), "#8fff9b"));
+          }
+          if (en.hp <= 0) onEnemyDestroyed(en, ei);
+        }
+      }
+    }
+    state.player.boltChannelLock = Math.max(state.player.boltChannelLock || 0, 0.12);
+    if (J.life <= 0 || alive.length === 0) {
+      state.wardenJudgmentChains = null;
+      state.player.boltChannelLock = Math.min(state.player.boltChannelLock || 0, 0.08);
+    }
+  } else if (state.player && (state.player.boltChannelLock || 0) > 0.08 && state.player.shipId === "warden") {
+    state.player.boltChannelLock = 0.08;
+  }
+
+  if (state.ravenUnkindnessRush && state.player) {
+    const rush = state.ravenUnkindnessRush;
+    rush.life = Math.max(0, rush.life - dt);
+    const pl = state.player;
+    const mx = clamp(input.mouse.x, 20, config.width - 20);
+    const my = clamp(input.mouse.y, playerMinY(), config.height - 20);
+    const a = Math.atan2(my - pl.y, mx - pl.x);
+    const prevX = pl.x;
+    const prevY = pl.y;
+    const step = rush.speed * dt;
+    const toMouse = Math.hypot(mx - prevX, my - prevY);
+    const reach = Math.min(step, toMouse || step);
+    pl.x = clamp(prevX + Math.cos(a) * reach, 20, config.width - 20);
+    pl.y = clamp(prevY + Math.sin(a) * reach, playerMinY(), config.height - 20);
+
+    const perpA = a + Math.PI * 0.5;
+    const hitKeyFrame = Math.floor(performance.now() / 90);
+    for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+      const en = state.enemies[ei];
+      if (!en || en.hp <= 0) continue;
+      const d = pointToSegmentDistance(en.x, en.y, prevX, prevY, pl.x, pl.y);
+      if (d > rush.pathWidth + en.size * 0.45) continue;
+      const key = `${ei}:${hitKeyFrame}`;
+      if (rush.hitMap[key]) continue;
+      rush.hitMap[key] = true;
+      en.hp -= rush.pathDamage;
+      recordDamageDealt(rush.pathDamage);
+      const side = ((en.x - prevX) * Math.cos(perpA) + (en.y - prevY) * Math.sin(perpA)) >= 0 ? 1 : -1;
+      en.x += Math.cos(perpA) * rush.pathSideKnockback * side;
+      en.y += Math.sin(perpA) * rush.pathSideKnockback * side;
+      en.x = clamp(en.x, en.size, config.width - en.size);
+      en.y = clamp(en.y, TOP_HUD_SAFE_Y + en.size, config.height - en.size);
+      if (en.hp <= 0) onEnemyDestroyed(en, ei);
+    }
+
+    rush.particleAcc = (rush.particleAcc || 0) + dt;
+    while (rush.particleAcc >= rush.particleInterval) {
+      rush.particleAcc -= rush.particleInterval;
+      const ringA = rng(0, Math.PI * 2);
+      const ringR = rng(122, 196);
+      state.ravenUnkindnessField.push({
+        x: pl.x + Math.cos(ringA) * ringR,
+        y: pl.y + Math.sin(ringA) * ringR,
+        life: rng(1.9, 2.9),
+        maxLife: 2.9,
+        size: rng(3.4, 7.2),
+      });
+    }
+
+    state.ravenUnkindnessField = (state.ravenUnkindnessField || []).filter((pt) => {
+      pt.life -= dt;
+      return pt.life > 0;
+    });
+
+    if (rush.life <= 0 || toMouse <= 18) {
+      const ex = pl.x;
+      const ey = pl.y;
+      for (let ei = state.enemies.length - 1; ei >= 0; ei--) {
+        const en = state.enemies[ei];
+        if (!en || en.hp <= 0) continue;
+        const d = dist(en.x, en.y, ex, ey);
+        if (d > rush.explosionRadius + en.size) continue;
+        const fall = clamp(1 - d / (rush.explosionRadius + 1), 0.25, 1);
+        const damage = rush.explosionDamage * fall;
+        en.hp -= damage;
+        recordDamageDealt(damage);
+        const pushA = Math.atan2(en.y - ey, en.x - ex);
+        en.x += Math.cos(pushA) * rush.explosionKnockback * fall;
+        en.y += Math.sin(pushA) * rush.explosionKnockback * fall;
+        en.x = clamp(en.x, en.size, config.width - en.size);
+        en.y = clamp(en.y, TOP_HUD_SAFE_Y + en.size, config.height - en.size);
+        if (en.hp <= 0) onEnemyDestroyed(en, ei);
+      }
+      const burst = state.ravenUnkindnessField || [];
+      for (const pt of burst) {
+        const outA = Math.atan2(pt.y - ey, pt.x - ex);
+        const b = new Bullet(pt.x, pt.y, outA, rng(210, 420) * state.player.shotSpeedMultiplier, true, Math.max(2.2, pt.size * 0.5), "#9a5cff", 4.6 * state.player.damageMultiplier * state.player.abilityDamageMultiplier);
+        b.life = rng(0.55, 1.05);
+        b.visualShape = "ravenDetailed";
+        b.ravenBird = true;
+        b.noTrail = true;
+        state.bullets.push(b);
+      }
+      for (let i = 0; i < 170; i++) {
+        const pa = rng(0, Math.PI * 2);
+        const p = new Particle(ex, ey, i % 2 ? "#b777ff" : "#edd7ff");
+        p.vx = Math.cos(pa) * rng(180, 520);
+        p.vy = Math.sin(pa) * rng(180, 520);
+        p.life = rng(0.26, 0.86);
+        p.size = rng(2, 6.2);
+        state.particles.push(p);
+      }
+      state.expandingCircles.push(new ExpandingCircle(ex, ey, rush.explosionRadius, "#9a5cff", 0.72, null, null, true));
+      state.ravenUnkindnessField = [];
+      state.ravenUnkindnessRush = null;
+      pl.invincible = false;
+      pl.invincibleTimer = Math.min(pl.invincibleTimer || 0, 0.2);
+    }
+  } else if (state.ravenUnkindnessField && state.ravenUnkindnessField.length > 0) {
+    state.ravenUnkindnessField = state.ravenUnkindnessField.filter((pt) => {
+      pt.life -= dt;
+      return pt.life > 0;
+    });
+  }
+
+  if (state.ravenOmenSwarm && state.player) {
+    const swarm = state.ravenOmenSwarm;
+    swarm.life = Math.max(0, swarm.life - dt);
+    swarm.spawnAcc = (swarm.spawnAcc || 0) + dt;
+    while (swarm.spawned < swarm.maxSpawn && swarm.spawnAcc >= swarm.spawnInterval) {
+      swarm.spawnAcc -= swarm.spawnInterval;
+      const secBucket = Math.min(3, Math.floor((4 - Math.max(0, swarm.life)) / 1));
+      const candidates = [];
+      const counts = new Map();
+      for (const en of state.enemies) {
+        if (!en || en.hp <= 0) continue;
+        const d = dist(state.player.x, state.player.y, en.x, en.y);
+        if (d > 760) continue;
+        counts.set(en, en.ravenTargetBuckets ? en.ravenTargetBuckets[secBucket] || 0 : 0);
+        candidates.push(en);
+      }
+      candidates.sort((a, b) => counts.get(a) - counts.get(b) || dist(state.player.x, state.player.y, a.x, a.y) - dist(state.player.x, state.player.y, b.x, b.y));
+      let target = candidates.find((en) => counts.get(en) < 1) || candidates.find((en) => counts.get(en) < 2) || null;
+      if (target) {
+        target.ravenTargetBuckets = target.ravenTargetBuckets || [0, 0, 0, 0];
+        target.ravenTargetBuckets[secBucket] = (target.ravenTargetBuckets[secBucket] || 0) + 1;
+      }
+      const aa = target ? Math.atan2(target.y - state.player.y, target.x - state.player.x) : Math.atan2(input.mouse.y - state.player.y, input.mouse.x - state.player.x) + rng(-0.25, 0.25);
+      const rb = new Bullet(state.player.x + rng(-18, 18), state.player.y + rng(-18, 18), aa, rng(360, 510) * state.player.shotSpeedMultiplier, true, rng(4.8, 6.6), "#9c56ff", swarm.damage);
+      rb.visualShape = "ravenDetailed";
+      rb.ravenBird = true;
+      rb.tracking = !!target;
+      rb.trackingTarget = target;
+      rb.trackingTurnRate = 17;
+      rb.life = 2.2;
+      rb.piercing = false;
+      state.bullets.push(rb);
+      swarm.spawned++;
+      for (let i = 0; i < 4; i++) {
+        const p = new Particle(state.player.x + rng(-12, 12), state.player.y + rng(-12, 12), i % 2 ? "#9a5cff" : "#dcb5ff");
+        p.life = rng(0.14, 0.32);
+        p.size = rng(1.5, 3.4);
+        state.particles.push(p);
+      }
+    }
+    if (swarm.life <= 0 || swarm.spawned >= swarm.maxSpawn) {
+      state.ravenOmenSwarm = null;
+    }
+  }
+
   state.player.shoot(state.bullets);
   state.bullets = state.bullets.filter((b) => {
     b.update(dt);
@@ -11332,6 +6517,73 @@ const updateEntities = (dt) => {
     return barrier.life > 0;
   });
 
+  if (state.pendingEclipseUmbralWall) {
+    const w = state.pendingEclipseUmbralWall;
+    state.eclipseUmbralWall = new EclipseUmbralWall(w.cx, w.cy, w.aim, w.L);
+    state.pendingEclipseUmbralWall = null;
+  }
+  if (state.eclipseUmbralWall) {
+    state.eclipseUmbralWall.update(dt);
+    if (state.eclipseUmbralWall.life <= 0) state.eclipseUmbralWall = null;
+  }
+
+  if (state.specterBladeStorm && state.specterBladeStorm.life > 0) {
+    state.specterBladeStorm.life -= dt;
+    state.specterBladeStorm.spawnAcc = (state.specterBladeStorm.spawnAcc || 0) + dt;
+    const pl = state.player;
+    const dm = pl.damageMultiplier * pl.abilityDamageMultiplier;
+    const sm = pl.shotSpeedMultiplier;
+    while (state.specterBladeStorm.spawnAcc >= 0.016) {
+      state.specterBladeStorm.spawnAcc -= 0.016;
+      const bx = rng(24, config.width - 24);
+      const by = rng(TOP_HUD_SAFE_Y + 22, config.height - 28);
+      const blade = new Bullet(bx, by, rng(0, Math.PI * 2), rng(42, 145) * sm, true, 3.05, "#f4f6ff", 6.8 * dm);
+      blade.life = 0.72;
+      blade.visualShape = "needle";
+      blade.specterBladeShard = true;
+      blade.noTrail = true;
+      state.bullets.push(blade);
+    }
+  } else if (state.specterBladeStorm) {
+    state.specterBladeStorm = null;
+  }
+
+  if (state.specterPhantasm && state.specterPhantasm.life > 0) {
+    state.specterPhantasm.life -= dt;
+    const pl = state.player;
+    if (pl) {
+      state.specterPhantasm.spawnAcc = (state.specterPhantasm.spawnAcc || 0) + dt;
+      const dm = pl.damageMultiplier * pl.abilityDamageMultiplier;
+      const sm = pl.shotSpeedMultiplier;
+      while (state.specterPhantasm.spawnAcc >= 0.3) {
+        state.specterPhantasm.spawnAcc -= 0.3;
+        let best = null;
+        let bd = 1e9;
+        for (const en of state.enemies) {
+          if (!en || en.hp <= 0) continue;
+          const d = dist(en.x, en.y, pl.x, pl.y);
+          if (d < bd) {
+            bd = d;
+            best = en;
+          }
+        }
+        const a0 = best
+          ? Math.atan2(best.y - pl.y, best.x - pl.x)
+          : Math.atan2(input.mouse.y - pl.y, input.mouse.x - pl.x);
+        const orb = new Bullet(pl.x, pl.y, a0, 380 * sm, true, 10, "#f4f2ff", 14 * dm);
+        orb.life = 2.4;
+        orb.tracking = true;
+        orb.trackingTarget = best;
+        orb.trackingTurnRate = 11;
+        orb.specterPhantasmOrb = true;
+        orb.piercing = false;
+        state.bullets.push(orb);
+      }
+    }
+  } else if (state.specterPhantasm) {
+    state.specterPhantasm = null;
+  }
+
   
   state.blackHoles = state.blackHoles.filter((hole) => {
     hole.update(dt);
@@ -11340,6 +6592,10 @@ const updateEntities = (dt) => {
   state.screenLasers = state.screenLasers.filter((laser) => {
     laser.update(dt);
     return laser.life > 0;
+  });
+  state.bossHazardLasers = state.bossHazardLasers.filter((laser) => {
+    laser.update(dt);
+    return !laser.dead;
   });
   state.aphelionPortalBursts = state.aphelionPortalBursts.filter((burst) => {
     burst.delay -= dt;
@@ -11406,10 +6662,7 @@ const updateEntities = (dt) => {
       
       for (let i = 0; i < state.enemies.length; i++) {
         const enemy = state.enemies[i];
-        if (enemy.originalSpeed) {
-          enemy.speed = enemy.originalSpeed;
-          enemy.originalSpeed = null;
-        }
+        enemy.timeDilationSlowFactor = 1;
       }
     }
   });
@@ -11576,8 +6829,9 @@ const updateEntities = (dt) => {
       fog.life -= dt;
       fog.x = state.player.x;
       fog.y = state.player.y;
-      const grow = (fog.maxRadius - 40) / fog.maxLife;
-      fog.radius = Math.min(fog.maxRadius, fog.radius + grow * dt);
+      const startR = fog.startRadius ?? 120;
+      const frac = 1 - fog.life / fog.maxLife;
+      fog.radius = Math.min(fog.maxRadius, startR + (fog.maxRadius - startR) * frac);
       fog.tick = (fog.tick || 0) + dt;
       while (fog.tick >= fog.tickRate) {
         fog.tick -= fog.tickRate;
@@ -11595,10 +6849,7 @@ const updateEntities = (dt) => {
       return fog.life > 0;
     });
   }
-  state.powerUps = state.powerUps.filter((p) => {
-    p.update(dt);
-    return p.life > 0;
-  });
+  state.powerUps.length = 0;
   state.particles = state.particles.filter((particle) => {
     particle.update(dt);
     return particle.life > 0;
@@ -11794,20 +7045,67 @@ const drawEntities = () => {
     ctx.fill();
     ctx.restore();
   }
-  state.powerUps.forEach((p) => p.draw(ctx));
   state.enemies.forEach((enemy) => enemy.draw(ctx));
   state.enemies.forEach((enemy) => drawEnemyPoisonStacks(ctx, enemy));
+  state.enemies.forEach((enemy) => drawEnemyInfernoBurn(ctx, enemy));
   state.enemies.forEach((enemy) => drawEnemyDizzyStars(ctx, enemy));
+  if (state.wardenJudgmentChains && state.player) {
+    const J = state.wardenJudgmentChains;
+    const alpha = clamp(J.life / (J.maxLife || 5), 0, 1);
+    const now = performance.now() * 0.006;
+    for (let i = 0; i < state.enemies.length; i++) {
+      const en = state.enemies[i];
+      if (!en || en.hp <= 0) continue;
+      const x1 = state.player.x;
+      const y1 = state.player.y;
+      const x2 = en.x;
+      const y2 = en.y;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len;
+      const ny = dx / len;
+      const links = Math.max(5, Math.floor(len / 20));
+      ctx.save();
+      ctx.globalAlpha = 0.9 * alpha;
+      for (let k = 0; k < links; k++) {
+        const t = links <= 1 ? 0 : k / (links - 1);
+        const wig = Math.sin(now + k * 0.9 + i * 0.55) * 4.5;
+        const cx = x1 + dx * t + nx * wig;
+        const cy = y1 + dy * t + ny * wig;
+        const ang = Math.atan2(dy, dx) + ((k + i) % 2 === 0 ? 0.7 : -0.7);
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(ang);
+        ctx.strokeStyle = "rgba(120, 255, 150, 0.95)";
+        ctx.lineWidth = 2.3;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = "#66ff88";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 8.5, 4.6, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(205, 255, 220, 0.9)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 5.7, 2.7, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+  }
   state.blackHoles.forEach((hole) => hole.draw(ctx));
   state.bluefallPortals.forEach((portal) => portal.draw(ctx));
   state.aphelionKeelPortals.forEach((portal) => portal.draw(ctx));
   state.seraphBounceLasers.forEach((laser) => laser.draw(ctx));
   state.novaAnomalies.forEach((anomaly) => anomaly.draw(ctx));
   state.tempestEyeStorms.forEach((storm) => storm.draw(ctx));
+  if (state.eclipseUmbralWall) state.eclipseUmbralWall.draw(ctx);
   state.barriers.forEach((barrier) => barrier.draw(ctx));
   state.aphelionShields.forEach((shield) => shield.draw(ctx));
   state.expandingCircles.forEach((circle) => circle.draw(ctx));
   state.screenLasers.forEach((laser) => laser.draw(ctx));
+  state.bossHazardLasers.forEach((laser) => laser.draw(ctx));
   state.fireColumns.forEach((column) => column.draw(ctx));
   state.solarFlares.forEach((flare) => flare.draw(ctx));
   state.grimstarWaves.forEach((wave) => wave.draw(ctx));
@@ -11947,6 +7245,164 @@ const drawEntities = () => {
   state.novaOrbiters.forEach((orb) => orb.draw(ctx));
   state.reaperMinions.forEach((minion) => minion.draw(ctx));
   drawBoltCageLightning(ctx);
+  if (state.eclipseTotality && state.eclipseTotality.life > 0) {
+    const E = state.eclipseTotality;
+    const cx = E.x;
+    const cy = E.y;
+    const t = clamp(E.life / E.maxLife, 0, 1);
+    const wob = performance.now() / 1000;
+    const cornerDist = Math.max(
+      Math.hypot(cx, cy),
+      Math.hypot(config.width - cx, cy),
+      Math.hypot(cx, config.height - cy),
+      Math.hypot(config.width - cx, config.height - cy)
+    );
+    const reach = cornerDist * 1.12 + 60;
+    ctx.save();
+    const g = ctx.createRadialGradient(cx, cy, reach * 0.04, cx, cy, reach);
+    g.addColorStop(0, `rgba(28, 0, 48, ${0.72 * t})`);
+    g.addColorStop(0.45, `rgba(55, 18, 95, ${0.48 * t})`);
+    g.addColorStop(0.78, `rgba(85, 35, 130, ${0.26 * t})`);
+    g.addColorStop(1, "rgba(130, 80, 190, 0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, config.width, config.height);
+    const ringR = reach * (0.88 + 0.04 * Math.sin(wob * 3.2));
+    ctx.strokeStyle = `rgba(255, 248, 255, ${0.82 * t})`;
+    ctx.lineWidth = 12;
+    ctx.shadowBlur = 36;
+    ctx.shadowColor = "#ff88ff";
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(160, 255, 255, ${0.88 * t})`;
+    ctx.lineWidth = 4;
+    ctx.shadowColor = "#aaffff";
+    ctx.stroke();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2 + wob * 0.55;
+      ctx.strokeStyle = `rgba(255, 210, 255, ${0.42 * t})`;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * (ringR * 0.45), cy + Math.sin(a) * (ringR * 0.45));
+      ctx.lineTo(cx + Math.cos(a) * reach, cy + Math.sin(a) * reach);
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+  if (state.oracleChronos && state.oracleChronos.life > 0) {
+    const O = state.oracleChronos;
+    const t = clamp(O.life / O.maxLife, 0, 1);
+    const cx = config.width * 0.5;
+    const cy = (TOP_HUD_SAFE_Y + config.height) * 0.5;
+    ctx.save();
+    const sweep = 0.52 + 0.48 * t;
+    const reach = Math.max(config.width, config.height) * 0.92;
+    const g0 = ctx.createRadialGradient(cx, cy, reach * 0.08, cx, cy, reach);
+    g0.addColorStop(0, `rgba(55, 18, 95, ${0.62 * sweep})`);
+    g0.addColorStop(0.35, `rgba(42, 12, 78, ${0.48 * sweep})`);
+    g0.addColorStop(0.65, `rgba(28, 6, 58, ${0.32 * sweep})`);
+    g0.addColorStop(1, "rgba(8, 0, 22, 0)");
+    ctx.fillStyle = g0;
+    ctx.fillRect(0, 0, config.width, config.height);
+    ctx.globalCompositeOperation = "lighter";
+    for (let s = 0; s < 48; s++) {
+      const a = (s / 48) * Math.PI * 2 + performance.now() * 0.00035;
+      ctx.strokeStyle = `rgba(180, 130, 255, ${0.08 * sweep})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * 40, cy + Math.sin(a) * 40);
+      ctx.lineTo(cx + Math.cos(a) * reach * 0.55, cy + Math.sin(a) * reach * 0.55);
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = "source-over";
+    const R = Math.min(config.width, config.height) * 0.4;
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.sin(performance.now() / 2600) * 0.035);
+    const ringGrad = ctx.createRadialGradient(0, 0, R * 0.55, 0, 0, R * 1.08);
+    ringGrad.addColorStop(0, `rgba(140, 80, 210, ${0.45 * t})`);
+    ringGrad.addColorStop(0.85, `rgba(50, 18, 95, ${0.2 * t})`);
+    ringGrad.addColorStop(1, "rgba(20, 0, 50, 0)");
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, Math.PI * 2);
+    ctx.fillStyle = ringGrad;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(210, 170, 255, ${0.88 * t})`;
+    ctx.lineWidth = 8;
+    ctx.shadowBlur = 48;
+    ctx.shadowColor = "#9040ff";
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    for (let h = 0; h < 12; h++) {
+      const a = (h / 12) * Math.PI * 2 - Math.PI / 2;
+      ctx.strokeStyle = `rgba(230, 210, 255, ${0.58 * t})`;
+      ctx.lineWidth = h % 3 === 0 ? 4.2 : 2.2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * (R * 0.74), Math.sin(a) * (R * 0.74));
+      ctx.lineTo(Math.cos(a) * (R * 0.96), Math.sin(a) * (R * 0.96));
+      ctx.stroke();
+    }
+    const ha = O.handAngle || -Math.PI / 2;
+    ctx.strokeStyle = `rgba(255, 252, 255, ${0.96 * t})`;
+    ctx.lineWidth = 10;
+    ctx.lineCap = "round";
+    ctx.shadowBlur = 32;
+    ctx.shadowColor = "#e0c8ff";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(ha) * R * 0.64, Math.sin(ha) * R * 0.64);
+    ctx.stroke();
+    ctx.lineWidth = 5.5;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(ha + Math.PI / 2) * R * 0.3, Math.sin(ha + Math.PI / 2) * R * 0.3);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.92 * t})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  if (state.oracleForesightWings && state.oracleForesightWings.followLife > 0 && state.player) {
+    const w = state.oracleForesightWings;
+    const pl = state.player;
+    const alpha = clamp(w.followLife / (w.maxFollow || 0.52), 0, 1);
+    ctx.save();
+    ctx.globalAlpha = 0.9 * alpha;
+    for (const sgn of [-1, 1]) {
+      const wa = w.aim + sgn * w.wingSpread;
+      const x2 = pl.x + Math.cos(wa) * w.wingLen;
+      const y2 = pl.y + Math.sin(wa) * w.wingLen;
+      ctx.strokeStyle = "rgba(235, 252, 255, 0.94)";
+      ctx.lineWidth = w.wingW;
+      ctx.lineCap = "round";
+      ctx.shadowBlur = 28;
+      ctx.shadowColor = "#a8fff4";
+      ctx.beginPath();
+      ctx.moveTo(pl.x, pl.y);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+  if (state.ravenUnkindnessField && state.ravenUnkindnessField.length > 0) {
+    for (const pt of state.ravenUnkindnessField) {
+      const a = clamp(pt.life / (pt.maxLife || 1), 0, 1);
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = "rgba(182, 120, 255, 0.9)";
+      ctx.shadowBlur = 18;
+      ctx.shadowColor = "#8f56ff";
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
   if (state.player) state.player.draw(ctx);
   state.particles.forEach((particle) => particle.draw(ctx));
   
@@ -12015,6 +7471,7 @@ const gameLoop = (timestamp) => {
 };
 
 const endGame = () => {
+  clearUpgradePanelRevealTimeout();
   tone(140, 0.22, "sawtooth", audio.sfxVolume * 0.22);
   if (audio.music && audio.ctx && audio.useProceduralMusic) {
     audio.music.gain.setTargetAtTime(0, audio.ctx.currentTime, 0.1);
@@ -12056,6 +7513,7 @@ const togglePause = () => {
 const onKeyDown = (event) => {
   unlockAudio();
   const key = event.key.toLowerCase();
+  if (event.code) input.codes.add(event.code);
   if (key === "`" && !state.running && instructionsEl && !instructionsEl.classList.contains("hidden")) {
     state.tempAllShipsTrial = !state.tempAllShipsTrial;
     if (!state.tempAllShipsTrial && !state.unlockedShips.includes(state.shipKey)) {
@@ -12085,6 +7543,7 @@ const onKeyDown = (event) => {
 };
 const onKeyUp = (event) => {
   input.keys.delete(event.key.toLowerCase());
+  if (event.code) input.codes.delete(event.code);
 };
 
 canvas.addEventListener("mousemove", (event) => {
@@ -12140,7 +7599,7 @@ if (tutorialButton) {
 
 if (tutorialSkipButton) {
   tutorialSkipButton.addEventListener("click", () => {
-    endTutorial();
+    endTutorial({ skipped: true });
   });
 }
 if (tutorialNextStepButton) {
@@ -12157,6 +7616,7 @@ const showHub = () => {
   if (instructionsEl) instructionsEl.classList.add("hidden");
   if (instructionsPanel) instructionsPanel.classList.add("hidden");
   if (campaignPanel) campaignPanel.classList.add("hidden");
+  if (campaignCompletePanel) campaignCompletePanel.classList.add("hidden");
 };
 
 const showEndlessSetup = () => {
@@ -12383,9 +7843,11 @@ if (shopCloseButton) {
 }
 
 restartButton.addEventListener("click", () => {
+  clearUpgradePanelRevealTimeout();
   state.running = false;
   clearCanvas();
   gameOverEl.classList.add("hidden");
+  if (campaignCompletePanel) campaignCompletePanel.classList.add("hidden");
   upgradePanel.classList.add("hidden");
   bossBar.classList.add("hidden");
   bossBar.style.display = "none";
@@ -12404,6 +7866,7 @@ restartButton.addEventListener("click", () => {
   state.expandingCircles = [];
   state.timeDilationFields = [];
   state.screenLasers = [];
+  state.bossHazardLasers = [];
   state.aphelionPortalBursts = [];
   state.aphelionKeelPortals = [];
   state.seraphBounceLasers = [];
@@ -12416,6 +7879,16 @@ restartButton.addEventListener("click", () => {
   showHub();
   updateHud();
 });
+
+if (campaignCompleteContinueButton) {
+  campaignCompleteContinueButton.addEventListener("click", () => {
+    if (campaignCompletePanel) campaignCompletePanel.classList.add("hidden");
+    if (campaignPanel) campaignPanel.classList.remove("hidden");
+    if (mainHub) mainHub.classList.add("hidden");
+    if (instructionsEl) instructionsEl.classList.add("hidden");
+    renderCampaignLevelGrid();
+  });
+}
 
 
 const clearCanvas = () => {
@@ -12695,9 +8168,14 @@ const closeSettings = () => {
 };
 
 const quitToMainMenu = () => {
+  clearUpgradePanelRevealTimeout();
   state.running = false;
   state.paused = false;
+  state.upgradePending = false;
+  state.awaitingUpgrade = false;
+  state.upgradeChoices = [];
   if (gameOverEl) gameOverEl.classList.add("hidden");
+  if (campaignCompletePanel) campaignCompletePanel.classList.add("hidden");
   if (upgradePanel) upgradePanel.classList.add("hidden");
   if (bossBar) {
     bossBar.classList.add("hidden");
@@ -12718,22 +8196,18 @@ const quitToMainMenu = () => {
 };
 
 const updateKeyBindingDisplay = () => {
-  const keyNames = {
-    "1": "1", "2": "2", "3": "3",
-    "lm": "Left Mouse", "mm": "Middle Mouse", "rm": "Right Mouse"
-  };
   if (keyBinding1 && state.abilityKeys[0]) {
-    keyBinding1.textContent = keyNames[state.abilityKeys[0]] || state.abilityKeys[0].toUpperCase();
+    keyBinding1.textContent = getKeyDisplay(state.abilityKeys[0]).replace("LM", "Left Mouse").replace("MM", "Middle Mouse").replace("RM", "Right Mouse");
     const ship = shipLoadouts[state.player ? state.player.shipId : state.shipKey];
     if (ship && ship.abilities[0]) keyBinding1.dataset.tooltip = describeAbility(ship, ship.abilities[0]);
   }
   if (keyBinding2 && state.abilityKeys[1]) {
-    keyBinding2.textContent = keyNames[state.abilityKeys[1]] || state.abilityKeys[1].toUpperCase();
+    keyBinding2.textContent = getKeyDisplay(state.abilityKeys[1]).replace("LM", "Left Mouse").replace("MM", "Middle Mouse").replace("RM", "Right Mouse");
     const ship = shipLoadouts[state.player ? state.player.shipId : state.shipKey];
     if (ship && ship.abilities[1]) keyBinding2.dataset.tooltip = describeAbility(ship, ship.abilities[1]);
   }
   if (keyBinding3 && state.abilityKeys[2]) {
-    keyBinding3.textContent = keyNames[state.abilityKeys[2]] || state.abilityKeys[2].toUpperCase();
+    keyBinding3.textContent = getKeyDisplay(state.abilityKeys[2]).replace("LM", "Left Mouse").replace("MM", "Middle Mouse").replace("RM", "Right Mouse");
     const ship = shipLoadouts[state.player ? state.player.shipId : state.shipKey];
     if (ship && ship.abilities[2]) keyBinding3.dataset.tooltip = describeAbility(ship, ship.abilities[2]);
   }
@@ -12765,14 +8239,9 @@ const updateShipLoadoutDisplay = () => {
   shipLoadoutName.innerHTML = `${ship.name} <span style="color: ${tierInfo.color}; font-size: 0.75rem; margin-left: 8px;">${tierInfo.name}</span>`;
   
   
-  const keyNames = {
-    "1": "1", "2": "2", "3": "3",
-    "lm": "LM", "mm": "MM", "rm": "RM"
-  };
-  
   shipLoadoutAbilities.innerHTML = ship.abilities.map((ability, index) => {
     const binding = state.abilityKeys && state.abilityKeys[index] ? state.abilityKeys[index] : ability.key;
-    const keyDisplay = keyNames[binding] || binding.toUpperCase();
+    const keyDisplay = getKeyDisplay(binding);
     return `
       <div class="ship-loadout__ability">
         <kbd>${keyDisplay}</kbd>
@@ -13046,14 +8515,11 @@ if (mapRegistryCloseButton) mapRegistryCloseButton.addEventListener("click", () 
 
 
 
-updateHud(); 
+updateHud();
 updateShipSelection();
 refreshProgressAchievements();
-if (mainHub) {
-  showHub();
-}
 
-if (typeof updateKeyBindingDisplay === 'function') {
+if (typeof updateKeyBindingDisplay === "function") {
   updateKeyBindingDisplay();
 }
 
@@ -13061,3477 +8527,10 @@ if (typeof updateKeyBindingDisplay === 'function') {
 
 
 // MEGA_RUNTIME_CONTENT_V2
-const MEGA_SHIP_CATALOG_V2 = [
-  { id: 'atlas-001', name: 'Atlas 001', tier: 'uncommon', speed: 221, maxHp: 91, maxShield: 21, maxEnergy: 71, baseCooldown: 0.67, damageMultiplier: 0.73, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4300, unlocked: false },
-  { id: 'atlas-002', name: 'Atlas 002', tier: 'rare', speed: 222, maxHp: 92, maxShield: 22, maxEnergy: 72, baseCooldown: 0.66, damageMultiplier: 0.74, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 15500, unlocked: false },
-  { id: 'atlas-003', name: 'Atlas 003', tier: 'mythic', speed: 223, maxHp: 93, maxShield: 23, maxEnergy: 73, baseCooldown: 0.65, damageMultiplier: 0.76, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 74800, unlocked: false },
-  { id: 'atlas-004', name: 'Atlas 004', tier: 'legendary', speed: 224, maxHp: 94, maxShield: 24, maxEnergy: 74, baseCooldown: 0.64, damageMultiplier: 0.77, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 36000, unlocked: false },
-  { id: 'atlas-005', name: 'Atlas 005', tier: 'exotic', speed: 225, maxHp: 95, maxShield: 25, maxEnergy: 75, baseCooldown: 0.63, damageMultiplier: 0.78, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 131000, unlocked: false },
-  { id: 'atlas-006', name: 'Atlas 006', tier: 'common', speed: 226, maxHp: 96, maxShield: 26, maxEnergy: 76, baseCooldown: 0.62, damageMultiplier: 0.79, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 350, unlocked: false },
-  { id: 'atlas-007', name: 'Atlas 007', tier: 'uncommon', speed: 227, maxHp: 97, maxShield: 27, maxEnergy: 77, baseCooldown: 0.61, damageMultiplier: 0.8, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4423, unlocked: false },
-  { id: 'atlas-008', name: 'Atlas 008', tier: 'rare', speed: 228, maxHp: 98, maxShield: 28, maxEnergy: 78, baseCooldown: 0.6, damageMultiplier: 0.82, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 15763, unlocked: false },
-  { id: 'atlas-009', name: 'Atlas 009', tier: 'mythic', speed: 229, maxHp: 99, maxShield: 29, maxEnergy: 79, baseCooldown: 0.59, damageMultiplier: 0.83, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 75733, unlocked: false },
-  { id: 'atlas-010', name: 'Atlas 010', tier: 'legendary', speed: 230, maxHp: 100, maxShield: 30, maxEnergy: 80, baseCooldown: 0.58, damageMultiplier: 0.84, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 36743, unlocked: false },
-  { id: 'atlas-011', name: 'Atlas 011', tier: 'exotic', speed: 231, maxHp: 101, maxShield: 31, maxEnergy: 81, baseCooldown: 0.57, damageMultiplier: 0.85, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 132071, unlocked: false },
-  { id: 'atlas-012', name: 'Atlas 012', tier: 'common', speed: 232, maxHp: 102, maxShield: 32, maxEnergy: 82, baseCooldown: 0.56, damageMultiplier: 0.86, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 368, unlocked: false },
-  { id: 'atlas-013', name: 'Atlas 013', tier: 'uncommon', speed: 233, maxHp: 103, maxShield: 33, maxEnergy: 83, baseCooldown: 0.55, damageMultiplier: 0.88, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4547, unlocked: false },
-  { id: 'atlas-014', name: 'Atlas 014', tier: 'rare', speed: 234, maxHp: 104, maxShield: 34, maxEnergy: 84, baseCooldown: 0.54, damageMultiplier: 0.89, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16026, unlocked: false },
-  { id: 'atlas-015', name: 'Atlas 015', tier: 'mythic', speed: 235, maxHp: 105, maxShield: 35, maxEnergy: 85, baseCooldown: 0.53, damageMultiplier: 0.9, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 76667, unlocked: false },
-  { id: 'atlas-016', name: 'Atlas 016', tier: 'legendary', speed: 236, maxHp: 106, maxShield: 36, maxEnergy: 86, baseCooldown: 0.52, damageMultiplier: 0.91, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 37486, unlocked: false },
-  { id: 'atlas-017', name: 'Atlas 017', tier: 'exotic', speed: 237, maxHp: 107, maxShield: 37, maxEnergy: 87, baseCooldown: 0.51, damageMultiplier: 0.92, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 133143, unlocked: false },
-  { id: 'atlas-018', name: 'Atlas 018', tier: 'common', speed: 238, maxHp: 108, maxShield: 38, maxEnergy: 88, baseCooldown: 0.5, damageMultiplier: 0.94, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 386, unlocked: false },
-  { id: 'atlas-019', name: 'Atlas 019', tier: 'uncommon', speed: 239, maxHp: 109, maxShield: 39, maxEnergy: 89, baseCooldown: 0.49, damageMultiplier: 0.95, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4670, unlocked: false },
-  { id: 'atlas-020', name: 'Atlas 020', tier: 'rare', speed: 240, maxHp: 110, maxShield: 40, maxEnergy: 90, baseCooldown: 0.48, damageMultiplier: 0.96, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16288, unlocked: false },
-  { id: 'atlas-021', name: 'Atlas 021', tier: 'mythic', speed: 241, maxHp: 111, maxShield: 41, maxEnergy: 91, baseCooldown: 0.47, damageMultiplier: 0.97, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 77600, unlocked: false },
-  { id: 'atlas-022', name: 'Atlas 022', tier: 'legendary', speed: 242, maxHp: 112, maxShield: 42, maxEnergy: 92, baseCooldown: 0.46, damageMultiplier: 0.98, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 38229, unlocked: false },
-  { id: 'atlas-023', name: 'Atlas 023', tier: 'exotic', speed: 243, maxHp: 113, maxShield: 43, maxEnergy: 93, baseCooldown: 0.45, damageMultiplier: 1, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 134214, unlocked: false },
-  { id: 'atlas-024', name: 'Atlas 024', tier: 'common', speed: 244, maxHp: 114, maxShield: 44, maxEnergy: 94, baseCooldown: 0.44, damageMultiplier: 1.01, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 404, unlocked: false },
-  { id: 'atlas-025', name: 'Atlas 025', tier: 'uncommon', speed: 245, maxHp: 115, maxShield: 45, maxEnergy: 95, baseCooldown: 0.43, damageMultiplier: 1.02, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4793, unlocked: false },
-  { id: 'atlas-026', name: 'Atlas 026', tier: 'rare', speed: 246, maxHp: 116, maxShield: 46, maxEnergy: 96, baseCooldown: 0.42, damageMultiplier: 1.03, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16551, unlocked: false },
-  { id: 'atlas-027', name: 'Atlas 027', tier: 'mythic', speed: 247, maxHp: 117, maxShield: 47, maxEnergy: 97, baseCooldown: 0.41, damageMultiplier: 1.04, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 78533, unlocked: false },
-  { id: 'atlas-028', name: 'Atlas 028', tier: 'legendary', speed: 248, maxHp: 118, maxShield: 48, maxEnergy: 98, baseCooldown: 0.68, damageMultiplier: 1.06, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 38971, unlocked: false },
-  { id: 'atlas-029', name: 'Atlas 029', tier: 'exotic', speed: 249, maxHp: 119, maxShield: 49, maxEnergy: 99, baseCooldown: 0.67, damageMultiplier: 1.07, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 135286, unlocked: false },
-  { id: 'atlas-030', name: 'Atlas 030', tier: 'common', speed: 250, maxHp: 120, maxShield: 50, maxEnergy: 100, baseCooldown: 0.66, damageMultiplier: 1.08, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 421, unlocked: false },
-  { id: 'atlas-031', name: 'Atlas 031', tier: 'uncommon', speed: 251, maxHp: 121, maxShield: 51, maxEnergy: 101, baseCooldown: 0.65, damageMultiplier: 1.09, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 4916, unlocked: false },
-  { id: 'atlas-032', name: 'Atlas 032', tier: 'rare', speed: 252, maxHp: 122, maxShield: 52, maxEnergy: 102, baseCooldown: 0.64, damageMultiplier: 1.1, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 16814, unlocked: false },
-  { id: 'atlas-033', name: 'Atlas 033', tier: 'mythic', speed: 253, maxHp: 123, maxShield: 53, maxEnergy: 103, baseCooldown: 0.63, damageMultiplier: 1.12, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 79467, unlocked: false },
-  { id: 'atlas-034', name: 'Atlas 034', tier: 'legendary', speed: 254, maxHp: 124, maxShield: 54, maxEnergy: 104, baseCooldown: 0.62, damageMultiplier: 1.13, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 39714, unlocked: false },
-  { id: 'atlas-035', name: 'Atlas 035', tier: 'exotic', speed: 255, maxHp: 125, maxShield: 55, maxEnergy: 105, baseCooldown: 0.61, damageMultiplier: 1.14, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 1, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 136357, unlocked: false },
-  { id: 'atlas-036', name: 'Atlas 036', tier: 'common', speed: 256, maxHp: 126, maxShield: 56, maxEnergy: 106, baseCooldown: 0.6, damageMultiplier: 1.15, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 439, unlocked: false },
-  { id: 'atlas-037', name: 'Atlas 037', tier: 'uncommon', speed: 257, maxHp: 127, maxShield: 57, maxEnergy: 107, baseCooldown: 0.59, damageMultiplier: 1.16, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5040, unlocked: false },
-  { id: 'atlas-038', name: 'Atlas 038', tier: 'rare', speed: 258, maxHp: 128, maxShield: 58, maxEnergy: 108, baseCooldown: 0.58, damageMultiplier: 1.18, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17077, unlocked: false },
-  { id: 'atlas-039', name: 'Atlas 039', tier: 'mythic', speed: 259, maxHp: 129, maxShield: 59, maxEnergy: 109, baseCooldown: 0.57, damageMultiplier: 1.19, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 80400, unlocked: false },
-  { id: 'atlas-040', name: 'Atlas 040', tier: 'legendary', speed: 260, maxHp: 130, maxShield: 60, maxEnergy: 110, baseCooldown: 0.56, damageMultiplier: 1.2, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 40457, unlocked: false },
-  { id: 'atlas-041', name: 'Atlas 041', tier: 'exotic', speed: 261, maxHp: 131, maxShield: 61, maxEnergy: 111, baseCooldown: 0.55, damageMultiplier: 1.21, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 137429, unlocked: false },
-  { id: 'atlas-042', name: 'Atlas 042', tier: 'common', speed: 262, maxHp: 132, maxShield: 62, maxEnergy: 112, baseCooldown: 0.54, damageMultiplier: 1.22, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 457, unlocked: false },
-  { id: 'atlas-043', name: 'Atlas 043', tier: 'uncommon', speed: 263, maxHp: 133, maxShield: 63, maxEnergy: 113, baseCooldown: 0.53, damageMultiplier: 1.24, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5163, unlocked: false },
-  { id: 'atlas-044', name: 'Atlas 044', tier: 'rare', speed: 264, maxHp: 134, maxShield: 64, maxEnergy: 114, baseCooldown: 0.52, damageMultiplier: 1.25, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17340, unlocked: false },
-  { id: 'atlas-045', name: 'Atlas 045', tier: 'mythic', speed: 265, maxHp: 135, maxShield: 65, maxEnergy: 115, baseCooldown: 0.51, damageMultiplier: 1.26, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 81333, unlocked: false },
-  { id: 'atlas-046', name: 'Atlas 046', tier: 'legendary', speed: 266, maxHp: 136, maxShield: 66, maxEnergy: 116, baseCooldown: 0.5, damageMultiplier: 1.27, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 41200, unlocked: false },
-  { id: 'atlas-047', name: 'Atlas 047', tier: 'exotic', speed: 267, maxHp: 137, maxShield: 67, maxEnergy: 117, baseCooldown: 0.49, damageMultiplier: 1.28, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 138500, unlocked: false },
-  { id: 'atlas-048', name: 'Atlas 048', tier: 'common', speed: 268, maxHp: 138, maxShield: 68, maxEnergy: 118, baseCooldown: 0.48, damageMultiplier: 1.3, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 475, unlocked: false },
-  { id: 'atlas-049', name: 'Atlas 049', tier: 'uncommon', speed: 269, maxHp: 139, maxShield: 69, maxEnergy: 119, baseCooldown: 0.47, damageMultiplier: 1.31, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5286, unlocked: false },
-  { id: 'atlas-050', name: 'Atlas 050', tier: 'rare', speed: 270, maxHp: 140, maxShield: 70, maxEnergy: 120, baseCooldown: 0.46, damageMultiplier: 1.32, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17602, unlocked: false },
-  { id: 'atlas-051', name: 'Atlas 051', tier: 'mythic', speed: 271, maxHp: 141, maxShield: 71, maxEnergy: 121, baseCooldown: 0.45, damageMultiplier: 1.33, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 82267, unlocked: false },
-  { id: 'atlas-052', name: 'Atlas 052', tier: 'legendary', speed: 272, maxHp: 142, maxShield: 72, maxEnergy: 122, baseCooldown: 0.44, damageMultiplier: 1.34, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 41943, unlocked: false },
-  { id: 'atlas-053', name: 'Atlas 053', tier: 'exotic', speed: 273, maxHp: 143, maxShield: 73, maxEnergy: 123, baseCooldown: 0.43, damageMultiplier: 1.36, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 139571, unlocked: false },
-  { id: 'atlas-054', name: 'Atlas 054', tier: 'common', speed: 274, maxHp: 144, maxShield: 74, maxEnergy: 124, baseCooldown: 0.42, damageMultiplier: 1.37, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 493, unlocked: false },
-  { id: 'atlas-055', name: 'Atlas 055', tier: 'uncommon', speed: 275, maxHp: 145, maxShield: 75, maxEnergy: 125, baseCooldown: 0.41, damageMultiplier: 1.38, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5409, unlocked: false },
-  { id: 'atlas-056', name: 'Atlas 056', tier: 'rare', speed: 276, maxHp: 146, maxShield: 76, maxEnergy: 126, baseCooldown: 0.68, damageMultiplier: 1.39, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 17865, unlocked: false },
-  { id: 'atlas-057', name: 'Atlas 057', tier: 'mythic', speed: 277, maxHp: 147, maxShield: 77, maxEnergy: 127, baseCooldown: 0.67, damageMultiplier: 1.4, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 83200, unlocked: false },
-  { id: 'atlas-058', name: 'Atlas 058', tier: 'legendary', speed: 278, maxHp: 148, maxShield: 78, maxEnergy: 128, baseCooldown: 0.66, damageMultiplier: 1.42, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 42686, unlocked: false },
-  { id: 'atlas-059', name: 'Atlas 059', tier: 'exotic', speed: 279, maxHp: 149, maxShield: 79, maxEnergy: 129, baseCooldown: 0.65, damageMultiplier: 1.43, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 140643, unlocked: false },
-  { id: 'atlas-060', name: 'Atlas 060', tier: 'common', speed: 280, maxHp: 150, maxShield: 80, maxEnergy: 130, baseCooldown: 0.64, damageMultiplier: 1.44, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 511, unlocked: false },
-  { id: 'atlas-061', name: 'Atlas 061', tier: 'uncommon', speed: 281, maxHp: 151, maxShield: 81, maxEnergy: 131, baseCooldown: 0.63, damageMultiplier: 1.45, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5533, unlocked: false },
-  { id: 'atlas-062', name: 'Atlas 062', tier: 'rare', speed: 282, maxHp: 152, maxShield: 82, maxEnergy: 132, baseCooldown: 0.62, damageMultiplier: 1.46, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18128, unlocked: false },
-  { id: 'atlas-063', name: 'Atlas 063', tier: 'mythic', speed: 283, maxHp: 153, maxShield: 83, maxEnergy: 133, baseCooldown: 0.61, damageMultiplier: 1.48, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 84133, unlocked: false },
-  { id: 'atlas-064', name: 'Atlas 064', tier: 'legendary', speed: 284, maxHp: 154, maxShield: 84, maxEnergy: 134, baseCooldown: 0.6, damageMultiplier: 1.49, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 43429, unlocked: false },
-  { id: 'atlas-065', name: 'Atlas 065', tier: 'exotic', speed: 285, maxHp: 155, maxShield: 85, maxEnergy: 135, baseCooldown: 0.59, damageMultiplier: 1.5, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 141714, unlocked: false },
-  { id: 'atlas-066', name: 'Atlas 066', tier: 'common', speed: 286, maxHp: 156, maxShield: 86, maxEnergy: 136, baseCooldown: 0.58, damageMultiplier: 1.51, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 529, unlocked: false },
-  { id: 'atlas-067', name: 'Atlas 067', tier: 'uncommon', speed: 287, maxHp: 157, maxShield: 87, maxEnergy: 137, baseCooldown: 0.57, damageMultiplier: 1.52, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5656, unlocked: false },
-  { id: 'atlas-068', name: 'Atlas 068', tier: 'rare', speed: 288, maxHp: 158, maxShield: 88, maxEnergy: 138, baseCooldown: 0.56, damageMultiplier: 1.54, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18391, unlocked: false },
-  { id: 'atlas-069', name: 'Atlas 069', tier: 'mythic', speed: 289, maxHp: 159, maxShield: 89, maxEnergy: 139, baseCooldown: 0.55, damageMultiplier: 1.55, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 85067, unlocked: false },
-  { id: 'atlas-070', name: 'Atlas 070', tier: 'legendary', speed: 290, maxHp: 160, maxShield: 90, maxEnergy: 140, baseCooldown: 0.54, damageMultiplier: 1.56, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 44171, unlocked: false },
-  { id: 'atlas-071', name: 'Atlas 071', tier: 'exotic', speed: 291, maxHp: 161, maxShield: 91, maxEnergy: 141, baseCooldown: 0.53, damageMultiplier: 1.57, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 142786, unlocked: false },
-  { id: 'atlas-072', name: 'Atlas 072', tier: 'common', speed: 292, maxHp: 162, maxShield: 92, maxEnergy: 142, baseCooldown: 0.52, damageMultiplier: 1.58, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 546, unlocked: false },
-  { id: 'atlas-073', name: 'Atlas 073', tier: 'uncommon', speed: 293, maxHp: 163, maxShield: 93, maxEnergy: 143, baseCooldown: 0.51, damageMultiplier: 1.6, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5779, unlocked: false },
-  { id: 'atlas-074', name: 'Atlas 074', tier: 'rare', speed: 294, maxHp: 164, maxShield: 94, maxEnergy: 144, baseCooldown: 0.5, damageMultiplier: 1.61, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18653, unlocked: false },
-  { id: 'atlas-075', name: 'Atlas 075', tier: 'mythic', speed: 295, maxHp: 165, maxShield: 95, maxEnergy: 145, baseCooldown: 0.49, damageMultiplier: 1.62, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 86000, unlocked: false },
-  { id: 'atlas-076', name: 'Atlas 076', tier: 'legendary', speed: 296, maxHp: 166, maxShield: 96, maxEnergy: 146, baseCooldown: 0.48, damageMultiplier: 1.63, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 44914, unlocked: false },
-  { id: 'atlas-077', name: 'Atlas 077', tier: 'exotic', speed: 297, maxHp: 167, maxShield: 97, maxEnergy: 147, baseCooldown: 0.47, damageMultiplier: 1.64, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 143857, unlocked: false },
-  { id: 'atlas-078', name: 'Atlas 078', tier: 'common', speed: 298, maxHp: 168, maxShield: 98, maxEnergy: 148, baseCooldown: 0.46, damageMultiplier: 1.66, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 564, unlocked: false },
-  { id: 'atlas-079', name: 'Atlas 079', tier: 'uncommon', speed: 299, maxHp: 169, maxShield: 99, maxEnergy: 149, baseCooldown: 0.45, damageMultiplier: 1.67, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 5902, unlocked: false },
-  { id: 'atlas-080', name: 'Atlas 080', tier: 'rare', speed: 300, maxHp: 170, maxShield: 100, maxEnergy: 150, baseCooldown: 0.44, damageMultiplier: 1.68, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 18916, unlocked: false },
-  { id: 'atlas-081', name: 'Atlas 081', tier: 'mythic', speed: 301, maxHp: 171, maxShield: 101, maxEnergy: 151, baseCooldown: 0.43, damageMultiplier: 1.69, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 86933, unlocked: false },
-  { id: 'atlas-082', name: 'Atlas 082', tier: 'legendary', speed: 302, maxHp: 172, maxShield: 102, maxEnergy: 152, baseCooldown: 0.42, damageMultiplier: 1.7, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 45657, unlocked: false },
-  { id: 'atlas-083', name: 'Atlas 083', tier: 'exotic', speed: 303, maxHp: 173, maxShield: 103, maxEnergy: 153, baseCooldown: 0.41, damageMultiplier: 1.72, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 144929, unlocked: false },
-  { id: 'atlas-084', name: 'Atlas 084', tier: 'common', speed: 304, maxHp: 174, maxShield: 104, maxEnergy: 154, baseCooldown: 0.68, damageMultiplier: 1.73, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 582, unlocked: false },
-  { id: 'atlas-085', name: 'Atlas 085', tier: 'uncommon', speed: 305, maxHp: 175, maxShield: 105, maxEnergy: 155, baseCooldown: 0.67, damageMultiplier: 1.74, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6026, unlocked: false },
-  { id: 'atlas-086', name: 'Atlas 086', tier: 'rare', speed: 306, maxHp: 176, maxShield: 106, maxEnergy: 156, baseCooldown: 0.66, damageMultiplier: 1.75, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19179, unlocked: false },
-  { id: 'atlas-087', name: 'Atlas 087', tier: 'mythic', speed: 307, maxHp: 177, maxShield: 107, maxEnergy: 157, baseCooldown: 0.65, damageMultiplier: 1.76, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 87867, unlocked: false },
-  { id: 'atlas-088', name: 'Atlas 088', tier: 'legendary', speed: 308, maxHp: 178, maxShield: 108, maxEnergy: 158, baseCooldown: 0.64, damageMultiplier: 1.78, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 46400, unlocked: false },
-  { id: 'atlas-089', name: 'Atlas 089', tier: 'exotic', speed: 309, maxHp: 179, maxShield: 109, maxEnergy: 159, baseCooldown: 0.63, damageMultiplier: 1.79, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 146000, unlocked: false },
-  { id: 'atlas-090', name: 'Atlas 090', tier: 'common', speed: 310, maxHp: 180, maxShield: 110, maxEnergy: 160, baseCooldown: 0.62, damageMultiplier: 0.72, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 600, unlocked: false },
-  { id: 'atlas-091', name: 'Atlas 091', tier: 'uncommon', speed: 311, maxHp: 181, maxShield: 111, maxEnergy: 161, baseCooldown: 0.61, damageMultiplier: 0.73, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6149, unlocked: false },
-  { id: 'atlas-092', name: 'Atlas 092', tier: 'rare', speed: 312, maxHp: 182, maxShield: 112, maxEnergy: 162, baseCooldown: 0.6, damageMultiplier: 0.74, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19442, unlocked: false },
-  { id: 'atlas-093', name: 'Atlas 093', tier: 'mythic', speed: 313, maxHp: 183, maxShield: 113, maxEnergy: 163, baseCooldown: 0.59, damageMultiplier: 0.76, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 88800, unlocked: false },
-  { id: 'atlas-094', name: 'Atlas 094', tier: 'legendary', speed: 314, maxHp: 184, maxShield: 114, maxEnergy: 164, baseCooldown: 0.58, damageMultiplier: 0.77, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 47143, unlocked: false },
-  { id: 'atlas-095', name: 'Atlas 095', tier: 'exotic', speed: 315, maxHp: 185, maxShield: 115, maxEnergy: 165, baseCooldown: 0.57, damageMultiplier: 0.78, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 147071, unlocked: false },
-  { id: 'atlas-096', name: 'Atlas 096', tier: 'common', speed: 316, maxHp: 186, maxShield: 116, maxEnergy: 166, baseCooldown: 0.56, damageMultiplier: 0.79, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 618, unlocked: false },
-  { id: 'atlas-097', name: 'Atlas 097', tier: 'uncommon', speed: 317, maxHp: 187, maxShield: 117, maxEnergy: 167, baseCooldown: 0.55, damageMultiplier: 0.8, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6272, unlocked: false },
-  { id: 'atlas-098', name: 'Atlas 098', tier: 'rare', speed: 318, maxHp: 188, maxShield: 118, maxEnergy: 168, baseCooldown: 0.54, damageMultiplier: 0.82, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19705, unlocked: false },
-  { id: 'atlas-099', name: 'Atlas 099', tier: 'mythic', speed: 319, maxHp: 189, maxShield: 119, maxEnergy: 169, baseCooldown: 0.53, damageMultiplier: 0.83, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 89733, unlocked: false },
-  { id: 'atlas-100', name: 'Atlas 100', tier: 'legendary', speed: 320, maxHp: 190, maxShield: 120, maxEnergy: 170, baseCooldown: 0.52, damageMultiplier: 0.84, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 47886, unlocked: false },
-  { id: 'atlas-101', name: 'Atlas 101', tier: 'exotic', speed: 321, maxHp: 191, maxShield: 121, maxEnergy: 171, baseCooldown: 0.51, damageMultiplier: 0.85, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 148143, unlocked: false },
-  { id: 'atlas-102', name: 'Atlas 102', tier: 'common', speed: 322, maxHp: 192, maxShield: 122, maxEnergy: 172, baseCooldown: 0.5, damageMultiplier: 0.86, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 636, unlocked: false },
-  { id: 'atlas-103', name: 'Atlas 103', tier: 'uncommon', speed: 323, maxHp: 193, maxShield: 123, maxEnergy: 173, baseCooldown: 0.49, damageMultiplier: 0.88, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6395, unlocked: false },
-  { id: 'atlas-104', name: 'Atlas 104', tier: 'rare', speed: 324, maxHp: 194, maxShield: 124, maxEnergy: 174, baseCooldown: 0.48, damageMultiplier: 0.89, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 19967, unlocked: false },
-  { id: 'atlas-105', name: 'Atlas 105', tier: 'mythic', speed: 325, maxHp: 195, maxShield: 125, maxEnergy: 175, baseCooldown: 0.47, damageMultiplier: 0.9, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 90667, unlocked: false },
-  { id: 'atlas-106', name: 'Atlas 106', tier: 'legendary', speed: 326, maxHp: 196, maxShield: 126, maxEnergy: 176, baseCooldown: 0.46, damageMultiplier: 0.91, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 48629, unlocked: false },
-  { id: 'atlas-107', name: 'Atlas 107', tier: 'exotic', speed: 327, maxHp: 197, maxShield: 127, maxEnergy: 177, baseCooldown: 0.45, damageMultiplier: 0.92, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 149214, unlocked: false },
-  { id: 'atlas-108', name: 'Atlas 108', tier: 'common', speed: 328, maxHp: 198, maxShield: 128, maxEnergy: 178, baseCooldown: 0.44, damageMultiplier: 0.94, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 654, unlocked: false },
-  { id: 'atlas-109', name: 'Atlas 109', tier: 'uncommon', speed: 329, maxHp: 199, maxShield: 129, maxEnergy: 179, baseCooldown: 0.43, damageMultiplier: 0.95, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6519, unlocked: false },
-  { id: 'atlas-110', name: 'Atlas 110', tier: 'rare', speed: 330, maxHp: 200, maxShield: 130, maxEnergy: 180, baseCooldown: 0.42, damageMultiplier: 0.96, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20230, unlocked: false },
-  { id: 'atlas-111', name: 'Atlas 111', tier: 'mythic', speed: 331, maxHp: 201, maxShield: 131, maxEnergy: 181, baseCooldown: 0.41, damageMultiplier: 0.97, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 91600, unlocked: false },
-  { id: 'atlas-112', name: 'Atlas 112', tier: 'legendary', speed: 332, maxHp: 202, maxShield: 132, maxEnergy: 182, baseCooldown: 0.68, damageMultiplier: 0.98, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 49371, unlocked: false },
-  { id: 'atlas-113', name: 'Atlas 113', tier: 'exotic', speed: 333, maxHp: 203, maxShield: 133, maxEnergy: 183, baseCooldown: 0.67, damageMultiplier: 1, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 150286, unlocked: false },
-  { id: 'atlas-114', name: 'Atlas 114', tier: 'common', speed: 334, maxHp: 204, maxShield: 134, maxEnergy: 184, baseCooldown: 0.66, damageMultiplier: 1.01, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 671, unlocked: false },
-  { id: 'atlas-115', name: 'Atlas 115', tier: 'uncommon', speed: 335, maxHp: 205, maxShield: 135, maxEnergy: 185, baseCooldown: 0.65, damageMultiplier: 1.02, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 1, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6642, unlocked: false },
-  { id: 'atlas-116', name: 'Atlas 116', tier: 'rare', speed: 336, maxHp: 206, maxShield: 136, maxEnergy: 186, baseCooldown: 0.64, damageMultiplier: 1.03, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20493, unlocked: false },
-  { id: 'atlas-117', name: 'Atlas 117', tier: 'mythic', speed: 337, maxHp: 207, maxShield: 137, maxEnergy: 187, baseCooldown: 0.63, damageMultiplier: 1.04, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 92533, unlocked: false },
-  { id: 'atlas-118', name: 'Atlas 118', tier: 'legendary', speed: 338, maxHp: 208, maxShield: 138, maxEnergy: 188, baseCooldown: 0.62, damageMultiplier: 1.06, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 50114, unlocked: false },
-  { id: 'atlas-119', name: 'Atlas 119', tier: 'exotic', speed: 339, maxHp: 209, maxShield: 139, maxEnergy: 189, baseCooldown: 0.61, damageMultiplier: 1.07, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 151357, unlocked: false },
-  { id: 'atlas-120', name: 'Atlas 120', tier: 'common', speed: 340, maxHp: 210, maxShield: 20, maxEnergy: 190, baseCooldown: 0.6, damageMultiplier: 1.08, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 689, unlocked: false },
-  { id: 'atlas-121', name: 'Atlas 121', tier: 'uncommon', speed: 341, maxHp: 211, maxShield: 21, maxEnergy: 191, baseCooldown: 0.59, damageMultiplier: 1.09, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6765, unlocked: false },
-  { id: 'atlas-122', name: 'Atlas 122', tier: 'rare', speed: 342, maxHp: 212, maxShield: 22, maxEnergy: 192, baseCooldown: 0.58, damageMultiplier: 1.1, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 20756, unlocked: false },
-  { id: 'atlas-123', name: 'Atlas 123', tier: 'mythic', speed: 343, maxHp: 213, maxShield: 23, maxEnergy: 193, baseCooldown: 0.57, damageMultiplier: 1.12, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 93467, unlocked: false },
-  { id: 'atlas-124', name: 'Atlas 124', tier: 'legendary', speed: 344, maxHp: 214, maxShield: 24, maxEnergy: 194, baseCooldown: 0.56, damageMultiplier: 1.13, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 50857, unlocked: false },
-  { id: 'atlas-125', name: 'Atlas 125', tier: 'exotic', speed: 345, maxHp: 215, maxShield: 25, maxEnergy: 195, baseCooldown: 0.55, damageMultiplier: 1.14, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 152429, unlocked: false },
-  { id: 'atlas-126', name: 'Atlas 126', tier: 'common', speed: 346, maxHp: 216, maxShield: 26, maxEnergy: 196, baseCooldown: 0.54, damageMultiplier: 1.15, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 707, unlocked: false },
-  { id: 'atlas-127', name: 'Atlas 127', tier: 'uncommon', speed: 347, maxHp: 217, maxShield: 27, maxEnergy: 197, baseCooldown: 0.53, damageMultiplier: 1.16, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 6888, unlocked: false },
-  { id: 'atlas-128', name: 'Atlas 128', tier: 'rare', speed: 348, maxHp: 218, maxShield: 28, maxEnergy: 198, baseCooldown: 0.52, damageMultiplier: 1.18, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21019, unlocked: false },
-  { id: 'atlas-129', name: 'Atlas 129', tier: 'mythic', speed: 349, maxHp: 219, maxShield: 29, maxEnergy: 199, baseCooldown: 0.51, damageMultiplier: 1.19, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 94400, unlocked: false },
-  { id: 'atlas-130', name: 'Atlas 130', tier: 'legendary', speed: 350, maxHp: 220, maxShield: 30, maxEnergy: 200, baseCooldown: 0.5, damageMultiplier: 1.2, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 51600, unlocked: false },
-  { id: 'atlas-131', name: 'Atlas 131', tier: 'exotic', speed: 351, maxHp: 221, maxShield: 31, maxEnergy: 201, baseCooldown: 0.49, damageMultiplier: 1.21, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 153500, unlocked: false },
-  { id: 'atlas-132', name: 'Atlas 132', tier: 'common', speed: 352, maxHp: 222, maxShield: 32, maxEnergy: 202, baseCooldown: 0.48, damageMultiplier: 1.22, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 725, unlocked: false },
-  { id: 'atlas-133', name: 'Atlas 133', tier: 'uncommon', speed: 353, maxHp: 223, maxShield: 33, maxEnergy: 203, baseCooldown: 0.47, damageMultiplier: 1.24, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7012, unlocked: false },
-  { id: 'atlas-134', name: 'Atlas 134', tier: 'rare', speed: 354, maxHp: 224, maxShield: 34, maxEnergy: 204, baseCooldown: 0.46, damageMultiplier: 1.25, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21281, unlocked: false },
-  { id: 'atlas-135', name: 'Atlas 135', tier: 'mythic', speed: 355, maxHp: 225, maxShield: 35, maxEnergy: 205, baseCooldown: 0.45, damageMultiplier: 1.26, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 95333, unlocked: false },
-  { id: 'atlas-136', name: 'Atlas 136', tier: 'legendary', speed: 356, maxHp: 226, maxShield: 36, maxEnergy: 206, baseCooldown: 0.44, damageMultiplier: 1.27, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 52343, unlocked: false },
-  { id: 'atlas-137', name: 'Atlas 137', tier: 'exotic', speed: 357, maxHp: 227, maxShield: 37, maxEnergy: 207, baseCooldown: 0.43, damageMultiplier: 1.28, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 154571, unlocked: false },
-  { id: 'atlas-138', name: 'Atlas 138', tier: 'common', speed: 358, maxHp: 228, maxShield: 38, maxEnergy: 208, baseCooldown: 0.42, damageMultiplier: 1.3, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 743, unlocked: false },
-  { id: 'atlas-139', name: 'Atlas 139', tier: 'uncommon', speed: 359, maxHp: 229, maxShield: 39, maxEnergy: 209, baseCooldown: 0.41, damageMultiplier: 1.31, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7135, unlocked: false },
-  { id: 'atlas-140', name: 'Atlas 140', tier: 'rare', speed: 360, maxHp: 230, maxShield: 40, maxEnergy: 210, baseCooldown: 0.68, damageMultiplier: 1.32, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21544, unlocked: false },
-  { id: 'atlas-141', name: 'Atlas 141', tier: 'mythic', speed: 361, maxHp: 231, maxShield: 41, maxEnergy: 211, baseCooldown: 0.67, damageMultiplier: 1.33, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 96267, unlocked: false },
-  { id: 'atlas-142', name: 'Atlas 142', tier: 'legendary', speed: 362, maxHp: 232, maxShield: 42, maxEnergy: 212, baseCooldown: 0.66, damageMultiplier: 1.34, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 53086, unlocked: false },
-  { id: 'atlas-143', name: 'Atlas 143', tier: 'exotic', speed: 363, maxHp: 233, maxShield: 43, maxEnergy: 213, baseCooldown: 0.65, damageMultiplier: 1.36, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 155643, unlocked: false },
-  { id: 'atlas-144', name: 'Atlas 144', tier: 'common', speed: 364, maxHp: 234, maxShield: 44, maxEnergy: 214, baseCooldown: 0.64, damageMultiplier: 1.37, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 761, unlocked: false },
-  { id: 'atlas-145', name: 'Atlas 145', tier: 'uncommon', speed: 365, maxHp: 235, maxShield: 45, maxEnergy: 215, baseCooldown: 0.63, damageMultiplier: 1.38, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7258, unlocked: false },
-  { id: 'atlas-146', name: 'Atlas 146', tier: 'rare', speed: 366, maxHp: 236, maxShield: 46, maxEnergy: 216, baseCooldown: 0.62, damageMultiplier: 1.39, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 21807, unlocked: false },
-  { id: 'atlas-147', name: 'Atlas 147', tier: 'mythic', speed: 367, maxHp: 237, maxShield: 47, maxEnergy: 217, baseCooldown: 0.61, damageMultiplier: 1.4, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 97200, unlocked: false },
-  { id: 'atlas-148', name: 'Atlas 148', tier: 'legendary', speed: 368, maxHp: 238, maxShield: 48, maxEnergy: 218, baseCooldown: 0.6, damageMultiplier: 1.42, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 53829, unlocked: false },
-  { id: 'atlas-149', name: 'Atlas 149', tier: 'exotic', speed: 369, maxHp: 239, maxShield: 49, maxEnergy: 219, baseCooldown: 0.59, damageMultiplier: 1.43, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 156714, unlocked: false },
-  { id: 'atlas-150', name: 'Atlas 150', tier: 'common', speed: 370, maxHp: 240, maxShield: 50, maxEnergy: 70, baseCooldown: 0.58, damageMultiplier: 1.44, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 779, unlocked: false },
-  { id: 'atlas-151', name: 'Atlas 151', tier: 'uncommon', speed: 371, maxHp: 241, maxShield: 51, maxEnergy: 71, baseCooldown: 0.57, damageMultiplier: 1.45, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7381, unlocked: false },
-  { id: 'atlas-152', name: 'Atlas 152', tier: 'rare', speed: 372, maxHp: 242, maxShield: 52, maxEnergy: 72, baseCooldown: 0.56, damageMultiplier: 1.46, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22070, unlocked: false },
-  { id: 'atlas-153', name: 'Atlas 153', tier: 'mythic', speed: 373, maxHp: 243, maxShield: 53, maxEnergy: 73, baseCooldown: 0.55, damageMultiplier: 1.48, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 98133, unlocked: false },
-  { id: 'atlas-154', name: 'Atlas 154', tier: 'legendary', speed: 374, maxHp: 244, maxShield: 54, maxEnergy: 74, baseCooldown: 0.54, damageMultiplier: 1.49, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 54571, unlocked: false },
-  { id: 'atlas-155', name: 'Atlas 155', tier: 'exotic', speed: 375, maxHp: 245, maxShield: 55, maxEnergy: 75, baseCooldown: 0.53, damageMultiplier: 1.5, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 157786, unlocked: false },
-  { id: 'atlas-156', name: 'Atlas 156', tier: 'common', speed: 376, maxHp: 246, maxShield: 56, maxEnergy: 76, baseCooldown: 0.52, damageMultiplier: 1.51, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 796, unlocked: false },
-  { id: 'atlas-157', name: 'Atlas 157', tier: 'uncommon', speed: 377, maxHp: 247, maxShield: 57, maxEnergy: 77, baseCooldown: 0.51, damageMultiplier: 1.52, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7505, unlocked: false },
-  { id: 'atlas-158', name: 'Atlas 158', tier: 'rare', speed: 378, maxHp: 248, maxShield: 58, maxEnergy: 78, baseCooldown: 0.5, damageMultiplier: 1.54, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22333, unlocked: false },
-  { id: 'atlas-159', name: 'Atlas 159', tier: 'mythic', speed: 379, maxHp: 249, maxShield: 59, maxEnergy: 79, baseCooldown: 0.49, damageMultiplier: 1.55, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 99067, unlocked: false },
-  { id: 'atlas-160', name: 'Atlas 160', tier: 'legendary', speed: 380, maxHp: 250, maxShield: 60, maxEnergy: 80, baseCooldown: 0.48, damageMultiplier: 1.56, shotSpeedMultiplier: 1, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 55314, unlocked: false },
-  { id: 'atlas-161', name: 'Atlas 161', tier: 'exotic', speed: 381, maxHp: 251, maxShield: 61, maxEnergy: 81, baseCooldown: 0.47, damageMultiplier: 1.57, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 158857, unlocked: false },
-  { id: 'atlas-162', name: 'Atlas 162', tier: 'common', speed: 382, maxHp: 252, maxShield: 62, maxEnergy: 82, baseCooldown: 0.46, damageMultiplier: 1.58, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 814, unlocked: false },
-  { id: 'atlas-163', name: 'Atlas 163', tier: 'uncommon', speed: 383, maxHp: 253, maxShield: 63, maxEnergy: 83, baseCooldown: 0.45, damageMultiplier: 1.6, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7628, unlocked: false },
-  { id: 'atlas-164', name: 'Atlas 164', tier: 'rare', speed: 384, maxHp: 254, maxShield: 64, maxEnergy: 84, baseCooldown: 0.44, damageMultiplier: 1.61, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22595, unlocked: false },
-  { id: 'atlas-165', name: 'Atlas 165', tier: 'mythic', speed: 385, maxHp: 255, maxShield: 65, maxEnergy: 85, baseCooldown: 0.43, damageMultiplier: 1.62, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 100000, unlocked: false },
-  { id: 'atlas-166', name: 'Atlas 166', tier: 'legendary', speed: 386, maxHp: 256, maxShield: 66, maxEnergy: 86, baseCooldown: 0.42, damageMultiplier: 1.63, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 56057, unlocked: false },
-  { id: 'atlas-167', name: 'Atlas 167', tier: 'exotic', speed: 387, maxHp: 257, maxShield: 67, maxEnergy: 87, baseCooldown: 0.41, damageMultiplier: 1.64, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 159929, unlocked: false },
-  { id: 'atlas-168', name: 'Atlas 168', tier: 'common', speed: 388, maxHp: 258, maxShield: 68, maxEnergy: 88, baseCooldown: 0.68, damageMultiplier: 1.66, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 832, unlocked: false },
-  { id: 'atlas-169', name: 'Atlas 169', tier: 'uncommon', speed: 389, maxHp: 259, maxShield: 69, maxEnergy: 89, baseCooldown: 0.67, damageMultiplier: 1.67, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7751, unlocked: false },
-  { id: 'atlas-170', name: 'Atlas 170', tier: 'rare', speed: 390, maxHp: 260, maxShield: 70, maxEnergy: 90, baseCooldown: 0.66, damageMultiplier: 1.68, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 22858, unlocked: false },
-  { id: 'atlas-171', name: 'Atlas 171', tier: 'mythic', speed: 391, maxHp: 261, maxShield: 71, maxEnergy: 91, baseCooldown: 0.65, damageMultiplier: 1.69, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 100933, unlocked: false },
-  { id: 'atlas-172', name: 'Atlas 172', tier: 'legendary', speed: 392, maxHp: 262, maxShield: 72, maxEnergy: 92, baseCooldown: 0.64, damageMultiplier: 1.7, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 56800, unlocked: false },
-  { id: 'atlas-173', name: 'Atlas 173', tier: 'exotic', speed: 393, maxHp: 263, maxShield: 73, maxEnergy: 93, baseCooldown: 0.63, damageMultiplier: 1.72, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 161000, unlocked: false },
-  { id: 'atlas-174', name: 'Atlas 174', tier: 'common', speed: 394, maxHp: 264, maxShield: 74, maxEnergy: 94, baseCooldown: 0.62, damageMultiplier: 1.73, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 850, unlocked: false },
-  { id: 'atlas-175', name: 'Atlas 175', tier: 'uncommon', speed: 395, maxHp: 265, maxShield: 75, maxEnergy: 95, baseCooldown: 0.61, damageMultiplier: 1.74, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7874, unlocked: false },
-  { id: 'atlas-176', name: 'Atlas 176', tier: 'rare', speed: 396, maxHp: 266, maxShield: 76, maxEnergy: 96, baseCooldown: 0.6, damageMultiplier: 1.75, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23121, unlocked: false },
-  { id: 'atlas-177', name: 'Atlas 177', tier: 'mythic', speed: 397, maxHp: 267, maxShield: 77, maxEnergy: 97, baseCooldown: 0.59, damageMultiplier: 1.76, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 101867, unlocked: false },
-  { id: 'atlas-178', name: 'Atlas 178', tier: 'legendary', speed: 398, maxHp: 268, maxShield: 78, maxEnergy: 98, baseCooldown: 0.58, damageMultiplier: 1.78, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 57543, unlocked: false },
-  { id: 'atlas-179', name: 'Atlas 179', tier: 'exotic', speed: 399, maxHp: 269, maxShield: 79, maxEnergy: 99, baseCooldown: 0.57, damageMultiplier: 1.79, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 162071, unlocked: false },
-  { id: 'atlas-180', name: 'Atlas 180', tier: 'common', speed: 220, maxHp: 270, maxShield: 80, maxEnergy: 100, baseCooldown: 0.56, damageMultiplier: 0.72, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 868, unlocked: false },
-  { id: 'atlas-181', name: 'Atlas 181', tier: 'uncommon', speed: 221, maxHp: 271, maxShield: 81, maxEnergy: 101, baseCooldown: 0.55, damageMultiplier: 0.73, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.72, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 7998, unlocked: false },
-  { id: 'atlas-182', name: 'Atlas 182', tier: 'rare', speed: 222, maxHp: 272, maxShield: 82, maxEnergy: 102, baseCooldown: 0.54, damageMultiplier: 0.74, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.74, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23384, unlocked: false },
-  { id: 'atlas-183', name: 'Atlas 183', tier: 'mythic', speed: 223, maxHp: 273, maxShield: 83, maxEnergy: 103, baseCooldown: 0.53, damageMultiplier: 0.76, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.76, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 102800, unlocked: false },
-  { id: 'atlas-184', name: 'Atlas 184', tier: 'legendary', speed: 224, maxHp: 274, maxShield: 84, maxEnergy: 104, baseCooldown: 0.52, damageMultiplier: 0.77, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.78, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 58286, unlocked: false },
-  { id: 'atlas-185', name: 'Atlas 185', tier: 'exotic', speed: 225, maxHp: 275, maxShield: 85, maxEnergy: 105, baseCooldown: 0.51, damageMultiplier: 0.78, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 0.8, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 163143, unlocked: false },
-  { id: 'atlas-186', name: 'Atlas 186', tier: 'common', speed: 226, maxHp: 276, maxShield: 86, maxEnergy: 106, baseCooldown: 0.5, damageMultiplier: 0.79, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 0.82, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 886, unlocked: false },
-  { id: 'atlas-187', name: 'Atlas 187', tier: 'uncommon', speed: 227, maxHp: 277, maxShield: 87, maxEnergy: 107, baseCooldown: 0.49, damageMultiplier: 0.8, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 0.84, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8121, unlocked: false },
-  { id: 'atlas-188', name: 'Atlas 188', tier: 'rare', speed: 228, maxHp: 278, maxShield: 88, maxEnergy: 108, baseCooldown: 0.48, damageMultiplier: 0.82, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 0.86, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23647, unlocked: false },
-  { id: 'atlas-189', name: 'Atlas 189', tier: 'mythic', speed: 229, maxHp: 279, maxShield: 89, maxEnergy: 109, baseCooldown: 0.47, damageMultiplier: 0.83, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 0.88, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 103733, unlocked: false },
-  { id: 'atlas-190', name: 'Atlas 190', tier: 'legendary', speed: 230, maxHp: 90, maxShield: 90, maxEnergy: 110, baseCooldown: 0.46, damageMultiplier: 0.84, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 0.9, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 59029, unlocked: false },
-  { id: 'atlas-191', name: 'Atlas 191', tier: 'exotic', speed: 231, maxHp: 91, maxShield: 91, maxEnergy: 111, baseCooldown: 0.45, damageMultiplier: 0.85, shotSpeedMultiplier: 1.31, energyRegenMultiplier: 0.92, shieldRegenMultiplier: 5.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 164214, unlocked: false },
-  { id: 'atlas-192', name: 'Atlas 192', tier: 'common', speed: 232, maxHp: 92, maxShield: 92, maxEnergy: 112, baseCooldown: 0.44, damageMultiplier: 0.86, shotSpeedMultiplier: 1.32, energyRegenMultiplier: 0.94, shieldRegenMultiplier: 5.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 904, unlocked: false },
-  { id: 'atlas-193', name: 'Atlas 193', tier: 'uncommon', speed: 233, maxHp: 93, maxShield: 93, maxEnergy: 113, baseCooldown: 0.43, damageMultiplier: 0.88, shotSpeedMultiplier: 1.33, energyRegenMultiplier: 0.96, shieldRegenMultiplier: 5.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8244, unlocked: false },
-  { id: 'atlas-194', name: 'Atlas 194', tier: 'rare', speed: 234, maxHp: 94, maxShield: 94, maxEnergy: 114, baseCooldown: 0.42, damageMultiplier: 0.89, shotSpeedMultiplier: 1.34, energyRegenMultiplier: 0.98, shieldRegenMultiplier: 5.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 23909, unlocked: false },
-  { id: 'atlas-195', name: 'Atlas 195', tier: 'mythic', speed: 235, maxHp: 95, maxShield: 95, maxEnergy: 115, baseCooldown: 0.41, damageMultiplier: 0.9, shotSpeedMultiplier: 1.35, energyRegenMultiplier: 1, shieldRegenMultiplier: 5.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 104667, unlocked: false },
-  { id: 'atlas-196', name: 'Atlas 196', tier: 'legendary', speed: 236, maxHp: 96, maxShield: 96, maxEnergy: 116, baseCooldown: 0.68, damageMultiplier: 0.91, shotSpeedMultiplier: 1.36, energyRegenMultiplier: 1.02, shieldRegenMultiplier: 5.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 59771, unlocked: false },
-  { id: 'atlas-197', name: 'Atlas 197', tier: 'exotic', speed: 237, maxHp: 97, maxShield: 97, maxEnergy: 117, baseCooldown: 0.67, damageMultiplier: 0.92, shotSpeedMultiplier: 1.37, energyRegenMultiplier: 1.04, shieldRegenMultiplier: 5.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 165286, unlocked: false },
-  { id: 'atlas-198', name: 'Atlas 198', tier: 'common', speed: 238, maxHp: 98, maxShield: 98, maxEnergy: 118, baseCooldown: 0.66, damageMultiplier: 0.94, shotSpeedMultiplier: 1.38, energyRegenMultiplier: 1.06, shieldRegenMultiplier: 5.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 921, unlocked: false },
-  { id: 'atlas-199', name: 'Atlas 199', tier: 'uncommon', speed: 239, maxHp: 99, maxShield: 99, maxEnergy: 119, baseCooldown: 0.65, damageMultiplier: 0.95, shotSpeedMultiplier: 1.39, energyRegenMultiplier: 1.08, shieldRegenMultiplier: 5.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8367, unlocked: false },
-  { id: 'atlas-200', name: 'Atlas 200', tier: 'rare', speed: 240, maxHp: 100, maxShield: 100, maxEnergy: 120, baseCooldown: 0.64, damageMultiplier: 0.96, shotSpeedMultiplier: 1.4, energyRegenMultiplier: 1.1, shieldRegenMultiplier: 5.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24172, unlocked: false },
-  { id: 'atlas-201', name: 'Atlas 201', tier: 'mythic', speed: 241, maxHp: 101, maxShield: 101, maxEnergy: 121, baseCooldown: 0.63, damageMultiplier: 0.97, shotSpeedMultiplier: 1.41, energyRegenMultiplier: 1.12, shieldRegenMultiplier: 5.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 105600, unlocked: false },
-  { id: 'atlas-202', name: 'Atlas 202', tier: 'legendary', speed: 242, maxHp: 102, maxShield: 102, maxEnergy: 122, baseCooldown: 0.62, damageMultiplier: 0.98, shotSpeedMultiplier: 1.42, energyRegenMultiplier: 1.14, shieldRegenMultiplier: 5.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 60514, unlocked: false },
-  { id: 'atlas-203', name: 'Atlas 203', tier: 'exotic', speed: 243, maxHp: 103, maxShield: 103, maxEnergy: 123, baseCooldown: 0.61, damageMultiplier: 1, shotSpeedMultiplier: 1.43, energyRegenMultiplier: 1.16, shieldRegenMultiplier: 6.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 166357, unlocked: false },
-  { id: 'atlas-204', name: 'Atlas 204', tier: 'common', speed: 244, maxHp: 104, maxShield: 104, maxEnergy: 124, baseCooldown: 0.6, damageMultiplier: 1.01, shotSpeedMultiplier: 1.44, energyRegenMultiplier: 1.18, shieldRegenMultiplier: 6.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 939, unlocked: false },
-  { id: 'atlas-205', name: 'Atlas 205', tier: 'uncommon', speed: 245, maxHp: 105, maxShield: 105, maxEnergy: 125, baseCooldown: 0.59, damageMultiplier: 1.02, shotSpeedMultiplier: 1.45, energyRegenMultiplier: 1.2, shieldRegenMultiplier: 6.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8491, unlocked: false },
-  { id: 'atlas-206', name: 'Atlas 206', tier: 'rare', speed: 246, maxHp: 106, maxShield: 106, maxEnergy: 126, baseCooldown: 0.58, damageMultiplier: 1.03, shotSpeedMultiplier: 1.46, energyRegenMultiplier: 1.22, shieldRegenMultiplier: 6.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24435, unlocked: false },
-  { id: 'atlas-207', name: 'Atlas 207', tier: 'mythic', speed: 247, maxHp: 107, maxShield: 107, maxEnergy: 127, baseCooldown: 0.57, damageMultiplier: 1.04, shotSpeedMultiplier: 1.47, energyRegenMultiplier: 1.24, shieldRegenMultiplier: 6.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 106533, unlocked: false },
-  { id: 'atlas-208', name: 'Atlas 208', tier: 'legendary', speed: 248, maxHp: 108, maxShield: 108, maxEnergy: 128, baseCooldown: 0.56, damageMultiplier: 1.06, shotSpeedMultiplier: 1.48, energyRegenMultiplier: 1.26, shieldRegenMultiplier: 6.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 61257, unlocked: false },
-  { id: 'atlas-209', name: 'Atlas 209', tier: 'exotic', speed: 249, maxHp: 109, maxShield: 109, maxEnergy: 129, baseCooldown: 0.55, damageMultiplier: 1.07, shotSpeedMultiplier: 1.49, energyRegenMultiplier: 1.28, shieldRegenMultiplier: 6.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 167429, unlocked: false },
-  { id: 'atlas-210', name: 'Atlas 210', tier: 'common', speed: 250, maxHp: 110, maxShield: 110, maxEnergy: 130, baseCooldown: 0.54, damageMultiplier: 1.08, shotSpeedMultiplier: 0.8, energyRegenMultiplier: 1.3, shieldRegenMultiplier: 1, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 957, unlocked: false },
-  { id: 'atlas-211', name: 'Atlas 211', tier: 'uncommon', speed: 251, maxHp: 111, maxShield: 111, maxEnergy: 131, baseCooldown: 0.53, damageMultiplier: 1.09, shotSpeedMultiplier: 0.81, energyRegenMultiplier: 1.32, shieldRegenMultiplier: 1.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8614, unlocked: false },
-  { id: 'atlas-212', name: 'Atlas 212', tier: 'rare', speed: 252, maxHp: 112, maxShield: 112, maxEnergy: 132, baseCooldown: 0.52, damageMultiplier: 1.1, shotSpeedMultiplier: 0.82, energyRegenMultiplier: 1.34, shieldRegenMultiplier: 1.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24698, unlocked: false },
-  { id: 'atlas-213', name: 'Atlas 213', tier: 'mythic', speed: 253, maxHp: 113, maxShield: 113, maxEnergy: 133, baseCooldown: 0.51, damageMultiplier: 1.12, shotSpeedMultiplier: 0.83, energyRegenMultiplier: 1.36, shieldRegenMultiplier: 1.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 107467, unlocked: false },
-  { id: 'atlas-214', name: 'Atlas 214', tier: 'legendary', speed: 254, maxHp: 114, maxShield: 114, maxEnergy: 134, baseCooldown: 0.5, damageMultiplier: 1.13, shotSpeedMultiplier: 0.84, energyRegenMultiplier: 1.38, shieldRegenMultiplier: 1.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 62000, unlocked: false },
-  { id: 'atlas-215', name: 'Atlas 215', tier: 'exotic', speed: 255, maxHp: 115, maxShield: 115, maxEnergy: 135, baseCooldown: 0.49, damageMultiplier: 1.14, shotSpeedMultiplier: 0.85, energyRegenMultiplier: 1.4, shieldRegenMultiplier: 1.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 168500, unlocked: false },
-  { id: 'atlas-216', name: 'Atlas 216', tier: 'common', speed: 256, maxHp: 116, maxShield: 116, maxEnergy: 136, baseCooldown: 0.48, damageMultiplier: 1.15, shotSpeedMultiplier: 0.86, energyRegenMultiplier: 1.42, shieldRegenMultiplier: 1.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 975, unlocked: false },
-  { id: 'atlas-217', name: 'Atlas 217', tier: 'uncommon', speed: 257, maxHp: 117, maxShield: 117, maxEnergy: 137, baseCooldown: 0.47, damageMultiplier: 1.16, shotSpeedMultiplier: 0.87, energyRegenMultiplier: 1.44, shieldRegenMultiplier: 1.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8737, unlocked: false },
-  { id: 'atlas-218', name: 'Atlas 218', tier: 'rare', speed: 258, maxHp: 118, maxShield: 118, maxEnergy: 138, baseCooldown: 0.46, damageMultiplier: 1.18, shotSpeedMultiplier: 0.88, energyRegenMultiplier: 1.46, shieldRegenMultiplier: 1.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 24960, unlocked: false },
-  { id: 'atlas-219', name: 'Atlas 219', tier: 'mythic', speed: 259, maxHp: 119, maxShield: 119, maxEnergy: 139, baseCooldown: 0.45, damageMultiplier: 1.19, shotSpeedMultiplier: 0.89, energyRegenMultiplier: 1.48, shieldRegenMultiplier: 1.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 108400, unlocked: false },
-  { id: 'atlas-220', name: 'Atlas 220', tier: 'legendary', speed: 260, maxHp: 120, maxShield: 120, maxEnergy: 140, baseCooldown: 0.44, damageMultiplier: 1.2, shotSpeedMultiplier: 0.9, energyRegenMultiplier: 1.5, shieldRegenMultiplier: 1.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 62743, unlocked: false },
-  { id: 'atlas-221', name: 'Atlas 221', tier: 'exotic', speed: 261, maxHp: 121, maxShield: 121, maxEnergy: 141, baseCooldown: 0.43, damageMultiplier: 1.21, shotSpeedMultiplier: 0.91, energyRegenMultiplier: 1.52, shieldRegenMultiplier: 1.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 169571, unlocked: false },
-  { id: 'atlas-222', name: 'Atlas 222', tier: 'common', speed: 262, maxHp: 122, maxShield: 122, maxEnergy: 142, baseCooldown: 0.42, damageMultiplier: 1.22, shotSpeedMultiplier: 0.92, energyRegenMultiplier: 1.54, shieldRegenMultiplier: 1.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 993, unlocked: false },
-  { id: 'atlas-223', name: 'Atlas 223', tier: 'uncommon', speed: 263, maxHp: 123, maxShield: 123, maxEnergy: 143, baseCooldown: 0.41, damageMultiplier: 1.24, shotSpeedMultiplier: 0.93, energyRegenMultiplier: 1.56, shieldRegenMultiplier: 2.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8860, unlocked: false },
-  { id: 'atlas-224', name: 'Atlas 224', tier: 'rare', speed: 264, maxHp: 124, maxShield: 124, maxEnergy: 144, baseCooldown: 0.68, damageMultiplier: 1.25, shotSpeedMultiplier: 0.94, energyRegenMultiplier: 1.58, shieldRegenMultiplier: 2.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25223, unlocked: false },
-  { id: 'atlas-225', name: 'Atlas 225', tier: 'mythic', speed: 265, maxHp: 125, maxShield: 125, maxEnergy: 145, baseCooldown: 0.67, damageMultiplier: 1.26, shotSpeedMultiplier: 0.95, energyRegenMultiplier: 1.6, shieldRegenMultiplier: 2.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 109333, unlocked: false },
-  { id: 'atlas-226', name: 'Atlas 226', tier: 'legendary', speed: 266, maxHp: 126, maxShield: 126, maxEnergy: 146, baseCooldown: 0.66, damageMultiplier: 1.27, shotSpeedMultiplier: 0.96, energyRegenMultiplier: 1.62, shieldRegenMultiplier: 2.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 63486, unlocked: false },
-  { id: 'atlas-227', name: 'Atlas 227', tier: 'exotic', speed: 267, maxHp: 127, maxShield: 127, maxEnergy: 147, baseCooldown: 0.65, damageMultiplier: 1.28, shotSpeedMultiplier: 0.97, energyRegenMultiplier: 1.64, shieldRegenMultiplier: 2.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 170643, unlocked: false },
-  { id: 'atlas-228', name: 'Atlas 228', tier: 'common', speed: 268, maxHp: 128, maxShield: 128, maxEnergy: 148, baseCooldown: 0.64, damageMultiplier: 1.3, shotSpeedMultiplier: 0.98, energyRegenMultiplier: 1.66, shieldRegenMultiplier: 2.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1011, unlocked: false },
-  { id: 'atlas-229', name: 'Atlas 229', tier: 'uncommon', speed: 269, maxHp: 129, maxShield: 129, maxEnergy: 149, baseCooldown: 0.63, damageMultiplier: 1.31, shotSpeedMultiplier: 0.99, energyRegenMultiplier: 1.68, shieldRegenMultiplier: 2.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 8984, unlocked: false },
-  { id: 'atlas-230', name: 'Atlas 230', tier: 'rare', speed: 270, maxHp: 130, maxShield: 130, maxEnergy: 150, baseCooldown: 0.62, damageMultiplier: 1.32, shotSpeedMultiplier: 1, energyRegenMultiplier: 1.7, shieldRegenMultiplier: 2.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25486, unlocked: false },
-  { id: 'atlas-231', name: 'Atlas 231', tier: 'mythic', speed: 271, maxHp: 131, maxShield: 131, maxEnergy: 151, baseCooldown: 0.61, damageMultiplier: 1.33, shotSpeedMultiplier: 1.01, energyRegenMultiplier: 1.72, shieldRegenMultiplier: 2.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 110267, unlocked: false },
-  { id: 'atlas-232', name: 'Atlas 232', tier: 'legendary', speed: 272, maxHp: 132, maxShield: 132, maxEnergy: 152, baseCooldown: 0.6, damageMultiplier: 1.34, shotSpeedMultiplier: 1.02, energyRegenMultiplier: 1.74, shieldRegenMultiplier: 2.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 64229, unlocked: false },
-  { id: 'atlas-233', name: 'Atlas 233', tier: 'exotic', speed: 273, maxHp: 133, maxShield: 133, maxEnergy: 153, baseCooldown: 0.59, damageMultiplier: 1.36, shotSpeedMultiplier: 1.03, energyRegenMultiplier: 1.76, shieldRegenMultiplier: 2.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 171714, unlocked: false },
-  { id: 'atlas-234', name: 'Atlas 234', tier: 'common', speed: 274, maxHp: 134, maxShield: 134, maxEnergy: 154, baseCooldown: 0.58, damageMultiplier: 1.37, shotSpeedMultiplier: 1.04, energyRegenMultiplier: 1.78, shieldRegenMultiplier: 2.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1029, unlocked: false },
-  { id: 'atlas-235', name: 'Atlas 235', tier: 'uncommon', speed: 275, maxHp: 135, maxShield: 135, maxEnergy: 155, baseCooldown: 0.57, damageMultiplier: 1.38, shotSpeedMultiplier: 1.05, energyRegenMultiplier: 1.8, shieldRegenMultiplier: 3, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9107, unlocked: false },
-  { id: 'atlas-236', name: 'Atlas 236', tier: 'rare', speed: 276, maxHp: 136, maxShield: 136, maxEnergy: 156, baseCooldown: 0.56, damageMultiplier: 1.39, shotSpeedMultiplier: 1.06, energyRegenMultiplier: 1.82, shieldRegenMultiplier: 3.08, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 25749, unlocked: false },
-  { id: 'atlas-237', name: 'Atlas 237', tier: 'mythic', speed: 277, maxHp: 137, maxShield: 137, maxEnergy: 157, baseCooldown: 0.55, damageMultiplier: 1.4, shotSpeedMultiplier: 1.07, energyRegenMultiplier: 1.84, shieldRegenMultiplier: 3.16, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 111200, unlocked: false },
-  { id: 'atlas-238', name: 'Atlas 238', tier: 'legendary', speed: 278, maxHp: 138, maxShield: 138, maxEnergy: 158, baseCooldown: 0.54, damageMultiplier: 1.42, shotSpeedMultiplier: 1.08, energyRegenMultiplier: 1.86, shieldRegenMultiplier: 3.24, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 64971, unlocked: false },
-  { id: 'atlas-239', name: 'Atlas 239', tier: 'exotic', speed: 279, maxHp: 139, maxShield: 139, maxEnergy: 159, baseCooldown: 0.53, damageMultiplier: 1.43, shotSpeedMultiplier: 1.09, energyRegenMultiplier: 1.88, shieldRegenMultiplier: 3.32, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 172786, unlocked: false },
-  { id: 'atlas-240', name: 'Atlas 240', tier: 'common', speed: 280, maxHp: 140, maxShield: 20, maxEnergy: 160, baseCooldown: 0.52, damageMultiplier: 1.44, shotSpeedMultiplier: 1.1, energyRegenMultiplier: 0.3, shieldRegenMultiplier: 3.4, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1046, unlocked: false },
-  { id: 'atlas-241', name: 'Atlas 241', tier: 'uncommon', speed: 281, maxHp: 141, maxShield: 21, maxEnergy: 161, baseCooldown: 0.51, damageMultiplier: 1.45, shotSpeedMultiplier: 1.11, energyRegenMultiplier: 0.32, shieldRegenMultiplier: 3.48, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9230, unlocked: false },
-  { id: 'atlas-242', name: 'Atlas 242', tier: 'rare', speed: 282, maxHp: 142, maxShield: 22, maxEnergy: 162, baseCooldown: 0.5, damageMultiplier: 1.46, shotSpeedMultiplier: 1.12, energyRegenMultiplier: 0.34, shieldRegenMultiplier: 3.56, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26012, unlocked: false },
-  { id: 'atlas-243', name: 'Atlas 243', tier: 'mythic', speed: 283, maxHp: 143, maxShield: 23, maxEnergy: 163, baseCooldown: 0.49, damageMultiplier: 1.48, shotSpeedMultiplier: 1.13, energyRegenMultiplier: 0.36, shieldRegenMultiplier: 3.64, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 112133, unlocked: false },
-  { id: 'atlas-244', name: 'Atlas 244', tier: 'legendary', speed: 284, maxHp: 144, maxShield: 24, maxEnergy: 164, baseCooldown: 0.48, damageMultiplier: 1.49, shotSpeedMultiplier: 1.14, energyRegenMultiplier: 0.38, shieldRegenMultiplier: 3.72, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 65714, unlocked: false },
-  { id: 'atlas-245', name: 'Atlas 245', tier: 'exotic', speed: 285, maxHp: 145, maxShield: 25, maxEnergy: 165, baseCooldown: 0.47, damageMultiplier: 1.5, shotSpeedMultiplier: 1.15, energyRegenMultiplier: 0.4, shieldRegenMultiplier: 3.8, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 173857, unlocked: false },
-  { id: 'atlas-246', name: 'Atlas 246', tier: 'common', speed: 286, maxHp: 146, maxShield: 26, maxEnergy: 166, baseCooldown: 0.46, damageMultiplier: 1.51, shotSpeedMultiplier: 1.16, energyRegenMultiplier: 0.42, shieldRegenMultiplier: 3.88, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1064, unlocked: false },
-  { id: 'atlas-247', name: 'Atlas 247', tier: 'uncommon', speed: 287, maxHp: 147, maxShield: 27, maxEnergy: 167, baseCooldown: 0.45, damageMultiplier: 1.52, shotSpeedMultiplier: 1.17, energyRegenMultiplier: 0.44, shieldRegenMultiplier: 3.96, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9353, unlocked: false },
-  { id: 'atlas-248', name: 'Atlas 248', tier: 'rare', speed: 288, maxHp: 148, maxShield: 28, maxEnergy: 168, baseCooldown: 0.44, damageMultiplier: 1.54, shotSpeedMultiplier: 1.18, energyRegenMultiplier: 0.46, shieldRegenMultiplier: 4.04, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26274, unlocked: false },
-  { id: 'atlas-249', name: 'Atlas 249', tier: 'mythic', speed: 289, maxHp: 149, maxShield: 29, maxEnergy: 169, baseCooldown: 0.43, damageMultiplier: 1.55, shotSpeedMultiplier: 1.19, energyRegenMultiplier: 0.48, shieldRegenMultiplier: 4.12, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 113067, unlocked: false },
-  { id: 'atlas-250', name: 'Atlas 250', tier: 'legendary', speed: 290, maxHp: 150, maxShield: 30, maxEnergy: 170, baseCooldown: 0.42, damageMultiplier: 1.56, shotSpeedMultiplier: 1.2, energyRegenMultiplier: 0.5, shieldRegenMultiplier: 4.2, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 66457, unlocked: false },
-  { id: 'atlas-251', name: 'Atlas 251', tier: 'exotic', speed: 291, maxHp: 151, maxShield: 31, maxEnergy: 171, baseCooldown: 0.41, damageMultiplier: 1.57, shotSpeedMultiplier: 1.21, energyRegenMultiplier: 0.52, shieldRegenMultiplier: 4.28, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 174929, unlocked: false },
-  { id: 'atlas-252', name: 'Atlas 252', tier: 'common', speed: 292, maxHp: 152, maxShield: 32, maxEnergy: 172, baseCooldown: 0.68, damageMultiplier: 1.58, shotSpeedMultiplier: 1.22, energyRegenMultiplier: 0.54, shieldRegenMultiplier: 4.36, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1082, unlocked: false },
-  { id: 'atlas-253', name: 'Atlas 253', tier: 'uncommon', speed: 293, maxHp: 153, maxShield: 33, maxEnergy: 173, baseCooldown: 0.67, damageMultiplier: 1.6, shotSpeedMultiplier: 1.23, energyRegenMultiplier: 0.56, shieldRegenMultiplier: 4.44, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9477, unlocked: false },
-  { id: 'atlas-254', name: 'Atlas 254', tier: 'rare', speed: 294, maxHp: 154, maxShield: 34, maxEnergy: 174, baseCooldown: 0.66, damageMultiplier: 1.61, shotSpeedMultiplier: 1.24, energyRegenMultiplier: 0.58, shieldRegenMultiplier: 4.52, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26537, unlocked: false },
-  { id: 'atlas-255', name: 'Atlas 255', tier: 'mythic', speed: 295, maxHp: 155, maxShield: 35, maxEnergy: 175, baseCooldown: 0.65, damageMultiplier: 1.62, shotSpeedMultiplier: 1.25, energyRegenMultiplier: 0.6, shieldRegenMultiplier: 4.6, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 114000, unlocked: false },
-  { id: 'atlas-256', name: 'Atlas 256', tier: 'legendary', speed: 296, maxHp: 156, maxShield: 36, maxEnergy: 176, baseCooldown: 0.64, damageMultiplier: 1.63, shotSpeedMultiplier: 1.26, energyRegenMultiplier: 0.62, shieldRegenMultiplier: 4.68, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 67200, unlocked: false },
-  { id: 'atlas-257', name: 'Atlas 257', tier: 'exotic', speed: 297, maxHp: 157, maxShield: 37, maxEnergy: 177, baseCooldown: 0.63, damageMultiplier: 1.64, shotSpeedMultiplier: 1.27, energyRegenMultiplier: 0.64, shieldRegenMultiplier: 4.76, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 176000, unlocked: false },
-  { id: 'atlas-258', name: 'Atlas 258', tier: 'common', speed: 298, maxHp: 158, maxShield: 38, maxEnergy: 178, baseCooldown: 0.62, damageMultiplier: 1.66, shotSpeedMultiplier: 1.28, energyRegenMultiplier: 0.66, shieldRegenMultiplier: 4.84, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 1100, unlocked: false },
-  { id: 'atlas-259', name: 'Atlas 259', tier: 'uncommon', speed: 299, maxHp: 159, maxShield: 39, maxEnergy: 179, baseCooldown: 0.61, damageMultiplier: 1.67, shotSpeedMultiplier: 1.29, energyRegenMultiplier: 0.68, shieldRegenMultiplier: 4.92, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 9600, unlocked: false },
-  { id: 'atlas-260', name: 'Atlas 260', tier: 'rare', speed: 300, maxHp: 160, maxShield: 40, maxEnergy: 180, baseCooldown: 0.6, damageMultiplier: 1.68, shotSpeedMultiplier: 1.3, energyRegenMultiplier: 0.7, shieldRegenMultiplier: 5, abilities: [{ key: '1', name: 'Rapid Volley', cost: 40, type: 'rapidVolley' }, { key: '2', name: 'Chain Bolt', cost: 55, type: 'chainBolt' }, { key: '3', name: 'Energy Surge', cost: 60, type: 'energySurge' }], price: 26800, unlocked: false },
-];
-
-const MEGA_CODEX_APPENDIX_V2 = [
-  'MEGA-0001 | Tactical archive entry 0001: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0002 | Tactical archive entry 0002: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0003 | Tactical archive entry 0003: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0004 | Tactical archive entry 0004: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0005 | Tactical archive entry 0005: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0006 | Tactical archive entry 0006: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0007 | Tactical archive entry 0007: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0008 | Tactical archive entry 0008: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0009 | Tactical archive entry 0009: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0010 | Tactical archive entry 0010: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0011 | Tactical archive entry 0011: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0012 | Tactical archive entry 0012: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0013 | Tactical archive entry 0013: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0014 | Tactical archive entry 0014: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0015 | Tactical archive entry 0015: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0016 | Tactical archive entry 0016: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0017 | Tactical archive entry 0017: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0018 | Tactical archive entry 0018: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0019 | Tactical archive entry 0019: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0020 | Tactical archive entry 0020: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0021 | Tactical archive entry 0021: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0022 | Tactical archive entry 0022: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0023 | Tactical archive entry 0023: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0024 | Tactical archive entry 0024: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0025 | Tactical archive entry 0025: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0026 | Tactical archive entry 0026: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0027 | Tactical archive entry 0027: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0028 | Tactical archive entry 0028: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0029 | Tactical archive entry 0029: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0030 | Tactical archive entry 0030: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0031 | Tactical archive entry 0031: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0032 | Tactical archive entry 0032: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0033 | Tactical archive entry 0033: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0034 | Tactical archive entry 0034: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0035 | Tactical archive entry 0035: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0036 | Tactical archive entry 0036: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0037 | Tactical archive entry 0037: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0038 | Tactical archive entry 0038: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0039 | Tactical archive entry 0039: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0040 | Tactical archive entry 0040: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0041 | Tactical archive entry 0041: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0042 | Tactical archive entry 0042: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0043 | Tactical archive entry 0043: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0044 | Tactical archive entry 0044: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0045 | Tactical archive entry 0045: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0046 | Tactical archive entry 0046: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0047 | Tactical archive entry 0047: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0048 | Tactical archive entry 0048: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0049 | Tactical archive entry 0049: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0050 | Tactical archive entry 0050: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0051 | Tactical archive entry 0051: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0052 | Tactical archive entry 0052: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0053 | Tactical archive entry 0053: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0054 | Tactical archive entry 0054: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0055 | Tactical archive entry 0055: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0056 | Tactical archive entry 0056: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0057 | Tactical archive entry 0057: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0058 | Tactical archive entry 0058: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0059 | Tactical archive entry 0059: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0060 | Tactical archive entry 0060: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0061 | Tactical archive entry 0061: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0062 | Tactical archive entry 0062: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0063 | Tactical archive entry 0063: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0064 | Tactical archive entry 0064: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0065 | Tactical archive entry 0065: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0066 | Tactical archive entry 0066: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0067 | Tactical archive entry 0067: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0068 | Tactical archive entry 0068: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0069 | Tactical archive entry 0069: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0070 | Tactical archive entry 0070: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0071 | Tactical archive entry 0071: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0072 | Tactical archive entry 0072: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0073 | Tactical archive entry 0073: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0074 | Tactical archive entry 0074: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0075 | Tactical archive entry 0075: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0076 | Tactical archive entry 0076: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0077 | Tactical archive entry 0077: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0078 | Tactical archive entry 0078: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0079 | Tactical archive entry 0079: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0080 | Tactical archive entry 0080: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0081 | Tactical archive entry 0081: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0082 | Tactical archive entry 0082: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0083 | Tactical archive entry 0083: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0084 | Tactical archive entry 0084: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0085 | Tactical archive entry 0085: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0086 | Tactical archive entry 0086: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0087 | Tactical archive entry 0087: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0088 | Tactical archive entry 0088: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0089 | Tactical archive entry 0089: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0090 | Tactical archive entry 0090: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0091 | Tactical archive entry 0091: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0092 | Tactical archive entry 0092: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0093 | Tactical archive entry 0093: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0094 | Tactical archive entry 0094: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0095 | Tactical archive entry 0095: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0096 | Tactical archive entry 0096: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0097 | Tactical archive entry 0097: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0098 | Tactical archive entry 0098: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0099 | Tactical archive entry 0099: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0100 | Tactical archive entry 0100: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0101 | Tactical archive entry 0101: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0102 | Tactical archive entry 0102: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0103 | Tactical archive entry 0103: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0104 | Tactical archive entry 0104: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0105 | Tactical archive entry 0105: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0106 | Tactical archive entry 0106: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0107 | Tactical archive entry 0107: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0108 | Tactical archive entry 0108: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0109 | Tactical archive entry 0109: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0110 | Tactical archive entry 0110: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0111 | Tactical archive entry 0111: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0112 | Tactical archive entry 0112: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0113 | Tactical archive entry 0113: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0114 | Tactical archive entry 0114: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0115 | Tactical archive entry 0115: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0116 | Tactical archive entry 0116: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0117 | Tactical archive entry 0117: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0118 | Tactical archive entry 0118: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0119 | Tactical archive entry 0119: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0120 | Tactical archive entry 0120: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0121 | Tactical archive entry 0121: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0122 | Tactical archive entry 0122: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0123 | Tactical archive entry 0123: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0124 | Tactical archive entry 0124: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0125 | Tactical archive entry 0125: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0126 | Tactical archive entry 0126: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0127 | Tactical archive entry 0127: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0128 | Tactical archive entry 0128: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0129 | Tactical archive entry 0129: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0130 | Tactical archive entry 0130: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0131 | Tactical archive entry 0131: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0132 | Tactical archive entry 0132: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0133 | Tactical archive entry 0133: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0134 | Tactical archive entry 0134: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0135 | Tactical archive entry 0135: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0136 | Tactical archive entry 0136: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0137 | Tactical archive entry 0137: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0138 | Tactical archive entry 0138: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0139 | Tactical archive entry 0139: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0140 | Tactical archive entry 0140: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0141 | Tactical archive entry 0141: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0142 | Tactical archive entry 0142: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0143 | Tactical archive entry 0143: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0144 | Tactical archive entry 0144: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0145 | Tactical archive entry 0145: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0146 | Tactical archive entry 0146: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0147 | Tactical archive entry 0147: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0148 | Tactical archive entry 0148: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0149 | Tactical archive entry 0149: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0150 | Tactical archive entry 0150: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0151 | Tactical archive entry 0151: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0152 | Tactical archive entry 0152: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0153 | Tactical archive entry 0153: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0154 | Tactical archive entry 0154: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0155 | Tactical archive entry 0155: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0156 | Tactical archive entry 0156: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0157 | Tactical archive entry 0157: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0158 | Tactical archive entry 0158: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0159 | Tactical archive entry 0159: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0160 | Tactical archive entry 0160: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0161 | Tactical archive entry 0161: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0162 | Tactical archive entry 0162: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0163 | Tactical archive entry 0163: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0164 | Tactical archive entry 0164: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0165 | Tactical archive entry 0165: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0166 | Tactical archive entry 0166: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0167 | Tactical archive entry 0167: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0168 | Tactical archive entry 0168: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0169 | Tactical archive entry 0169: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0170 | Tactical archive entry 0170: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0171 | Tactical archive entry 0171: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0172 | Tactical archive entry 0172: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0173 | Tactical archive entry 0173: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0174 | Tactical archive entry 0174: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0175 | Tactical archive entry 0175: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0176 | Tactical archive entry 0176: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0177 | Tactical archive entry 0177: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0178 | Tactical archive entry 0178: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0179 | Tactical archive entry 0179: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0180 | Tactical archive entry 0180: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0181 | Tactical archive entry 0181: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0182 | Tactical archive entry 0182: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0183 | Tactical archive entry 0183: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0184 | Tactical archive entry 0184: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0185 | Tactical archive entry 0185: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0186 | Tactical archive entry 0186: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0187 | Tactical archive entry 0187: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0188 | Tactical archive entry 0188: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0189 | Tactical archive entry 0189: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0190 | Tactical archive entry 0190: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0191 | Tactical archive entry 0191: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0192 | Tactical archive entry 0192: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0193 | Tactical archive entry 0193: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0194 | Tactical archive entry 0194: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0195 | Tactical archive entry 0195: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0196 | Tactical archive entry 0196: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0197 | Tactical archive entry 0197: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0198 | Tactical archive entry 0198: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0199 | Tactical archive entry 0199: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0200 | Tactical archive entry 0200: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0201 | Tactical archive entry 0201: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0202 | Tactical archive entry 0202: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0203 | Tactical archive entry 0203: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0204 | Tactical archive entry 0204: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0205 | Tactical archive entry 0205: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0206 | Tactical archive entry 0206: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0207 | Tactical archive entry 0207: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0208 | Tactical archive entry 0208: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0209 | Tactical archive entry 0209: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0210 | Tactical archive entry 0210: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0211 | Tactical archive entry 0211: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0212 | Tactical archive entry 0212: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0213 | Tactical archive entry 0213: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0214 | Tactical archive entry 0214: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0215 | Tactical archive entry 0215: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0216 | Tactical archive entry 0216: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0217 | Tactical archive entry 0217: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0218 | Tactical archive entry 0218: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0219 | Tactical archive entry 0219: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0220 | Tactical archive entry 0220: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0221 | Tactical archive entry 0221: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0222 | Tactical archive entry 0222: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0223 | Tactical archive entry 0223: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0224 | Tactical archive entry 0224: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0225 | Tactical archive entry 0225: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0226 | Tactical archive entry 0226: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0227 | Tactical archive entry 0227: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0228 | Tactical archive entry 0228: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0229 | Tactical archive entry 0229: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0230 | Tactical archive entry 0230: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0231 | Tactical archive entry 0231: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0232 | Tactical archive entry 0232: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0233 | Tactical archive entry 0233: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0234 | Tactical archive entry 0234: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0235 | Tactical archive entry 0235: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0236 | Tactical archive entry 0236: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0237 | Tactical archive entry 0237: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0238 | Tactical archive entry 0238: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0239 | Tactical archive entry 0239: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0240 | Tactical archive entry 0240: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0241 | Tactical archive entry 0241: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0242 | Tactical archive entry 0242: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0243 | Tactical archive entry 0243: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0244 | Tactical archive entry 0244: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0245 | Tactical archive entry 0245: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0246 | Tactical archive entry 0246: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0247 | Tactical archive entry 0247: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0248 | Tactical archive entry 0248: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0249 | Tactical archive entry 0249: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0250 | Tactical archive entry 0250: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0251 | Tactical archive entry 0251: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0252 | Tactical archive entry 0252: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0253 | Tactical archive entry 0253: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0254 | Tactical archive entry 0254: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0255 | Tactical archive entry 0255: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0256 | Tactical archive entry 0256: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0257 | Tactical archive entry 0257: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0258 | Tactical archive entry 0258: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0259 | Tactical archive entry 0259: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0260 | Tactical archive entry 0260: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0261 | Tactical archive entry 0261: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0262 | Tactical archive entry 0262: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0263 | Tactical archive entry 0263: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0264 | Tactical archive entry 0264: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0265 | Tactical archive entry 0265: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0266 | Tactical archive entry 0266: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0267 | Tactical archive entry 0267: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0268 | Tactical archive entry 0268: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0269 | Tactical archive entry 0269: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0270 | Tactical archive entry 0270: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0271 | Tactical archive entry 0271: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0272 | Tactical archive entry 0272: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0273 | Tactical archive entry 0273: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0274 | Tactical archive entry 0274: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0275 | Tactical archive entry 0275: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0276 | Tactical archive entry 0276: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0277 | Tactical archive entry 0277: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0278 | Tactical archive entry 0278: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0279 | Tactical archive entry 0279: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0280 | Tactical archive entry 0280: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0281 | Tactical archive entry 0281: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0282 | Tactical archive entry 0282: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0283 | Tactical archive entry 0283: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0284 | Tactical archive entry 0284: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0285 | Tactical archive entry 0285: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0286 | Tactical archive entry 0286: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0287 | Tactical archive entry 0287: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0288 | Tactical archive entry 0288: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0289 | Tactical archive entry 0289: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0290 | Tactical archive entry 0290: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0291 | Tactical archive entry 0291: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0292 | Tactical archive entry 0292: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0293 | Tactical archive entry 0293: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0294 | Tactical archive entry 0294: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0295 | Tactical archive entry 0295: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0296 | Tactical archive entry 0296: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0297 | Tactical archive entry 0297: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0298 | Tactical archive entry 0298: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0299 | Tactical archive entry 0299: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0300 | Tactical archive entry 0300: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0301 | Tactical archive entry 0301: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0302 | Tactical archive entry 0302: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0303 | Tactical archive entry 0303: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0304 | Tactical archive entry 0304: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0305 | Tactical archive entry 0305: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0306 | Tactical archive entry 0306: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0307 | Tactical archive entry 0307: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0308 | Tactical archive entry 0308: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0309 | Tactical archive entry 0309: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0310 | Tactical archive entry 0310: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0311 | Tactical archive entry 0311: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0312 | Tactical archive entry 0312: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0313 | Tactical archive entry 0313: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0314 | Tactical archive entry 0314: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0315 | Tactical archive entry 0315: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0316 | Tactical archive entry 0316: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0317 | Tactical archive entry 0317: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0318 | Tactical archive entry 0318: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0319 | Tactical archive entry 0319: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0320 | Tactical archive entry 0320: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0321 | Tactical archive entry 0321: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0322 | Tactical archive entry 0322: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0323 | Tactical archive entry 0323: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0324 | Tactical archive entry 0324: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0325 | Tactical archive entry 0325: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0326 | Tactical archive entry 0326: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0327 | Tactical archive entry 0327: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0328 | Tactical archive entry 0328: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0329 | Tactical archive entry 0329: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0330 | Tactical archive entry 0330: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0331 | Tactical archive entry 0331: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0332 | Tactical archive entry 0332: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0333 | Tactical archive entry 0333: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0334 | Tactical archive entry 0334: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0335 | Tactical archive entry 0335: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0336 | Tactical archive entry 0336: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0337 | Tactical archive entry 0337: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0338 | Tactical archive entry 0338: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0339 | Tactical archive entry 0339: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0340 | Tactical archive entry 0340: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0341 | Tactical archive entry 0341: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0342 | Tactical archive entry 0342: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0343 | Tactical archive entry 0343: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0344 | Tactical archive entry 0344: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0345 | Tactical archive entry 0345: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0346 | Tactical archive entry 0346: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0347 | Tactical archive entry 0347: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0348 | Tactical archive entry 0348: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0349 | Tactical archive entry 0349: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0350 | Tactical archive entry 0350: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0351 | Tactical archive entry 0351: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0352 | Tactical archive entry 0352: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0353 | Tactical archive entry 0353: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0354 | Tactical archive entry 0354: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0355 | Tactical archive entry 0355: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0356 | Tactical archive entry 0356: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0357 | Tactical archive entry 0357: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0358 | Tactical archive entry 0358: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0359 | Tactical archive entry 0359: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0360 | Tactical archive entry 0360: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0361 | Tactical archive entry 0361: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0362 | Tactical archive entry 0362: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0363 | Tactical archive entry 0363: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0364 | Tactical archive entry 0364: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0365 | Tactical archive entry 0365: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0366 | Tactical archive entry 0366: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0367 | Tactical archive entry 0367: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0368 | Tactical archive entry 0368: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0369 | Tactical archive entry 0369: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0370 | Tactical archive entry 0370: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0371 | Tactical archive entry 0371: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0372 | Tactical archive entry 0372: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0373 | Tactical archive entry 0373: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0374 | Tactical archive entry 0374: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0375 | Tactical archive entry 0375: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0376 | Tactical archive entry 0376: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0377 | Tactical archive entry 0377: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0378 | Tactical archive entry 0378: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0379 | Tactical archive entry 0379: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0380 | Tactical archive entry 0380: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0381 | Tactical archive entry 0381: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0382 | Tactical archive entry 0382: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0383 | Tactical archive entry 0383: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0384 | Tactical archive entry 0384: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0385 | Tactical archive entry 0385: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0386 | Tactical archive entry 0386: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0387 | Tactical archive entry 0387: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0388 | Tactical archive entry 0388: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0389 | Tactical archive entry 0389: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0390 | Tactical archive entry 0390: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0391 | Tactical archive entry 0391: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0392 | Tactical archive entry 0392: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0393 | Tactical archive entry 0393: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0394 | Tactical archive entry 0394: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0395 | Tactical archive entry 0395: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0396 | Tactical archive entry 0396: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0397 | Tactical archive entry 0397: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0398 | Tactical archive entry 0398: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0399 | Tactical archive entry 0399: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0400 | Tactical archive entry 0400: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0401 | Tactical archive entry 0401: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0402 | Tactical archive entry 0402: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0403 | Tactical archive entry 0403: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0404 | Tactical archive entry 0404: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0405 | Tactical archive entry 0405: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0406 | Tactical archive entry 0406: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0407 | Tactical archive entry 0407: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0408 | Tactical archive entry 0408: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0409 | Tactical archive entry 0409: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0410 | Tactical archive entry 0410: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0411 | Tactical archive entry 0411: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0412 | Tactical archive entry 0412: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0413 | Tactical archive entry 0413: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0414 | Tactical archive entry 0414: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0415 | Tactical archive entry 0415: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0416 | Tactical archive entry 0416: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0417 | Tactical archive entry 0417: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0418 | Tactical archive entry 0418: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0419 | Tactical archive entry 0419: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0420 | Tactical archive entry 0420: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0421 | Tactical archive entry 0421: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0422 | Tactical archive entry 0422: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0423 | Tactical archive entry 0423: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0424 | Tactical archive entry 0424: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0425 | Tactical archive entry 0425: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0426 | Tactical archive entry 0426: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0427 | Tactical archive entry 0427: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0428 | Tactical archive entry 0428: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0429 | Tactical archive entry 0429: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0430 | Tactical archive entry 0430: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0431 | Tactical archive entry 0431: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0432 | Tactical archive entry 0432: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0433 | Tactical archive entry 0433: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0434 | Tactical archive entry 0434: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0435 | Tactical archive entry 0435: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0436 | Tactical archive entry 0436: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0437 | Tactical archive entry 0437: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0438 | Tactical archive entry 0438: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0439 | Tactical archive entry 0439: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0440 | Tactical archive entry 0440: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0441 | Tactical archive entry 0441: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0442 | Tactical archive entry 0442: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0443 | Tactical archive entry 0443: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0444 | Tactical archive entry 0444: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0445 | Tactical archive entry 0445: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0446 | Tactical archive entry 0446: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0447 | Tactical archive entry 0447: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0448 | Tactical archive entry 0448: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0449 | Tactical archive entry 0449: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0450 | Tactical archive entry 0450: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0451 | Tactical archive entry 0451: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0452 | Tactical archive entry 0452: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0453 | Tactical archive entry 0453: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0454 | Tactical archive entry 0454: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0455 | Tactical archive entry 0455: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0456 | Tactical archive entry 0456: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0457 | Tactical archive entry 0457: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0458 | Tactical archive entry 0458: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0459 | Tactical archive entry 0459: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0460 | Tactical archive entry 0460: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0461 | Tactical archive entry 0461: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0462 | Tactical archive entry 0462: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0463 | Tactical archive entry 0463: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0464 | Tactical archive entry 0464: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0465 | Tactical archive entry 0465: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0466 | Tactical archive entry 0466: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0467 | Tactical archive entry 0467: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0468 | Tactical archive entry 0468: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0469 | Tactical archive entry 0469: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0470 | Tactical archive entry 0470: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0471 | Tactical archive entry 0471: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0472 | Tactical archive entry 0472: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0473 | Tactical archive entry 0473: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0474 | Tactical archive entry 0474: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0475 | Tactical archive entry 0475: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0476 | Tactical archive entry 0476: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0477 | Tactical archive entry 0477: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0478 | Tactical archive entry 0478: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0479 | Tactical archive entry 0479: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0480 | Tactical archive entry 0480: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0481 | Tactical archive entry 0481: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0482 | Tactical archive entry 0482: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0483 | Tactical archive entry 0483: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0484 | Tactical archive entry 0484: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0485 | Tactical archive entry 0485: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0486 | Tactical archive entry 0486: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0487 | Tactical archive entry 0487: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0488 | Tactical archive entry 0488: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0489 | Tactical archive entry 0489: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0490 | Tactical archive entry 0490: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0491 | Tactical archive entry 0491: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0492 | Tactical archive entry 0492: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0493 | Tactical archive entry 0493: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0494 | Tactical archive entry 0494: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0495 | Tactical archive entry 0495: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0496 | Tactical archive entry 0496: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0497 | Tactical archive entry 0497: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0498 | Tactical archive entry 0498: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0499 | Tactical archive entry 0499: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0500 | Tactical archive entry 0500: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0501 | Tactical archive entry 0501: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0502 | Tactical archive entry 0502: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0503 | Tactical archive entry 0503: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0504 | Tactical archive entry 0504: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0505 | Tactical archive entry 0505: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0506 | Tactical archive entry 0506: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0507 | Tactical archive entry 0507: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0508 | Tactical archive entry 0508: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0509 | Tactical archive entry 0509: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0510 | Tactical archive entry 0510: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0511 | Tactical archive entry 0511: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0512 | Tactical archive entry 0512: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0513 | Tactical archive entry 0513: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0514 | Tactical archive entry 0514: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0515 | Tactical archive entry 0515: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0516 | Tactical archive entry 0516: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0517 | Tactical archive entry 0517: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0518 | Tactical archive entry 0518: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0519 | Tactical archive entry 0519: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0520 | Tactical archive entry 0520: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0521 | Tactical archive entry 0521: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0522 | Tactical archive entry 0522: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0523 | Tactical archive entry 0523: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0524 | Tactical archive entry 0524: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0525 | Tactical archive entry 0525: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0526 | Tactical archive entry 0526: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0527 | Tactical archive entry 0527: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0528 | Tactical archive entry 0528: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0529 | Tactical archive entry 0529: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0530 | Tactical archive entry 0530: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0531 | Tactical archive entry 0531: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0532 | Tactical archive entry 0532: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0533 | Tactical archive entry 0533: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0534 | Tactical archive entry 0534: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0535 | Tactical archive entry 0535: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0536 | Tactical archive entry 0536: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0537 | Tactical archive entry 0537: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0538 | Tactical archive entry 0538: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0539 | Tactical archive entry 0539: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0540 | Tactical archive entry 0540: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0541 | Tactical archive entry 0541: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0542 | Tactical archive entry 0542: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0543 | Tactical archive entry 0543: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0544 | Tactical archive entry 0544: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0545 | Tactical archive entry 0545: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0546 | Tactical archive entry 0546: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0547 | Tactical archive entry 0547: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0548 | Tactical archive entry 0548: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0549 | Tactical archive entry 0549: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0550 | Tactical archive entry 0550: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0551 | Tactical archive entry 0551: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0552 | Tactical archive entry 0552: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0553 | Tactical archive entry 0553: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0554 | Tactical archive entry 0554: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0555 | Tactical archive entry 0555: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0556 | Tactical archive entry 0556: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0557 | Tactical archive entry 0557: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0558 | Tactical archive entry 0558: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0559 | Tactical archive entry 0559: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0560 | Tactical archive entry 0560: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0561 | Tactical archive entry 0561: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0562 | Tactical archive entry 0562: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0563 | Tactical archive entry 0563: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0564 | Tactical archive entry 0564: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0565 | Tactical archive entry 0565: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0566 | Tactical archive entry 0566: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0567 | Tactical archive entry 0567: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0568 | Tactical archive entry 0568: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0569 | Tactical archive entry 0569: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0570 | Tactical archive entry 0570: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0571 | Tactical archive entry 0571: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0572 | Tactical archive entry 0572: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0573 | Tactical archive entry 0573: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0574 | Tactical archive entry 0574: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0575 | Tactical archive entry 0575: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0576 | Tactical archive entry 0576: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0577 | Tactical archive entry 0577: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0578 | Tactical archive entry 0578: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0579 | Tactical archive entry 0579: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0580 | Tactical archive entry 0580: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0581 | Tactical archive entry 0581: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0582 | Tactical archive entry 0582: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0583 | Tactical archive entry 0583: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0584 | Tactical archive entry 0584: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0585 | Tactical archive entry 0585: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0586 | Tactical archive entry 0586: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0587 | Tactical archive entry 0587: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0588 | Tactical archive entry 0588: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0589 | Tactical archive entry 0589: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0590 | Tactical archive entry 0590: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0591 | Tactical archive entry 0591: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0592 | Tactical archive entry 0592: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0593 | Tactical archive entry 0593: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0594 | Tactical archive entry 0594: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0595 | Tactical archive entry 0595: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0596 | Tactical archive entry 0596: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0597 | Tactical archive entry 0597: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0598 | Tactical archive entry 0598: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0599 | Tactical archive entry 0599: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0600 | Tactical archive entry 0600: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0601 | Tactical archive entry 0601: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0602 | Tactical archive entry 0602: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0603 | Tactical archive entry 0603: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0604 | Tactical archive entry 0604: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0605 | Tactical archive entry 0605: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0606 | Tactical archive entry 0606: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0607 | Tactical archive entry 0607: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0608 | Tactical archive entry 0608: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0609 | Tactical archive entry 0609: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0610 | Tactical archive entry 0610: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0611 | Tactical archive entry 0611: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0612 | Tactical archive entry 0612: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0613 | Tactical archive entry 0613: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0614 | Tactical archive entry 0614: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0615 | Tactical archive entry 0615: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0616 | Tactical archive entry 0616: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0617 | Tactical archive entry 0617: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0618 | Tactical archive entry 0618: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0619 | Tactical archive entry 0619: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0620 | Tactical archive entry 0620: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0621 | Tactical archive entry 0621: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0622 | Tactical archive entry 0622: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0623 | Tactical archive entry 0623: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0624 | Tactical archive entry 0624: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0625 | Tactical archive entry 0625: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0626 | Tactical archive entry 0626: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0627 | Tactical archive entry 0627: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0628 | Tactical archive entry 0628: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0629 | Tactical archive entry 0629: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0630 | Tactical archive entry 0630: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0631 | Tactical archive entry 0631: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0632 | Tactical archive entry 0632: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0633 | Tactical archive entry 0633: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0634 | Tactical archive entry 0634: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0635 | Tactical archive entry 0635: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0636 | Tactical archive entry 0636: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0637 | Tactical archive entry 0637: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0638 | Tactical archive entry 0638: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0639 | Tactical archive entry 0639: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0640 | Tactical archive entry 0640: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0641 | Tactical archive entry 0641: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0642 | Tactical archive entry 0642: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0643 | Tactical archive entry 0643: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0644 | Tactical archive entry 0644: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0645 | Tactical archive entry 0645: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0646 | Tactical archive entry 0646: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0647 | Tactical archive entry 0647: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0648 | Tactical archive entry 0648: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0649 | Tactical archive entry 0649: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0650 | Tactical archive entry 0650: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0651 | Tactical archive entry 0651: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0652 | Tactical archive entry 0652: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0653 | Tactical archive entry 0653: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0654 | Tactical archive entry 0654: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0655 | Tactical archive entry 0655: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0656 | Tactical archive entry 0656: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0657 | Tactical archive entry 0657: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0658 | Tactical archive entry 0658: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0659 | Tactical archive entry 0659: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0660 | Tactical archive entry 0660: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0661 | Tactical archive entry 0661: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0662 | Tactical archive entry 0662: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0663 | Tactical archive entry 0663: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0664 | Tactical archive entry 0664: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0665 | Tactical archive entry 0665: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0666 | Tactical archive entry 0666: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0667 | Tactical archive entry 0667: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0668 | Tactical archive entry 0668: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0669 | Tactical archive entry 0669: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0670 | Tactical archive entry 0670: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0671 | Tactical archive entry 0671: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0672 | Tactical archive entry 0672: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0673 | Tactical archive entry 0673: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0674 | Tactical archive entry 0674: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0675 | Tactical archive entry 0675: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0676 | Tactical archive entry 0676: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0677 | Tactical archive entry 0677: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0678 | Tactical archive entry 0678: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0679 | Tactical archive entry 0679: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0680 | Tactical archive entry 0680: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0681 | Tactical archive entry 0681: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0682 | Tactical archive entry 0682: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0683 | Tactical archive entry 0683: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0684 | Tactical archive entry 0684: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0685 | Tactical archive entry 0685: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0686 | Tactical archive entry 0686: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0687 | Tactical archive entry 0687: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0688 | Tactical archive entry 0688: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0689 | Tactical archive entry 0689: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0690 | Tactical archive entry 0690: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0691 | Tactical archive entry 0691: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0692 | Tactical archive entry 0692: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0693 | Tactical archive entry 0693: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0694 | Tactical archive entry 0694: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0695 | Tactical archive entry 0695: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0696 | Tactical archive entry 0696: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0697 | Tactical archive entry 0697: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0698 | Tactical archive entry 0698: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0699 | Tactical archive entry 0699: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0700 | Tactical archive entry 0700: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0701 | Tactical archive entry 0701: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0702 | Tactical archive entry 0702: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0703 | Tactical archive entry 0703: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0704 | Tactical archive entry 0704: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0705 | Tactical archive entry 0705: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0706 | Tactical archive entry 0706: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0707 | Tactical archive entry 0707: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0708 | Tactical archive entry 0708: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0709 | Tactical archive entry 0709: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0710 | Tactical archive entry 0710: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0711 | Tactical archive entry 0711: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0712 | Tactical archive entry 0712: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0713 | Tactical archive entry 0713: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0714 | Tactical archive entry 0714: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0715 | Tactical archive entry 0715: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0716 | Tactical archive entry 0716: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0717 | Tactical archive entry 0717: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0718 | Tactical archive entry 0718: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0719 | Tactical archive entry 0719: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0720 | Tactical archive entry 0720: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0721 | Tactical archive entry 0721: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0722 | Tactical archive entry 0722: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0723 | Tactical archive entry 0723: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0724 | Tactical archive entry 0724: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0725 | Tactical archive entry 0725: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0726 | Tactical archive entry 0726: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0727 | Tactical archive entry 0727: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0728 | Tactical archive entry 0728: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0729 | Tactical archive entry 0729: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0730 | Tactical archive entry 0730: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0731 | Tactical archive entry 0731: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0732 | Tactical archive entry 0732: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0733 | Tactical archive entry 0733: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0734 | Tactical archive entry 0734: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0735 | Tactical archive entry 0735: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0736 | Tactical archive entry 0736: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0737 | Tactical archive entry 0737: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0738 | Tactical archive entry 0738: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0739 | Tactical archive entry 0739: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0740 | Tactical archive entry 0740: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0741 | Tactical archive entry 0741: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0742 | Tactical archive entry 0742: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0743 | Tactical archive entry 0743: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0744 | Tactical archive entry 0744: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0745 | Tactical archive entry 0745: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0746 | Tactical archive entry 0746: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0747 | Tactical archive entry 0747: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0748 | Tactical archive entry 0748: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0749 | Tactical archive entry 0749: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0750 | Tactical archive entry 0750: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0751 | Tactical archive entry 0751: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0752 | Tactical archive entry 0752: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0753 | Tactical archive entry 0753: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0754 | Tactical archive entry 0754: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0755 | Tactical archive entry 0755: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0756 | Tactical archive entry 0756: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0757 | Tactical archive entry 0757: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0758 | Tactical archive entry 0758: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0759 | Tactical archive entry 0759: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0760 | Tactical archive entry 0760: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0761 | Tactical archive entry 0761: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0762 | Tactical archive entry 0762: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0763 | Tactical archive entry 0763: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0764 | Tactical archive entry 0764: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0765 | Tactical archive entry 0765: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0766 | Tactical archive entry 0766: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0767 | Tactical archive entry 0767: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0768 | Tactical archive entry 0768: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0769 | Tactical archive entry 0769: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0770 | Tactical archive entry 0770: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0771 | Tactical archive entry 0771: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0772 | Tactical archive entry 0772: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0773 | Tactical archive entry 0773: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0774 | Tactical archive entry 0774: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0775 | Tactical archive entry 0775: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0776 | Tactical archive entry 0776: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0777 | Tactical archive entry 0777: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0778 | Tactical archive entry 0778: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0779 | Tactical archive entry 0779: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0780 | Tactical archive entry 0780: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0781 | Tactical archive entry 0781: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0782 | Tactical archive entry 0782: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0783 | Tactical archive entry 0783: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0784 | Tactical archive entry 0784: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0785 | Tactical archive entry 0785: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0786 | Tactical archive entry 0786: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0787 | Tactical archive entry 0787: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0788 | Tactical archive entry 0788: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0789 | Tactical archive entry 0789: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0790 | Tactical archive entry 0790: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0791 | Tactical archive entry 0791: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0792 | Tactical archive entry 0792: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0793 | Tactical archive entry 0793: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0794 | Tactical archive entry 0794: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0795 | Tactical archive entry 0795: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0796 | Tactical archive entry 0796: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0797 | Tactical archive entry 0797: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0798 | Tactical archive entry 0798: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0799 | Tactical archive entry 0799: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0800 | Tactical archive entry 0800: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0801 | Tactical archive entry 0801: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0802 | Tactical archive entry 0802: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0803 | Tactical archive entry 0803: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0804 | Tactical archive entry 0804: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0805 | Tactical archive entry 0805: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0806 | Tactical archive entry 0806: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0807 | Tactical archive entry 0807: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0808 | Tactical archive entry 0808: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0809 | Tactical archive entry 0809: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0810 | Tactical archive entry 0810: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0811 | Tactical archive entry 0811: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0812 | Tactical archive entry 0812: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0813 | Tactical archive entry 0813: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0814 | Tactical archive entry 0814: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0815 | Tactical archive entry 0815: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0816 | Tactical archive entry 0816: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0817 | Tactical archive entry 0817: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0818 | Tactical archive entry 0818: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0819 | Tactical archive entry 0819: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0820 | Tactical archive entry 0820: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0821 | Tactical archive entry 0821: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0822 | Tactical archive entry 0822: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0823 | Tactical archive entry 0823: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0824 | Tactical archive entry 0824: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0825 | Tactical archive entry 0825: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0826 | Tactical archive entry 0826: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0827 | Tactical archive entry 0827: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0828 | Tactical archive entry 0828: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0829 | Tactical archive entry 0829: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0830 | Tactical archive entry 0830: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0831 | Tactical archive entry 0831: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0832 | Tactical archive entry 0832: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0833 | Tactical archive entry 0833: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0834 | Tactical archive entry 0834: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0835 | Tactical archive entry 0835: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0836 | Tactical archive entry 0836: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0837 | Tactical archive entry 0837: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0838 | Tactical archive entry 0838: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0839 | Tactical archive entry 0839: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0840 | Tactical archive entry 0840: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0841 | Tactical archive entry 0841: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0842 | Tactical archive entry 0842: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0843 | Tactical archive entry 0843: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0844 | Tactical archive entry 0844: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0845 | Tactical archive entry 0845: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0846 | Tactical archive entry 0846: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0847 | Tactical archive entry 0847: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0848 | Tactical archive entry 0848: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0849 | Tactical archive entry 0849: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0850 | Tactical archive entry 0850: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0851 | Tactical archive entry 0851: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0852 | Tactical archive entry 0852: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0853 | Tactical archive entry 0853: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0854 | Tactical archive entry 0854: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0855 | Tactical archive entry 0855: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0856 | Tactical archive entry 0856: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0857 | Tactical archive entry 0857: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0858 | Tactical archive entry 0858: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0859 | Tactical archive entry 0859: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0860 | Tactical archive entry 0860: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0861 | Tactical archive entry 0861: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0862 | Tactical archive entry 0862: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0863 | Tactical archive entry 0863: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0864 | Tactical archive entry 0864: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0865 | Tactical archive entry 0865: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0866 | Tactical archive entry 0866: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0867 | Tactical archive entry 0867: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0868 | Tactical archive entry 0868: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0869 | Tactical archive entry 0869: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0870 | Tactical archive entry 0870: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0871 | Tactical archive entry 0871: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0872 | Tactical archive entry 0872: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0873 | Tactical archive entry 0873: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0874 | Tactical archive entry 0874: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0875 | Tactical archive entry 0875: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0876 | Tactical archive entry 0876: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0877 | Tactical archive entry 0877: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0878 | Tactical archive entry 0878: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0879 | Tactical archive entry 0879: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0880 | Tactical archive entry 0880: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0881 | Tactical archive entry 0881: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0882 | Tactical archive entry 0882: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0883 | Tactical archive entry 0883: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0884 | Tactical archive entry 0884: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0885 | Tactical archive entry 0885: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0886 | Tactical archive entry 0886: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0887 | Tactical archive entry 0887: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0888 | Tactical archive entry 0888: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0889 | Tactical archive entry 0889: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0890 | Tactical archive entry 0890: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0891 | Tactical archive entry 0891: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0892 | Tactical archive entry 0892: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0893 | Tactical archive entry 0893: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0894 | Tactical archive entry 0894: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0895 | Tactical archive entry 0895: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0896 | Tactical archive entry 0896: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0897 | Tactical archive entry 0897: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0898 | Tactical archive entry 0898: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0899 | Tactical archive entry 0899: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0900 | Tactical archive entry 0900: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0901 | Tactical archive entry 0901: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0902 | Tactical archive entry 0902: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0903 | Tactical archive entry 0903: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0904 | Tactical archive entry 0904: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0905 | Tactical archive entry 0905: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0906 | Tactical archive entry 0906: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0907 | Tactical archive entry 0907: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0908 | Tactical archive entry 0908: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0909 | Tactical archive entry 0909: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0910 | Tactical archive entry 0910: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0911 | Tactical archive entry 0911: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0912 | Tactical archive entry 0912: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0913 | Tactical archive entry 0913: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0914 | Tactical archive entry 0914: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0915 | Tactical archive entry 0915: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0916 | Tactical archive entry 0916: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0917 | Tactical archive entry 0917: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0918 | Tactical archive entry 0918: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0919 | Tactical archive entry 0919: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0920 | Tactical archive entry 0920: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0921 | Tactical archive entry 0921: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0922 | Tactical archive entry 0922: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0923 | Tactical archive entry 0923: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0924 | Tactical archive entry 0924: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0925 | Tactical archive entry 0925: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0926 | Tactical archive entry 0926: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0927 | Tactical archive entry 0927: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0928 | Tactical archive entry 0928: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0929 | Tactical archive entry 0929: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0930 | Tactical archive entry 0930: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0931 | Tactical archive entry 0931: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0932 | Tactical archive entry 0932: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0933 | Tactical archive entry 0933: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0934 | Tactical archive entry 0934: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0935 | Tactical archive entry 0935: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0936 | Tactical archive entry 0936: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0937 | Tactical archive entry 0937: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0938 | Tactical archive entry 0938: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0939 | Tactical archive entry 0939: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0940 | Tactical archive entry 0940: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0941 | Tactical archive entry 0941: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0942 | Tactical archive entry 0942: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0943 | Tactical archive entry 0943: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0944 | Tactical archive entry 0944: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0945 | Tactical archive entry 0945: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0946 | Tactical archive entry 0946: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0947 | Tactical archive entry 0947: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0948 | Tactical archive entry 0948: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0949 | Tactical archive entry 0949: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0950 | Tactical archive entry 0950: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0951 | Tactical archive entry 0951: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0952 | Tactical archive entry 0952: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0953 | Tactical archive entry 0953: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0954 | Tactical archive entry 0954: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0955 | Tactical archive entry 0955: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0956 | Tactical archive entry 0956: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0957 | Tactical archive entry 0957: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0958 | Tactical archive entry 0958: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0959 | Tactical archive entry 0959: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0960 | Tactical archive entry 0960: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0961 | Tactical archive entry 0961: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0962 | Tactical archive entry 0962: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0963 | Tactical archive entry 0963: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0964 | Tactical archive entry 0964: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0965 | Tactical archive entry 0965: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0966 | Tactical archive entry 0966: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0967 | Tactical archive entry 0967: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0968 | Tactical archive entry 0968: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0969 | Tactical archive entry 0969: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0970 | Tactical archive entry 0970: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0971 | Tactical archive entry 0971: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0972 | Tactical archive entry 0972: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0973 | Tactical archive entry 0973: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0974 | Tactical archive entry 0974: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0975 | Tactical archive entry 0975: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0976 | Tactical archive entry 0976: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0977 | Tactical archive entry 0977: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0978 | Tactical archive entry 0978: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0979 | Tactical archive entry 0979: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0980 | Tactical archive entry 0980: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0981 | Tactical archive entry 0981: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0982 | Tactical archive entry 0982: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0983 | Tactical archive entry 0983: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0984 | Tactical archive entry 0984: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0985 | Tactical archive entry 0985: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0986 | Tactical archive entry 0986: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0987 | Tactical archive entry 0987: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0988 | Tactical archive entry 0988: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0989 | Tactical archive entry 0989: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0990 | Tactical archive entry 0990: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0991 | Tactical archive entry 0991: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0992 | Tactical archive entry 0992: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0993 | Tactical archive entry 0993: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0994 | Tactical archive entry 0994: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0995 | Tactical archive entry 0995: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0996 | Tactical archive entry 0996: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0997 | Tactical archive entry 0997: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0998 | Tactical archive entry 0998: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-0999 | Tactical archive entry 0999: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1000 | Tactical archive entry 1000: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1001 | Tactical archive entry 1001: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1002 | Tactical archive entry 1002: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1003 | Tactical archive entry 1003: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1004 | Tactical archive entry 1004: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1005 | Tactical archive entry 1005: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1006 | Tactical archive entry 1006: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1007 | Tactical archive entry 1007: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1008 | Tactical archive entry 1008: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1009 | Tactical archive entry 1009: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1010 | Tactical archive entry 1010: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1011 | Tactical archive entry 1011: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1012 | Tactical archive entry 1012: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1013 | Tactical archive entry 1013: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1014 | Tactical archive entry 1014: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1015 | Tactical archive entry 1015: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1016 | Tactical archive entry 1016: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1017 | Tactical archive entry 1017: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1018 | Tactical archive entry 1018: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1019 | Tactical archive entry 1019: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1020 | Tactical archive entry 1020: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1021 | Tactical archive entry 1021: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1022 | Tactical archive entry 1022: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1023 | Tactical archive entry 1023: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1024 | Tactical archive entry 1024: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1025 | Tactical archive entry 1025: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1026 | Tactical archive entry 1026: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1027 | Tactical archive entry 1027: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1028 | Tactical archive entry 1028: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1029 | Tactical archive entry 1029: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1030 | Tactical archive entry 1030: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1031 | Tactical archive entry 1031: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1032 | Tactical archive entry 1032: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1033 | Tactical archive entry 1033: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1034 | Tactical archive entry 1034: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1035 | Tactical archive entry 1035: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1036 | Tactical archive entry 1036: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1037 | Tactical archive entry 1037: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1038 | Tactical archive entry 1038: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1039 | Tactical archive entry 1039: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1040 | Tactical archive entry 1040: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1041 | Tactical archive entry 1041: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1042 | Tactical archive entry 1042: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1043 | Tactical archive entry 1043: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1044 | Tactical archive entry 1044: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1045 | Tactical archive entry 1045: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1046 | Tactical archive entry 1046: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1047 | Tactical archive entry 1047: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1048 | Tactical archive entry 1048: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1049 | Tactical archive entry 1049: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1050 | Tactical archive entry 1050: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1051 | Tactical archive entry 1051: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1052 | Tactical archive entry 1052: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1053 | Tactical archive entry 1053: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1054 | Tactical archive entry 1054: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1055 | Tactical archive entry 1055: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1056 | Tactical archive entry 1056: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1057 | Tactical archive entry 1057: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1058 | Tactical archive entry 1058: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1059 | Tactical archive entry 1059: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1060 | Tactical archive entry 1060: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1061 | Tactical archive entry 1061: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1062 | Tactical archive entry 1062: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1063 | Tactical archive entry 1063: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1064 | Tactical archive entry 1064: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1065 | Tactical archive entry 1065: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1066 | Tactical archive entry 1066: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1067 | Tactical archive entry 1067: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1068 | Tactical archive entry 1068: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1069 | Tactical archive entry 1069: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1070 | Tactical archive entry 1070: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1071 | Tactical archive entry 1071: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1072 | Tactical archive entry 1072: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1073 | Tactical archive entry 1073: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1074 | Tactical archive entry 1074: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1075 | Tactical archive entry 1075: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1076 | Tactical archive entry 1076: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1077 | Tactical archive entry 1077: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1078 | Tactical archive entry 1078: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1079 | Tactical archive entry 1079: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1080 | Tactical archive entry 1080: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1081 | Tactical archive entry 1081: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1082 | Tactical archive entry 1082: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1083 | Tactical archive entry 1083: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1084 | Tactical archive entry 1084: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1085 | Tactical archive entry 1085: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1086 | Tactical archive entry 1086: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1087 | Tactical archive entry 1087: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1088 | Tactical archive entry 1088: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1089 | Tactical archive entry 1089: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1090 | Tactical archive entry 1090: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1091 | Tactical archive entry 1091: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1092 | Tactical archive entry 1092: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1093 | Tactical archive entry 1093: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1094 | Tactical archive entry 1094: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1095 | Tactical archive entry 1095: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1096 | Tactical archive entry 1096: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1097 | Tactical archive entry 1097: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1098 | Tactical archive entry 1098: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1099 | Tactical archive entry 1099: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1100 | Tactical archive entry 1100: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1101 | Tactical archive entry 1101: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1102 | Tactical archive entry 1102: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1103 | Tactical archive entry 1103: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1104 | Tactical archive entry 1104: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1105 | Tactical archive entry 1105: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1106 | Tactical archive entry 1106: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1107 | Tactical archive entry 1107: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1108 | Tactical archive entry 1108: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1109 | Tactical archive entry 1109: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1110 | Tactical archive entry 1110: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1111 | Tactical archive entry 1111: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1112 | Tactical archive entry 1112: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1113 | Tactical archive entry 1113: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1114 | Tactical archive entry 1114: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1115 | Tactical archive entry 1115: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1116 | Tactical archive entry 1116: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1117 | Tactical archive entry 1117: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1118 | Tactical archive entry 1118: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1119 | Tactical archive entry 1119: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1120 | Tactical archive entry 1120: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1121 | Tactical archive entry 1121: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1122 | Tactical archive entry 1122: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1123 | Tactical archive entry 1123: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1124 | Tactical archive entry 1124: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1125 | Tactical archive entry 1125: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1126 | Tactical archive entry 1126: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1127 | Tactical archive entry 1127: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1128 | Tactical archive entry 1128: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1129 | Tactical archive entry 1129: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1130 | Tactical archive entry 1130: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1131 | Tactical archive entry 1131: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1132 | Tactical archive entry 1132: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1133 | Tactical archive entry 1133: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1134 | Tactical archive entry 1134: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1135 | Tactical archive entry 1135: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1136 | Tactical archive entry 1136: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1137 | Tactical archive entry 1137: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1138 | Tactical archive entry 1138: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1139 | Tactical archive entry 1139: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1140 | Tactical archive entry 1140: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1141 | Tactical archive entry 1141: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1142 | Tactical archive entry 1142: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1143 | Tactical archive entry 1143: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1144 | Tactical archive entry 1144: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1145 | Tactical archive entry 1145: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1146 | Tactical archive entry 1146: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1147 | Tactical archive entry 1147: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1148 | Tactical archive entry 1148: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1149 | Tactical archive entry 1149: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1150 | Tactical archive entry 1150: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1151 | Tactical archive entry 1151: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1152 | Tactical archive entry 1152: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1153 | Tactical archive entry 1153: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1154 | Tactical archive entry 1154: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1155 | Tactical archive entry 1155: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1156 | Tactical archive entry 1156: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1157 | Tactical archive entry 1157: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1158 | Tactical archive entry 1158: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1159 | Tactical archive entry 1159: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1160 | Tactical archive entry 1160: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1161 | Tactical archive entry 1161: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1162 | Tactical archive entry 1162: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1163 | Tactical archive entry 1163: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1164 | Tactical archive entry 1164: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1165 | Tactical archive entry 1165: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1166 | Tactical archive entry 1166: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1167 | Tactical archive entry 1167: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1168 | Tactical archive entry 1168: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1169 | Tactical archive entry 1169: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1170 | Tactical archive entry 1170: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1171 | Tactical archive entry 1171: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1172 | Tactical archive entry 1172: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1173 | Tactical archive entry 1173: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1174 | Tactical archive entry 1174: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1175 | Tactical archive entry 1175: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1176 | Tactical archive entry 1176: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1177 | Tactical archive entry 1177: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1178 | Tactical archive entry 1178: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1179 | Tactical archive entry 1179: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1180 | Tactical archive entry 1180: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1181 | Tactical archive entry 1181: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1182 | Tactical archive entry 1182: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1183 | Tactical archive entry 1183: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1184 | Tactical archive entry 1184: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1185 | Tactical archive entry 1185: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1186 | Tactical archive entry 1186: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1187 | Tactical archive entry 1187: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1188 | Tactical archive entry 1188: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1189 | Tactical archive entry 1189: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1190 | Tactical archive entry 1190: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1191 | Tactical archive entry 1191: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1192 | Tactical archive entry 1192: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1193 | Tactical archive entry 1193: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1194 | Tactical archive entry 1194: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1195 | Tactical archive entry 1195: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1196 | Tactical archive entry 1196: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1197 | Tactical archive entry 1197: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1198 | Tactical archive entry 1198: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1199 | Tactical archive entry 1199: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1200 | Tactical archive entry 1200: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1201 | Tactical archive entry 1201: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1202 | Tactical archive entry 1202: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1203 | Tactical archive entry 1203: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1204 | Tactical archive entry 1204: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1205 | Tactical archive entry 1205: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1206 | Tactical archive entry 1206: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1207 | Tactical archive entry 1207: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1208 | Tactical archive entry 1208: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1209 | Tactical archive entry 1209: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1210 | Tactical archive entry 1210: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1211 | Tactical archive entry 1211: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1212 | Tactical archive entry 1212: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1213 | Tactical archive entry 1213: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1214 | Tactical archive entry 1214: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1215 | Tactical archive entry 1215: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1216 | Tactical archive entry 1216: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1217 | Tactical archive entry 1217: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1218 | Tactical archive entry 1218: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1219 | Tactical archive entry 1219: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1220 | Tactical archive entry 1220: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1221 | Tactical archive entry 1221: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1222 | Tactical archive entry 1222: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1223 | Tactical archive entry 1223: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1224 | Tactical archive entry 1224: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1225 | Tactical archive entry 1225: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1226 | Tactical archive entry 1226: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1227 | Tactical archive entry 1227: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1228 | Tactical archive entry 1228: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1229 | Tactical archive entry 1229: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1230 | Tactical archive entry 1230: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1231 | Tactical archive entry 1231: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1232 | Tactical archive entry 1232: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1233 | Tactical archive entry 1233: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1234 | Tactical archive entry 1234: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1235 | Tactical archive entry 1235: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1236 | Tactical archive entry 1236: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1237 | Tactical archive entry 1237: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1238 | Tactical archive entry 1238: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1239 | Tactical archive entry 1239: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1240 | Tactical archive entry 1240: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1241 | Tactical archive entry 1241: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1242 | Tactical archive entry 1242: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1243 | Tactical archive entry 1243: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1244 | Tactical archive entry 1244: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1245 | Tactical archive entry 1245: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1246 | Tactical archive entry 1246: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1247 | Tactical archive entry 1247: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1248 | Tactical archive entry 1248: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1249 | Tactical archive entry 1249: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1250 | Tactical archive entry 1250: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1251 | Tactical archive entry 1251: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1252 | Tactical archive entry 1252: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1253 | Tactical archive entry 1253: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1254 | Tactical archive entry 1254: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1255 | Tactical archive entry 1255: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1256 | Tactical archive entry 1256: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1257 | Tactical archive entry 1257: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1258 | Tactical archive entry 1258: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1259 | Tactical archive entry 1259: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1260 | Tactical archive entry 1260: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1261 | Tactical archive entry 1261: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1262 | Tactical archive entry 1262: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1263 | Tactical archive entry 1263: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1264 | Tactical archive entry 1264: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1265 | Tactical archive entry 1265: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1266 | Tactical archive entry 1266: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1267 | Tactical archive entry 1267: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1268 | Tactical archive entry 1268: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1269 | Tactical archive entry 1269: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1270 | Tactical archive entry 1270: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1271 | Tactical archive entry 1271: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1272 | Tactical archive entry 1272: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1273 | Tactical archive entry 1273: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1274 | Tactical archive entry 1274: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1275 | Tactical archive entry 1275: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1276 | Tactical archive entry 1276: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1277 | Tactical archive entry 1277: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1278 | Tactical archive entry 1278: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1279 | Tactical archive entry 1279: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1280 | Tactical archive entry 1280: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1281 | Tactical archive entry 1281: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1282 | Tactical archive entry 1282: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1283 | Tactical archive entry 1283: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1284 | Tactical archive entry 1284: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1285 | Tactical archive entry 1285: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1286 | Tactical archive entry 1286: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1287 | Tactical archive entry 1287: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1288 | Tactical archive entry 1288: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1289 | Tactical archive entry 1289: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1290 | Tactical archive entry 1290: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1291 | Tactical archive entry 1291: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1292 | Tactical archive entry 1292: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1293 | Tactical archive entry 1293: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1294 | Tactical archive entry 1294: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1295 | Tactical archive entry 1295: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1296 | Tactical archive entry 1296: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1297 | Tactical archive entry 1297: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1298 | Tactical archive entry 1298: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1299 | Tactical archive entry 1299: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1300 | Tactical archive entry 1300: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1301 | Tactical archive entry 1301: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1302 | Tactical archive entry 1302: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1303 | Tactical archive entry 1303: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1304 | Tactical archive entry 1304: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1305 | Tactical archive entry 1305: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1306 | Tactical archive entry 1306: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1307 | Tactical archive entry 1307: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1308 | Tactical archive entry 1308: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1309 | Tactical archive entry 1309: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1310 | Tactical archive entry 1310: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1311 | Tactical archive entry 1311: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1312 | Tactical archive entry 1312: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1313 | Tactical archive entry 1313: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1314 | Tactical archive entry 1314: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1315 | Tactical archive entry 1315: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1316 | Tactical archive entry 1316: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1317 | Tactical archive entry 1317: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1318 | Tactical archive entry 1318: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1319 | Tactical archive entry 1319: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1320 | Tactical archive entry 1320: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1321 | Tactical archive entry 1321: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1322 | Tactical archive entry 1322: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1323 | Tactical archive entry 1323: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1324 | Tactical archive entry 1324: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1325 | Tactical archive entry 1325: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1326 | Tactical archive entry 1326: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1327 | Tactical archive entry 1327: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1328 | Tactical archive entry 1328: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1329 | Tactical archive entry 1329: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1330 | Tactical archive entry 1330: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1331 | Tactical archive entry 1331: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1332 | Tactical archive entry 1332: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1333 | Tactical archive entry 1333: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1334 | Tactical archive entry 1334: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1335 | Tactical archive entry 1335: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1336 | Tactical archive entry 1336: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1337 | Tactical archive entry 1337: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1338 | Tactical archive entry 1338: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1339 | Tactical archive entry 1339: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1340 | Tactical archive entry 1340: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1341 | Tactical archive entry 1341: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1342 | Tactical archive entry 1342: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1343 | Tactical archive entry 1343: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1344 | Tactical archive entry 1344: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1345 | Tactical archive entry 1345: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1346 | Tactical archive entry 1346: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1347 | Tactical archive entry 1347: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1348 | Tactical archive entry 1348: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1349 | Tactical archive entry 1349: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1350 | Tactical archive entry 1350: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1351 | Tactical archive entry 1351: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1352 | Tactical archive entry 1352: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1353 | Tactical archive entry 1353: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1354 | Tactical archive entry 1354: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1355 | Tactical archive entry 1355: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1356 | Tactical archive entry 1356: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1357 | Tactical archive entry 1357: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1358 | Tactical archive entry 1358: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1359 | Tactical archive entry 1359: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1360 | Tactical archive entry 1360: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1361 | Tactical archive entry 1361: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1362 | Tactical archive entry 1362: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1363 | Tactical archive entry 1363: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1364 | Tactical archive entry 1364: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1365 | Tactical archive entry 1365: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1366 | Tactical archive entry 1366: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1367 | Tactical archive entry 1367: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1368 | Tactical archive entry 1368: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1369 | Tactical archive entry 1369: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1370 | Tactical archive entry 1370: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1371 | Tactical archive entry 1371: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1372 | Tactical archive entry 1372: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1373 | Tactical archive entry 1373: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1374 | Tactical archive entry 1374: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1375 | Tactical archive entry 1375: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1376 | Tactical archive entry 1376: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1377 | Tactical archive entry 1377: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1378 | Tactical archive entry 1378: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1379 | Tactical archive entry 1379: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1380 | Tactical archive entry 1380: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1381 | Tactical archive entry 1381: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1382 | Tactical archive entry 1382: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1383 | Tactical archive entry 1383: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1384 | Tactical archive entry 1384: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1385 | Tactical archive entry 1385: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1386 | Tactical archive entry 1386: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1387 | Tactical archive entry 1387: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1388 | Tactical archive entry 1388: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1389 | Tactical archive entry 1389: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1390 | Tactical archive entry 1390: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1391 | Tactical archive entry 1391: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1392 | Tactical archive entry 1392: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1393 | Tactical archive entry 1393: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1394 | Tactical archive entry 1394: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1395 | Tactical archive entry 1395: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1396 | Tactical archive entry 1396: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1397 | Tactical archive entry 1397: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1398 | Tactical archive entry 1398: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1399 | Tactical archive entry 1399: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1400 | Tactical archive entry 1400: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1401 | Tactical archive entry 1401: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1402 | Tactical archive entry 1402: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1403 | Tactical archive entry 1403: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1404 | Tactical archive entry 1404: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1405 | Tactical archive entry 1405: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1406 | Tactical archive entry 1406: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1407 | Tactical archive entry 1407: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1408 | Tactical archive entry 1408: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1409 | Tactical archive entry 1409: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1410 | Tactical archive entry 1410: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1411 | Tactical archive entry 1411: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1412 | Tactical archive entry 1412: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1413 | Tactical archive entry 1413: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1414 | Tactical archive entry 1414: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1415 | Tactical archive entry 1415: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1416 | Tactical archive entry 1416: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1417 | Tactical archive entry 1417: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1418 | Tactical archive entry 1418: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1419 | Tactical archive entry 1419: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1420 | Tactical archive entry 1420: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1421 | Tactical archive entry 1421: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1422 | Tactical archive entry 1422: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1423 | Tactical archive entry 1423: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1424 | Tactical archive entry 1424: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1425 | Tactical archive entry 1425: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1426 | Tactical archive entry 1426: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1427 | Tactical archive entry 1427: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1428 | Tactical archive entry 1428: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1429 | Tactical archive entry 1429: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1430 | Tactical archive entry 1430: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1431 | Tactical archive entry 1431: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1432 | Tactical archive entry 1432: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1433 | Tactical archive entry 1433: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1434 | Tactical archive entry 1434: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1435 | Tactical archive entry 1435: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1436 | Tactical archive entry 1436: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1437 | Tactical archive entry 1437: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1438 | Tactical archive entry 1438: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1439 | Tactical archive entry 1439: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1440 | Tactical archive entry 1440: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1441 | Tactical archive entry 1441: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1442 | Tactical archive entry 1442: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1443 | Tactical archive entry 1443: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1444 | Tactical archive entry 1444: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1445 | Tactical archive entry 1445: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1446 | Tactical archive entry 1446: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1447 | Tactical archive entry 1447: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1448 | Tactical archive entry 1448: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1449 | Tactical archive entry 1449: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1450 | Tactical archive entry 1450: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1451 | Tactical archive entry 1451: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1452 | Tactical archive entry 1452: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1453 | Tactical archive entry 1453: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1454 | Tactical archive entry 1454: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1455 | Tactical archive entry 1455: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1456 | Tactical archive entry 1456: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1457 | Tactical archive entry 1457: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1458 | Tactical archive entry 1458: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1459 | Tactical archive entry 1459: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1460 | Tactical archive entry 1460: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1461 | Tactical archive entry 1461: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1462 | Tactical archive entry 1462: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1463 | Tactical archive entry 1463: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1464 | Tactical archive entry 1464: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1465 | Tactical archive entry 1465: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1466 | Tactical archive entry 1466: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1467 | Tactical archive entry 1467: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1468 | Tactical archive entry 1468: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1469 | Tactical archive entry 1469: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1470 | Tactical archive entry 1470: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1471 | Tactical archive entry 1471: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1472 | Tactical archive entry 1472: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1473 | Tactical archive entry 1473: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1474 | Tactical archive entry 1474: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1475 | Tactical archive entry 1475: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1476 | Tactical archive entry 1476: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1477 | Tactical archive entry 1477: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1478 | Tactical archive entry 1478: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1479 | Tactical archive entry 1479: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1480 | Tactical archive entry 1480: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1481 | Tactical archive entry 1481: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1482 | Tactical archive entry 1482: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1483 | Tactical archive entry 1483: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1484 | Tactical archive entry 1484: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1485 | Tactical archive entry 1485: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1486 | Tactical archive entry 1486: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1487 | Tactical archive entry 1487: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1488 | Tactical archive entry 1488: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1489 | Tactical archive entry 1489: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1490 | Tactical archive entry 1490: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1491 | Tactical archive entry 1491: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1492 | Tactical archive entry 1492: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1493 | Tactical archive entry 1493: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1494 | Tactical archive entry 1494: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1495 | Tactical archive entry 1495: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1496 | Tactical archive entry 1496: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1497 | Tactical archive entry 1497: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1498 | Tactical archive entry 1498: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1499 | Tactical archive entry 1499: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1500 | Tactical archive entry 1500: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1501 | Tactical archive entry 1501: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1502 | Tactical archive entry 1502: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1503 | Tactical archive entry 1503: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1504 | Tactical archive entry 1504: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1505 | Tactical archive entry 1505: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1506 | Tactical archive entry 1506: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1507 | Tactical archive entry 1507: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1508 | Tactical archive entry 1508: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1509 | Tactical archive entry 1509: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1510 | Tactical archive entry 1510: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1511 | Tactical archive entry 1511: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1512 | Tactical archive entry 1512: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1513 | Tactical archive entry 1513: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1514 | Tactical archive entry 1514: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1515 | Tactical archive entry 1515: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1516 | Tactical archive entry 1516: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1517 | Tactical archive entry 1517: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1518 | Tactical archive entry 1518: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1519 | Tactical archive entry 1519: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1520 | Tactical archive entry 1520: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1521 | Tactical archive entry 1521: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1522 | Tactical archive entry 1522: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1523 | Tactical archive entry 1523: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1524 | Tactical archive entry 1524: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1525 | Tactical archive entry 1525: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1526 | Tactical archive entry 1526: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1527 | Tactical archive entry 1527: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1528 | Tactical archive entry 1528: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1529 | Tactical archive entry 1529: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1530 | Tactical archive entry 1530: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1531 | Tactical archive entry 1531: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1532 | Tactical archive entry 1532: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1533 | Tactical archive entry 1533: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1534 | Tactical archive entry 1534: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1535 | Tactical archive entry 1535: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1536 | Tactical archive entry 1536: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1537 | Tactical archive entry 1537: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1538 | Tactical archive entry 1538: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1539 | Tactical archive entry 1539: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1540 | Tactical archive entry 1540: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1541 | Tactical archive entry 1541: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1542 | Tactical archive entry 1542: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1543 | Tactical archive entry 1543: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1544 | Tactical archive entry 1544: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1545 | Tactical archive entry 1545: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1546 | Tactical archive entry 1546: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1547 | Tactical archive entry 1547: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1548 | Tactical archive entry 1548: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1549 | Tactical archive entry 1549: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1550 | Tactical archive entry 1550: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1551 | Tactical archive entry 1551: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1552 | Tactical archive entry 1552: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1553 | Tactical archive entry 1553: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1554 | Tactical archive entry 1554: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1555 | Tactical archive entry 1555: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1556 | Tactical archive entry 1556: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1557 | Tactical archive entry 1557: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1558 | Tactical archive entry 1558: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1559 | Tactical archive entry 1559: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1560 | Tactical archive entry 1560: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1561 | Tactical archive entry 1561: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1562 | Tactical archive entry 1562: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1563 | Tactical archive entry 1563: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1564 | Tactical archive entry 1564: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1565 | Tactical archive entry 1565: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1566 | Tactical archive entry 1566: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1567 | Tactical archive entry 1567: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1568 | Tactical archive entry 1568: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1569 | Tactical archive entry 1569: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1570 | Tactical archive entry 1570: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1571 | Tactical archive entry 1571: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1572 | Tactical archive entry 1572: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1573 | Tactical archive entry 1573: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1574 | Tactical archive entry 1574: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1575 | Tactical archive entry 1575: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1576 | Tactical archive entry 1576: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1577 | Tactical archive entry 1577: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1578 | Tactical archive entry 1578: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1579 | Tactical archive entry 1579: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1580 | Tactical archive entry 1580: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1581 | Tactical archive entry 1581: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1582 | Tactical archive entry 1582: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1583 | Tactical archive entry 1583: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1584 | Tactical archive entry 1584: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1585 | Tactical archive entry 1585: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1586 | Tactical archive entry 1586: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1587 | Tactical archive entry 1587: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1588 | Tactical archive entry 1588: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1589 | Tactical archive entry 1589: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1590 | Tactical archive entry 1590: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1591 | Tactical archive entry 1591: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1592 | Tactical archive entry 1592: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1593 | Tactical archive entry 1593: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1594 | Tactical archive entry 1594: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1595 | Tactical archive entry 1595: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1596 | Tactical archive entry 1596: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1597 | Tactical archive entry 1597: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1598 | Tactical archive entry 1598: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1599 | Tactical archive entry 1599: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1600 | Tactical archive entry 1600: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1601 | Tactical archive entry 1601: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1602 | Tactical archive entry 1602: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1603 | Tactical archive entry 1603: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1604 | Tactical archive entry 1604: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1605 | Tactical archive entry 1605: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1606 | Tactical archive entry 1606: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1607 | Tactical archive entry 1607: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1608 | Tactical archive entry 1608: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1609 | Tactical archive entry 1609: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1610 | Tactical archive entry 1610: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1611 | Tactical archive entry 1611: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1612 | Tactical archive entry 1612: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1613 | Tactical archive entry 1613: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1614 | Tactical archive entry 1614: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1615 | Tactical archive entry 1615: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1616 | Tactical archive entry 1616: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1617 | Tactical archive entry 1617: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1618 | Tactical archive entry 1618: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1619 | Tactical archive entry 1619: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1620 | Tactical archive entry 1620: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1621 | Tactical archive entry 1621: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1622 | Tactical archive entry 1622: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1623 | Tactical archive entry 1623: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1624 | Tactical archive entry 1624: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1625 | Tactical archive entry 1625: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1626 | Tactical archive entry 1626: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1627 | Tactical archive entry 1627: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1628 | Tactical archive entry 1628: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1629 | Tactical archive entry 1629: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1630 | Tactical archive entry 1630: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1631 | Tactical archive entry 1631: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1632 | Tactical archive entry 1632: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1633 | Tactical archive entry 1633: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1634 | Tactical archive entry 1634: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1635 | Tactical archive entry 1635: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1636 | Tactical archive entry 1636: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1637 | Tactical archive entry 1637: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1638 | Tactical archive entry 1638: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1639 | Tactical archive entry 1639: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1640 | Tactical archive entry 1640: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1641 | Tactical archive entry 1641: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1642 | Tactical archive entry 1642: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1643 | Tactical archive entry 1643: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1644 | Tactical archive entry 1644: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1645 | Tactical archive entry 1645: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1646 | Tactical archive entry 1646: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1647 | Tactical archive entry 1647: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1648 | Tactical archive entry 1648: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1649 | Tactical archive entry 1649: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1650 | Tactical archive entry 1650: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1651 | Tactical archive entry 1651: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1652 | Tactical archive entry 1652: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1653 | Tactical archive entry 1653: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1654 | Tactical archive entry 1654: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1655 | Tactical archive entry 1655: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1656 | Tactical archive entry 1656: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1657 | Tactical archive entry 1657: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1658 | Tactical archive entry 1658: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1659 | Tactical archive entry 1659: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1660 | Tactical archive entry 1660: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1661 | Tactical archive entry 1661: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1662 | Tactical archive entry 1662: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1663 | Tactical archive entry 1663: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1664 | Tactical archive entry 1664: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1665 | Tactical archive entry 1665: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1666 | Tactical archive entry 1666: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1667 | Tactical archive entry 1667: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1668 | Tactical archive entry 1668: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1669 | Tactical archive entry 1669: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1670 | Tactical archive entry 1670: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1671 | Tactical archive entry 1671: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1672 | Tactical archive entry 1672: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1673 | Tactical archive entry 1673: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1674 | Tactical archive entry 1674: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1675 | Tactical archive entry 1675: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1676 | Tactical archive entry 1676: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1677 | Tactical archive entry 1677: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1678 | Tactical archive entry 1678: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1679 | Tactical archive entry 1679: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1680 | Tactical archive entry 1680: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1681 | Tactical archive entry 1681: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1682 | Tactical archive entry 1682: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1683 | Tactical archive entry 1683: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1684 | Tactical archive entry 1684: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1685 | Tactical archive entry 1685: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1686 | Tactical archive entry 1686: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1687 | Tactical archive entry 1687: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1688 | Tactical archive entry 1688: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1689 | Tactical archive entry 1689: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1690 | Tactical archive entry 1690: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1691 | Tactical archive entry 1691: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1692 | Tactical archive entry 1692: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1693 | Tactical archive entry 1693: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1694 | Tactical archive entry 1694: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1695 | Tactical archive entry 1695: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1696 | Tactical archive entry 1696: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1697 | Tactical archive entry 1697: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1698 | Tactical archive entry 1698: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1699 | Tactical archive entry 1699: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1700 | Tactical archive entry 1700: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1701 | Tactical archive entry 1701: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1702 | Tactical archive entry 1702: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1703 | Tactical archive entry 1703: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1704 | Tactical archive entry 1704: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1705 | Tactical archive entry 1705: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1706 | Tactical archive entry 1706: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1707 | Tactical archive entry 1707: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1708 | Tactical archive entry 1708: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1709 | Tactical archive entry 1709: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1710 | Tactical archive entry 1710: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1711 | Tactical archive entry 1711: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1712 | Tactical archive entry 1712: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1713 | Tactical archive entry 1713: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1714 | Tactical archive entry 1714: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1715 | Tactical archive entry 1715: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1716 | Tactical archive entry 1716: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1717 | Tactical archive entry 1717: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1718 | Tactical archive entry 1718: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1719 | Tactical archive entry 1719: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1720 | Tactical archive entry 1720: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1721 | Tactical archive entry 1721: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1722 | Tactical archive entry 1722: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1723 | Tactical archive entry 1723: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1724 | Tactical archive entry 1724: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1725 | Tactical archive entry 1725: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1726 | Tactical archive entry 1726: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1727 | Tactical archive entry 1727: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1728 | Tactical archive entry 1728: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1729 | Tactical archive entry 1729: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1730 | Tactical archive entry 1730: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1731 | Tactical archive entry 1731: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1732 | Tactical archive entry 1732: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1733 | Tactical archive entry 1733: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1734 | Tactical archive entry 1734: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1735 | Tactical archive entry 1735: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1736 | Tactical archive entry 1736: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1737 | Tactical archive entry 1737: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1738 | Tactical archive entry 1738: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1739 | Tactical archive entry 1739: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1740 | Tactical archive entry 1740: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1741 | Tactical archive entry 1741: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1742 | Tactical archive entry 1742: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1743 | Tactical archive entry 1743: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1744 | Tactical archive entry 1744: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1745 | Tactical archive entry 1745: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1746 | Tactical archive entry 1746: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1747 | Tactical archive entry 1747: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1748 | Tactical archive entry 1748: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1749 | Tactical archive entry 1749: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1750 | Tactical archive entry 1750: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1751 | Tactical archive entry 1751: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1752 | Tactical archive entry 1752: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1753 | Tactical archive entry 1753: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1754 | Tactical archive entry 1754: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1755 | Tactical archive entry 1755: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1756 | Tactical archive entry 1756: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1757 | Tactical archive entry 1757: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1758 | Tactical archive entry 1758: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1759 | Tactical archive entry 1759: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1760 | Tactical archive entry 1760: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1761 | Tactical archive entry 1761: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1762 | Tactical archive entry 1762: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1763 | Tactical archive entry 1763: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1764 | Tactical archive entry 1764: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1765 | Tactical archive entry 1765: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1766 | Tactical archive entry 1766: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1767 | Tactical archive entry 1767: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1768 | Tactical archive entry 1768: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1769 | Tactical archive entry 1769: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1770 | Tactical archive entry 1770: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1771 | Tactical archive entry 1771: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1772 | Tactical archive entry 1772: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1773 | Tactical archive entry 1773: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1774 | Tactical archive entry 1774: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1775 | Tactical archive entry 1775: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1776 | Tactical archive entry 1776: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1777 | Tactical archive entry 1777: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1778 | Tactical archive entry 1778: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1779 | Tactical archive entry 1779: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1780 | Tactical archive entry 1780: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1781 | Tactical archive entry 1781: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1782 | Tactical archive entry 1782: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1783 | Tactical archive entry 1783: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1784 | Tactical archive entry 1784: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1785 | Tactical archive entry 1785: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1786 | Tactical archive entry 1786: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1787 | Tactical archive entry 1787: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1788 | Tactical archive entry 1788: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1789 | Tactical archive entry 1789: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1790 | Tactical archive entry 1790: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1791 | Tactical archive entry 1791: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1792 | Tactical archive entry 1792: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1793 | Tactical archive entry 1793: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1794 | Tactical archive entry 1794: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1795 | Tactical archive entry 1795: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1796 | Tactical archive entry 1796: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1797 | Tactical archive entry 1797: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1798 | Tactical archive entry 1798: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1799 | Tactical archive entry 1799: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1800 | Tactical archive entry 1800: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1801 | Tactical archive entry 1801: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1802 | Tactical archive entry 1802: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1803 | Tactical archive entry 1803: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1804 | Tactical archive entry 1804: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1805 | Tactical archive entry 1805: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1806 | Tactical archive entry 1806: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1807 | Tactical archive entry 1807: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1808 | Tactical archive entry 1808: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1809 | Tactical archive entry 1809: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1810 | Tactical archive entry 1810: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1811 | Tactical archive entry 1811: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1812 | Tactical archive entry 1812: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1813 | Tactical archive entry 1813: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1814 | Tactical archive entry 1814: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1815 | Tactical archive entry 1815: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1816 | Tactical archive entry 1816: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1817 | Tactical archive entry 1817: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1818 | Tactical archive entry 1818: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1819 | Tactical archive entry 1819: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1820 | Tactical archive entry 1820: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1821 | Tactical archive entry 1821: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1822 | Tactical archive entry 1822: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1823 | Tactical archive entry 1823: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1824 | Tactical archive entry 1824: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1825 | Tactical archive entry 1825: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1826 | Tactical archive entry 1826: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1827 | Tactical archive entry 1827: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1828 | Tactical archive entry 1828: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1829 | Tactical archive entry 1829: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1830 | Tactical archive entry 1830: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1831 | Tactical archive entry 1831: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1832 | Tactical archive entry 1832: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1833 | Tactical archive entry 1833: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1834 | Tactical archive entry 1834: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1835 | Tactical archive entry 1835: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1836 | Tactical archive entry 1836: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1837 | Tactical archive entry 1837: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1838 | Tactical archive entry 1838: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1839 | Tactical archive entry 1839: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1840 | Tactical archive entry 1840: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1841 | Tactical archive entry 1841: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1842 | Tactical archive entry 1842: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1843 | Tactical archive entry 1843: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1844 | Tactical archive entry 1844: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1845 | Tactical archive entry 1845: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1846 | Tactical archive entry 1846: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1847 | Tactical archive entry 1847: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1848 | Tactical archive entry 1848: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1849 | Tactical archive entry 1849: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1850 | Tactical archive entry 1850: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1851 | Tactical archive entry 1851: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1852 | Tactical archive entry 1852: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1853 | Tactical archive entry 1853: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1854 | Tactical archive entry 1854: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1855 | Tactical archive entry 1855: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1856 | Tactical archive entry 1856: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1857 | Tactical archive entry 1857: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1858 | Tactical archive entry 1858: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1859 | Tactical archive entry 1859: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1860 | Tactical archive entry 1860: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1861 | Tactical archive entry 1861: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1862 | Tactical archive entry 1862: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1863 | Tactical archive entry 1863: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1864 | Tactical archive entry 1864: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1865 | Tactical archive entry 1865: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1866 | Tactical archive entry 1866: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1867 | Tactical archive entry 1867: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1868 | Tactical archive entry 1868: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1869 | Tactical archive entry 1869: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1870 | Tactical archive entry 1870: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1871 | Tactical archive entry 1871: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1872 | Tactical archive entry 1872: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1873 | Tactical archive entry 1873: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1874 | Tactical archive entry 1874: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1875 | Tactical archive entry 1875: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1876 | Tactical archive entry 1876: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1877 | Tactical archive entry 1877: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1878 | Tactical archive entry 1878: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1879 | Tactical archive entry 1879: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1880 | Tactical archive entry 1880: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1881 | Tactical archive entry 1881: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1882 | Tactical archive entry 1882: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1883 | Tactical archive entry 1883: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1884 | Tactical archive entry 1884: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1885 | Tactical archive entry 1885: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1886 | Tactical archive entry 1886: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1887 | Tactical archive entry 1887: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1888 | Tactical archive entry 1888: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1889 | Tactical archive entry 1889: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1890 | Tactical archive entry 1890: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1891 | Tactical archive entry 1891: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1892 | Tactical archive entry 1892: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1893 | Tactical archive entry 1893: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1894 | Tactical archive entry 1894: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1895 | Tactical archive entry 1895: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1896 | Tactical archive entry 1896: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1897 | Tactical archive entry 1897: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1898 | Tactical archive entry 1898: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1899 | Tactical archive entry 1899: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1900 | Tactical archive entry 1900: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1901 | Tactical archive entry 1901: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1902 | Tactical archive entry 1902: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1903 | Tactical archive entry 1903: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1904 | Tactical archive entry 1904: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1905 | Tactical archive entry 1905: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1906 | Tactical archive entry 1906: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1907 | Tactical archive entry 1907: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1908 | Tactical archive entry 1908: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1909 | Tactical archive entry 1909: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1910 | Tactical archive entry 1910: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1911 | Tactical archive entry 1911: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1912 | Tactical archive entry 1912: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1913 | Tactical archive entry 1913: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1914 | Tactical archive entry 1914: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1915 | Tactical archive entry 1915: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1916 | Tactical archive entry 1916: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1917 | Tactical archive entry 1917: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1918 | Tactical archive entry 1918: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1919 | Tactical archive entry 1919: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1920 | Tactical archive entry 1920: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1921 | Tactical archive entry 1921: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1922 | Tactical archive entry 1922: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1923 | Tactical archive entry 1923: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1924 | Tactical archive entry 1924: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1925 | Tactical archive entry 1925: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1926 | Tactical archive entry 1926: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1927 | Tactical archive entry 1927: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1928 | Tactical archive entry 1928: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1929 | Tactical archive entry 1929: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1930 | Tactical archive entry 1930: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1931 | Tactical archive entry 1931: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1932 | Tactical archive entry 1932: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1933 | Tactical archive entry 1933: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1934 | Tactical archive entry 1934: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1935 | Tactical archive entry 1935: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1936 | Tactical archive entry 1936: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1937 | Tactical archive entry 1937: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1938 | Tactical archive entry 1938: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1939 | Tactical archive entry 1939: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1940 | Tactical archive entry 1940: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1941 | Tactical archive entry 1941: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1942 | Tactical archive entry 1942: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1943 | Tactical archive entry 1943: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1944 | Tactical archive entry 1944: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1945 | Tactical archive entry 1945: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1946 | Tactical archive entry 1946: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1947 | Tactical archive entry 1947: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1948 | Tactical archive entry 1948: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1949 | Tactical archive entry 1949: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1950 | Tactical archive entry 1950: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1951 | Tactical archive entry 1951: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1952 | Tactical archive entry 1952: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1953 | Tactical archive entry 1953: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1954 | Tactical archive entry 1954: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1955 | Tactical archive entry 1955: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1956 | Tactical archive entry 1956: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1957 | Tactical archive entry 1957: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1958 | Tactical archive entry 1958: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1959 | Tactical archive entry 1959: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1960 | Tactical archive entry 1960: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1961 | Tactical archive entry 1961: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1962 | Tactical archive entry 1962: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1963 | Tactical archive entry 1963: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1964 | Tactical archive entry 1964: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1965 | Tactical archive entry 1965: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1966 | Tactical archive entry 1966: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1967 | Tactical archive entry 1967: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1968 | Tactical archive entry 1968: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1969 | Tactical archive entry 1969: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1970 | Tactical archive entry 1970: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1971 | Tactical archive entry 1971: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1972 | Tactical archive entry 1972: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1973 | Tactical archive entry 1973: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1974 | Tactical archive entry 1974: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1975 | Tactical archive entry 1975: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1976 | Tactical archive entry 1976: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1977 | Tactical archive entry 1977: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1978 | Tactical archive entry 1978: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1979 | Tactical archive entry 1979: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1980 | Tactical archive entry 1980: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1981 | Tactical archive entry 1981: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1982 | Tactical archive entry 1982: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1983 | Tactical archive entry 1983: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1984 | Tactical archive entry 1984: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1985 | Tactical archive entry 1985: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1986 | Tactical archive entry 1986: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1987 | Tactical archive entry 1987: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1988 | Tactical archive entry 1988: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1989 | Tactical archive entry 1989: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1990 | Tactical archive entry 1990: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1991 | Tactical archive entry 1991: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1992 | Tactical archive entry 1992: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1993 | Tactical archive entry 1993: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1994 | Tactical archive entry 1994: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1995 | Tactical archive entry 1995: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1996 | Tactical archive entry 1996: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1997 | Tactical archive entry 1997: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1998 | Tactical archive entry 1998: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-1999 | Tactical archive entry 1999: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2000 | Tactical archive entry 2000: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2001 | Tactical archive entry 2001: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2002 | Tactical archive entry 2002: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2003 | Tactical archive entry 2003: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2004 | Tactical archive entry 2004: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2005 | Tactical archive entry 2005: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2006 | Tactical archive entry 2006: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2007 | Tactical archive entry 2007: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2008 | Tactical archive entry 2008: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2009 | Tactical archive entry 2009: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2010 | Tactical archive entry 2010: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2011 | Tactical archive entry 2011: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2012 | Tactical archive entry 2012: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2013 | Tactical archive entry 2013: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2014 | Tactical archive entry 2014: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2015 | Tactical archive entry 2015: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2016 | Tactical archive entry 2016: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2017 | Tactical archive entry 2017: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2018 | Tactical archive entry 2018: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2019 | Tactical archive entry 2019: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2020 | Tactical archive entry 2020: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2021 | Tactical archive entry 2021: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2022 | Tactical archive entry 2022: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2023 | Tactical archive entry 2023: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2024 | Tactical archive entry 2024: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2025 | Tactical archive entry 2025: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2026 | Tactical archive entry 2026: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2027 | Tactical archive entry 2027: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2028 | Tactical archive entry 2028: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2029 | Tactical archive entry 2029: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2030 | Tactical archive entry 2030: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2031 | Tactical archive entry 2031: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2032 | Tactical archive entry 2032: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2033 | Tactical archive entry 2033: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2034 | Tactical archive entry 2034: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2035 | Tactical archive entry 2035: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2036 | Tactical archive entry 2036: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2037 | Tactical archive entry 2037: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2038 | Tactical archive entry 2038: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2039 | Tactical archive entry 2039: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2040 | Tactical archive entry 2040: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2041 | Tactical archive entry 2041: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2042 | Tactical archive entry 2042: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2043 | Tactical archive entry 2043: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2044 | Tactical archive entry 2044: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2045 | Tactical archive entry 2045: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2046 | Tactical archive entry 2046: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2047 | Tactical archive entry 2047: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2048 | Tactical archive entry 2048: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2049 | Tactical archive entry 2049: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2050 | Tactical archive entry 2050: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2051 | Tactical archive entry 2051: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2052 | Tactical archive entry 2052: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2053 | Tactical archive entry 2053: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2054 | Tactical archive entry 2054: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2055 | Tactical archive entry 2055: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2056 | Tactical archive entry 2056: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2057 | Tactical archive entry 2057: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2058 | Tactical archive entry 2058: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2059 | Tactical archive entry 2059: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2060 | Tactical archive entry 2060: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2061 | Tactical archive entry 2061: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2062 | Tactical archive entry 2062: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2063 | Tactical archive entry 2063: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2064 | Tactical archive entry 2064: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2065 | Tactical archive entry 2065: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2066 | Tactical archive entry 2066: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2067 | Tactical archive entry 2067: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2068 | Tactical archive entry 2068: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2069 | Tactical archive entry 2069: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2070 | Tactical archive entry 2070: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2071 | Tactical archive entry 2071: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2072 | Tactical archive entry 2072: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2073 | Tactical archive entry 2073: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2074 | Tactical archive entry 2074: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2075 | Tactical archive entry 2075: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2076 | Tactical archive entry 2076: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2077 | Tactical archive entry 2077: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2078 | Tactical archive entry 2078: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2079 | Tactical archive entry 2079: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2080 | Tactical archive entry 2080: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2081 | Tactical archive entry 2081: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2082 | Tactical archive entry 2082: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2083 | Tactical archive entry 2083: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2084 | Tactical archive entry 2084: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2085 | Tactical archive entry 2085: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2086 | Tactical archive entry 2086: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2087 | Tactical archive entry 2087: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2088 | Tactical archive entry 2088: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2089 | Tactical archive entry 2089: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2090 | Tactical archive entry 2090: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2091 | Tactical archive entry 2091: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2092 | Tactical archive entry 2092: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2093 | Tactical archive entry 2093: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2094 | Tactical archive entry 2094: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2095 | Tactical archive entry 2095: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2096 | Tactical archive entry 2096: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2097 | Tactical archive entry 2097: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2098 | Tactical archive entry 2098: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2099 | Tactical archive entry 2099: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2100 | Tactical archive entry 2100: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2101 | Tactical archive entry 2101: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2102 | Tactical archive entry 2102: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2103 | Tactical archive entry 2103: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2104 | Tactical archive entry 2104: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2105 | Tactical archive entry 2105: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2106 | Tactical archive entry 2106: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2107 | Tactical archive entry 2107: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2108 | Tactical archive entry 2108: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2109 | Tactical archive entry 2109: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2110 | Tactical archive entry 2110: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2111 | Tactical archive entry 2111: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2112 | Tactical archive entry 2112: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2113 | Tactical archive entry 2113: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2114 | Tactical archive entry 2114: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2115 | Tactical archive entry 2115: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2116 | Tactical archive entry 2116: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2117 | Tactical archive entry 2117: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2118 | Tactical archive entry 2118: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2119 | Tactical archive entry 2119: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2120 | Tactical archive entry 2120: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2121 | Tactical archive entry 2121: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2122 | Tactical archive entry 2122: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2123 | Tactical archive entry 2123: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2124 | Tactical archive entry 2124: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2125 | Tactical archive entry 2125: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2126 | Tactical archive entry 2126: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2127 | Tactical archive entry 2127: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2128 | Tactical archive entry 2128: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2129 | Tactical archive entry 2129: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2130 | Tactical archive entry 2130: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2131 | Tactical archive entry 2131: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2132 | Tactical archive entry 2132: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2133 | Tactical archive entry 2133: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2134 | Tactical archive entry 2134: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2135 | Tactical archive entry 2135: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2136 | Tactical archive entry 2136: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2137 | Tactical archive entry 2137: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2138 | Tactical archive entry 2138: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2139 | Tactical archive entry 2139: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2140 | Tactical archive entry 2140: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2141 | Tactical archive entry 2141: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2142 | Tactical archive entry 2142: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2143 | Tactical archive entry 2143: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2144 | Tactical archive entry 2144: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2145 | Tactical archive entry 2145: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2146 | Tactical archive entry 2146: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2147 | Tactical archive entry 2147: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2148 | Tactical archive entry 2148: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2149 | Tactical archive entry 2149: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2150 | Tactical archive entry 2150: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2151 | Tactical archive entry 2151: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2152 | Tactical archive entry 2152: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2153 | Tactical archive entry 2153: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2154 | Tactical archive entry 2154: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2155 | Tactical archive entry 2155: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2156 | Tactical archive entry 2156: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2157 | Tactical archive entry 2157: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2158 | Tactical archive entry 2158: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2159 | Tactical archive entry 2159: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2160 | Tactical archive entry 2160: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2161 | Tactical archive entry 2161: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2162 | Tactical archive entry 2162: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2163 | Tactical archive entry 2163: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2164 | Tactical archive entry 2164: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2165 | Tactical archive entry 2165: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2166 | Tactical archive entry 2166: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2167 | Tactical archive entry 2167: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2168 | Tactical archive entry 2168: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2169 | Tactical archive entry 2169: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2170 | Tactical archive entry 2170: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2171 | Tactical archive entry 2171: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2172 | Tactical archive entry 2172: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2173 | Tactical archive entry 2173: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2174 | Tactical archive entry 2174: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2175 | Tactical archive entry 2175: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2176 | Tactical archive entry 2176: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2177 | Tactical archive entry 2177: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2178 | Tactical archive entry 2178: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2179 | Tactical archive entry 2179: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2180 | Tactical archive entry 2180: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2181 | Tactical archive entry 2181: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2182 | Tactical archive entry 2182: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2183 | Tactical archive entry 2183: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2184 | Tactical archive entry 2184: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2185 | Tactical archive entry 2185: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2186 | Tactical archive entry 2186: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2187 | Tactical archive entry 2187: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2188 | Tactical archive entry 2188: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2189 | Tactical archive entry 2189: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2190 | Tactical archive entry 2190: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2191 | Tactical archive entry 2191: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2192 | Tactical archive entry 2192: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2193 | Tactical archive entry 2193: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2194 | Tactical archive entry 2194: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2195 | Tactical archive entry 2195: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2196 | Tactical archive entry 2196: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2197 | Tactical archive entry 2197: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2198 | Tactical archive entry 2198: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2199 | Tactical archive entry 2199: lane pressure, threat timing, and response doctrine profile.',
-  'MEGA-2200 | Tactical archive entry 2200: lane pressure, threat timing, and response doctrine profile.',
-];
-
-const MEGA_CHALLENGE_PRESETS_V2 = [
-  { id: 'mega-challenge-0001', title: 'Mega Challenge 0001', stars: 2, description: 'Escalated encounter stack profile 0001 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+7%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0002', title: 'Mega Challenge 0002', stars: 3, description: 'Escalated encounter stack profile 0002 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+8%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0003', title: 'Mega Challenge 0003', stars: 4, description: 'Escalated encounter stack profile 0003 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+9%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0004', title: 'Mega Challenge 0004', stars: 5, description: 'Escalated encounter stack profile 0004 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+10%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0005', title: 'Mega Challenge 0005', stars: 1, description: 'Escalated encounter stack profile 0005 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+11%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0006', title: 'Mega Challenge 0006', stars: 2, description: 'Escalated encounter stack profile 0006 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+12%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0007', title: 'Mega Challenge 0007', stars: 3, description: 'Escalated encounter stack profile 0007 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+13%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0008', title: 'Mega Challenge 0008', stars: 4, description: 'Escalated encounter stack profile 0008 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+14%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0009', title: 'Mega Challenge 0009', stars: 5, description: 'Escalated encounter stack profile 0009 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+15%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0010', title: 'Mega Challenge 0010', stars: 1, description: 'Escalated encounter stack profile 0010 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+16%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0011', title: 'Mega Challenge 0011', stars: 2, description: 'Escalated encounter stack profile 0011 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+17%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0012', title: 'Mega Challenge 0012', stars: 3, description: 'Escalated encounter stack profile 0012 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+18%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0013', title: 'Mega Challenge 0013', stars: 4, description: 'Escalated encounter stack profile 0013 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+19%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0014', title: 'Mega Challenge 0014', stars: 5, description: 'Escalated encounter stack profile 0014 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+20%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0015', title: 'Mega Challenge 0015', stars: 1, description: 'Escalated encounter stack profile 0015 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+21%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0016', title: 'Mega Challenge 0016', stars: 2, description: 'Escalated encounter stack profile 0016 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+22%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0017', title: 'Mega Challenge 0017', stars: 3, description: 'Escalated encounter stack profile 0017 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+23%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0018', title: 'Mega Challenge 0018', stars: 4, description: 'Escalated encounter stack profile 0018 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+24%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0019', title: 'Mega Challenge 0019', stars: 5, description: 'Escalated encounter stack profile 0019 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+25%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0020', title: 'Mega Challenge 0020', stars: 1, description: 'Escalated encounter stack profile 0020 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+26%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0021', title: 'Mega Challenge 0021', stars: 2, description: 'Escalated encounter stack profile 0021 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+27%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0022', title: 'Mega Challenge 0022', stars: 3, description: 'Escalated encounter stack profile 0022 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+28%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0023', title: 'Mega Challenge 0023', stars: 4, description: 'Escalated encounter stack profile 0023 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+29%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0024', title: 'Mega Challenge 0024', stars: 5, description: 'Escalated encounter stack profile 0024 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+30%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0025', title: 'Mega Challenge 0025', stars: 1, description: 'Escalated encounter stack profile 0025 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+31%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0026', title: 'Mega Challenge 0026', stars: 2, description: 'Escalated encounter stack profile 0026 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+32%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0027', title: 'Mega Challenge 0027', stars: 3, description: 'Escalated encounter stack profile 0027 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+33%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0028', title: 'Mega Challenge 0028', stars: 4, description: 'Escalated encounter stack profile 0028 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+34%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0029', title: 'Mega Challenge 0029', stars: 5, description: 'Escalated encounter stack profile 0029 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+35%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0030', title: 'Mega Challenge 0030', stars: 1, description: 'Escalated encounter stack profile 0030 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+6%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0031', title: 'Mega Challenge 0031', stars: 2, description: 'Escalated encounter stack profile 0031 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+7%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0032', title: 'Mega Challenge 0032', stars: 3, description: 'Escalated encounter stack profile 0032 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+8%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0033', title: 'Mega Challenge 0033', stars: 4, description: 'Escalated encounter stack profile 0033 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+9%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0034', title: 'Mega Challenge 0034', stars: 5, description: 'Escalated encounter stack profile 0034 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+10%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0035', title: 'Mega Challenge 0035', stars: 1, description: 'Escalated encounter stack profile 0035 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+11%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0036', title: 'Mega Challenge 0036', stars: 2, description: 'Escalated encounter stack profile 0036 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+12%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0037', title: 'Mega Challenge 0037', stars: 3, description: 'Escalated encounter stack profile 0037 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+13%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0038', title: 'Mega Challenge 0038', stars: 4, description: 'Escalated encounter stack profile 0038 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+14%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0039', title: 'Mega Challenge 0039', stars: 5, description: 'Escalated encounter stack profile 0039 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+15%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0040', title: 'Mega Challenge 0040', stars: 1, description: 'Escalated encounter stack profile 0040 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+16%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0041', title: 'Mega Challenge 0041', stars: 2, description: 'Escalated encounter stack profile 0041 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+17%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0042', title: 'Mega Challenge 0042', stars: 3, description: 'Escalated encounter stack profile 0042 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+18%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0043', title: 'Mega Challenge 0043', stars: 4, description: 'Escalated encounter stack profile 0043 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+19%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0044', title: 'Mega Challenge 0044', stars: 5, description: 'Escalated encounter stack profile 0044 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+20%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0045', title: 'Mega Challenge 0045', stars: 1, description: 'Escalated encounter stack profile 0045 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+21%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0046', title: 'Mega Challenge 0046', stars: 2, description: 'Escalated encounter stack profile 0046 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+22%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0047', title: 'Mega Challenge 0047', stars: 3, description: 'Escalated encounter stack profile 0047 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+23%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0048', title: 'Mega Challenge 0048', stars: 4, description: 'Escalated encounter stack profile 0048 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+24%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0049', title: 'Mega Challenge 0049', stars: 5, description: 'Escalated encounter stack profile 0049 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+25%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0050', title: 'Mega Challenge 0050', stars: 1, description: 'Escalated encounter stack profile 0050 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+26%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0051', title: 'Mega Challenge 0051', stars: 2, description: 'Escalated encounter stack profile 0051 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+27%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0052', title: 'Mega Challenge 0052', stars: 3, description: 'Escalated encounter stack profile 0052 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+28%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0053', title: 'Mega Challenge 0053', stars: 4, description: 'Escalated encounter stack profile 0053 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+29%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0054', title: 'Mega Challenge 0054', stars: 5, description: 'Escalated encounter stack profile 0054 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+30%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0055', title: 'Mega Challenge 0055', stars: 1, description: 'Escalated encounter stack profile 0055 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+31%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0056', title: 'Mega Challenge 0056', stars: 2, description: 'Escalated encounter stack profile 0056 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+32%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0057', title: 'Mega Challenge 0057', stars: 3, description: 'Escalated encounter stack profile 0057 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+33%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0058', title: 'Mega Challenge 0058', stars: 4, description: 'Escalated encounter stack profile 0058 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+34%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0059', title: 'Mega Challenge 0059', stars: 5, description: 'Escalated encounter stack profile 0059 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+35%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0060', title: 'Mega Challenge 0060', stars: 1, description: 'Escalated encounter stack profile 0060 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+6%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0061', title: 'Mega Challenge 0061', stars: 2, description: 'Escalated encounter stack profile 0061 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+7%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0062', title: 'Mega Challenge 0062', stars: 3, description: 'Escalated encounter stack profile 0062 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+8%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0063', title: 'Mega Challenge 0063', stars: 4, description: 'Escalated encounter stack profile 0063 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+9%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0064', title: 'Mega Challenge 0064', stars: 5, description: 'Escalated encounter stack profile 0064 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+10%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0065', title: 'Mega Challenge 0065', stars: 1, description: 'Escalated encounter stack profile 0065 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+11%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0066', title: 'Mega Challenge 0066', stars: 2, description: 'Escalated encounter stack profile 0066 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+12%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0067', title: 'Mega Challenge 0067', stars: 3, description: 'Escalated encounter stack profile 0067 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+13%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0068', title: 'Mega Challenge 0068', stars: 4, description: 'Escalated encounter stack profile 0068 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+14%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0069', title: 'Mega Challenge 0069', stars: 5, description: 'Escalated encounter stack profile 0069 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+15%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0070', title: 'Mega Challenge 0070', stars: 1, description: 'Escalated encounter stack profile 0070 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+16%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0071', title: 'Mega Challenge 0071', stars: 2, description: 'Escalated encounter stack profile 0071 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+17%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0072', title: 'Mega Challenge 0072', stars: 3, description: 'Escalated encounter stack profile 0072 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+18%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0073', title: 'Mega Challenge 0073', stars: 4, description: 'Escalated encounter stack profile 0073 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+19%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0074', title: 'Mega Challenge 0074', stars: 5, description: 'Escalated encounter stack profile 0074 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+20%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0075', title: 'Mega Challenge 0075', stars: 1, description: 'Escalated encounter stack profile 0075 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+21%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0076', title: 'Mega Challenge 0076', stars: 2, description: 'Escalated encounter stack profile 0076 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+22%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0077', title: 'Mega Challenge 0077', stars: 3, description: 'Escalated encounter stack profile 0077 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+23%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0078', title: 'Mega Challenge 0078', stars: 4, description: 'Escalated encounter stack profile 0078 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+24%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0079', title: 'Mega Challenge 0079', stars: 5, description: 'Escalated encounter stack profile 0079 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+25%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0080', title: 'Mega Challenge 0080', stars: 1, description: 'Escalated encounter stack profile 0080 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+26%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0081', title: 'Mega Challenge 0081', stars: 2, description: 'Escalated encounter stack profile 0081 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+27%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0082', title: 'Mega Challenge 0082', stars: 3, description: 'Escalated encounter stack profile 0082 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+28%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0083', title: 'Mega Challenge 0083', stars: 4, description: 'Escalated encounter stack profile 0083 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+29%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0084', title: 'Mega Challenge 0084', stars: 5, description: 'Escalated encounter stack profile 0084 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+30%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0085', title: 'Mega Challenge 0085', stars: 1, description: 'Escalated encounter stack profile 0085 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+31%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0086', title: 'Mega Challenge 0086', stars: 2, description: 'Escalated encounter stack profile 0086 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+32%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0087', title: 'Mega Challenge 0087', stars: 3, description: 'Escalated encounter stack profile 0087 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+33%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0088', title: 'Mega Challenge 0088', stars: 4, description: 'Escalated encounter stack profile 0088 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+34%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0089', title: 'Mega Challenge 0089', stars: 5, description: 'Escalated encounter stack profile 0089 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+35%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0090', title: 'Mega Challenge 0090', stars: 1, description: 'Escalated encounter stack profile 0090 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+6%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0091', title: 'Mega Challenge 0091', stars: 2, description: 'Escalated encounter stack profile 0091 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+7%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0092', title: 'Mega Challenge 0092', stars: 3, description: 'Escalated encounter stack profile 0092 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+8%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0093', title: 'Mega Challenge 0093', stars: 4, description: 'Escalated encounter stack profile 0093 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+9%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0094', title: 'Mega Challenge 0094', stars: 5, description: 'Escalated encounter stack profile 0094 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+10%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0095', title: 'Mega Challenge 0095', stars: 1, description: 'Escalated encounter stack profile 0095 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+11%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0096', title: 'Mega Challenge 0096', stars: 2, description: 'Escalated encounter stack profile 0096 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+12%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0097', title: 'Mega Challenge 0097', stars: 3, description: 'Escalated encounter stack profile 0097 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+13%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0098', title: 'Mega Challenge 0098', stars: 4, description: 'Escalated encounter stack profile 0098 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+14%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0099', title: 'Mega Challenge 0099', stars: 5, description: 'Escalated encounter stack profile 0099 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+15%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0100', title: 'Mega Challenge 0100', stars: 1, description: 'Escalated encounter stack profile 0100 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+16%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0101', title: 'Mega Challenge 0101', stars: 2, description: 'Escalated encounter stack profile 0101 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+17%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0102', title: 'Mega Challenge 0102', stars: 3, description: 'Escalated encounter stack profile 0102 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+18%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0103', title: 'Mega Challenge 0103', stars: 4, description: 'Escalated encounter stack profile 0103 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+19%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0104', title: 'Mega Challenge 0104', stars: 5, description: 'Escalated encounter stack profile 0104 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+20%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0105', title: 'Mega Challenge 0105', stars: 1, description: 'Escalated encounter stack profile 0105 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+21%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0106', title: 'Mega Challenge 0106', stars: 2, description: 'Escalated encounter stack profile 0106 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+22%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0107', title: 'Mega Challenge 0107', stars: 3, description: 'Escalated encounter stack profile 0107 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+23%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0108', title: 'Mega Challenge 0108', stars: 4, description: 'Escalated encounter stack profile 0108 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+24%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0109', title: 'Mega Challenge 0109', stars: 5, description: 'Escalated encounter stack profile 0109 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+25%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0110', title: 'Mega Challenge 0110', stars: 1, description: 'Escalated encounter stack profile 0110 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+26%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0111', title: 'Mega Challenge 0111', stars: 2, description: 'Escalated encounter stack profile 0111 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+27%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0112', title: 'Mega Challenge 0112', stars: 3, description: 'Escalated encounter stack profile 0112 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+28%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0113', title: 'Mega Challenge 0113', stars: 4, description: 'Escalated encounter stack profile 0113 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+29%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0114', title: 'Mega Challenge 0114', stars: 5, description: 'Escalated encounter stack profile 0114 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+30%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0115', title: 'Mega Challenge 0115', stars: 1, description: 'Escalated encounter stack profile 0115 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+31%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0116', title: 'Mega Challenge 0116', stars: 2, description: 'Escalated encounter stack profile 0116 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+32%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0117', title: 'Mega Challenge 0117', stars: 3, description: 'Escalated encounter stack profile 0117 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+33%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0118', title: 'Mega Challenge 0118', stars: 4, description: 'Escalated encounter stack profile 0118 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+34%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0119', title: 'Mega Challenge 0119', stars: 5, description: 'Escalated encounter stack profile 0119 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+35%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0120', title: 'Mega Challenge 0120', stars: 1, description: 'Escalated encounter stack profile 0120 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+6%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0121', title: 'Mega Challenge 0121', stars: 2, description: 'Escalated encounter stack profile 0121 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+7%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0122', title: 'Mega Challenge 0122', stars: 3, description: 'Escalated encounter stack profile 0122 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+8%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0123', title: 'Mega Challenge 0123', stars: 4, description: 'Escalated encounter stack profile 0123 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+9%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0124', title: 'Mega Challenge 0124', stars: 5, description: 'Escalated encounter stack profile 0124 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+10%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0125', title: 'Mega Challenge 0125', stars: 1, description: 'Escalated encounter stack profile 0125 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+11%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0126', title: 'Mega Challenge 0126', stars: 2, description: 'Escalated encounter stack profile 0126 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+12%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0127', title: 'Mega Challenge 0127', stars: 3, description: 'Escalated encounter stack profile 0127 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+13%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0128', title: 'Mega Challenge 0128', stars: 4, description: 'Escalated encounter stack profile 0128 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+14%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0129', title: 'Mega Challenge 0129', stars: 5, description: 'Escalated encounter stack profile 0129 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+15%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0130', title: 'Mega Challenge 0130', stars: 1, description: 'Escalated encounter stack profile 0130 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+16%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0131', title: 'Mega Challenge 0131', stars: 2, description: 'Escalated encounter stack profile 0131 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+17%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0132', title: 'Mega Challenge 0132', stars: 3, description: 'Escalated encounter stack profile 0132 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+18%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0133', title: 'Mega Challenge 0133', stars: 4, description: 'Escalated encounter stack profile 0133 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+19%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0134', title: 'Mega Challenge 0134', stars: 5, description: 'Escalated encounter stack profile 0134 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+20%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0135', title: 'Mega Challenge 0135', stars: 1, description: 'Escalated encounter stack profile 0135 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+21%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0136', title: 'Mega Challenge 0136', stars: 2, description: 'Escalated encounter stack profile 0136 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+22%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0137', title: 'Mega Challenge 0137', stars: 3, description: 'Escalated encounter stack profile 0137 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+23%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0138', title: 'Mega Challenge 0138', stars: 4, description: 'Escalated encounter stack profile 0138 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+24%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0139', title: 'Mega Challenge 0139', stars: 5, description: 'Escalated encounter stack profile 0139 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+25%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0140', title: 'Mega Challenge 0140', stars: 1, description: 'Escalated encounter stack profile 0140 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+26%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0141', title: 'Mega Challenge 0141', stars: 2, description: 'Escalated encounter stack profile 0141 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+27%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0142', title: 'Mega Challenge 0142', stars: 3, description: 'Escalated encounter stack profile 0142 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+28%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0143', title: 'Mega Challenge 0143', stars: 4, description: 'Escalated encounter stack profile 0143 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+29%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0144', title: 'Mega Challenge 0144', stars: 5, description: 'Escalated encounter stack profile 0144 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+30%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0145', title: 'Mega Challenge 0145', stars: 1, description: 'Escalated encounter stack profile 0145 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+31%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0146', title: 'Mega Challenge 0146', stars: 2, description: 'Escalated encounter stack profile 0146 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+32%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0147', title: 'Mega Challenge 0147', stars: 3, description: 'Escalated encounter stack profile 0147 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+33%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0148', title: 'Mega Challenge 0148', stars: 4, description: 'Escalated encounter stack profile 0148 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+34%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0149', title: 'Mega Challenge 0149', stars: 5, description: 'Escalated encounter stack profile 0149 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+35%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0150', title: 'Mega Challenge 0150', stars: 1, description: 'Escalated encounter stack profile 0150 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+6%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0151', title: 'Mega Challenge 0151', stars: 2, description: 'Escalated encounter stack profile 0151 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+7%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0152', title: 'Mega Challenge 0152', stars: 3, description: 'Escalated encounter stack profile 0152 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+8%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0153', title: 'Mega Challenge 0153', stars: 4, description: 'Escalated encounter stack profile 0153 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+9%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0154', title: 'Mega Challenge 0154', stars: 5, description: 'Escalated encounter stack profile 0154 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+10%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0155', title: 'Mega Challenge 0155', stars: 1, description: 'Escalated encounter stack profile 0155 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+11%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0156', title: 'Mega Challenge 0156', stars: 2, description: 'Escalated encounter stack profile 0156 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+12%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0157', title: 'Mega Challenge 0157', stars: 3, description: 'Escalated encounter stack profile 0157 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+13%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0158', title: 'Mega Challenge 0158', stars: 4, description: 'Escalated encounter stack profile 0158 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+14%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0159', title: 'Mega Challenge 0159', stars: 5, description: 'Escalated encounter stack profile 0159 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+15%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0160', title: 'Mega Challenge 0160', stars: 1, description: 'Escalated encounter stack profile 0160 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+16%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0161', title: 'Mega Challenge 0161', stars: 2, description: 'Escalated encounter stack profile 0161 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+17%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0162', title: 'Mega Challenge 0162', stars: 3, description: 'Escalated encounter stack profile 0162 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+18%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0163', title: 'Mega Challenge 0163', stars: 4, description: 'Escalated encounter stack profile 0163 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+19%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0164', title: 'Mega Challenge 0164', stars: 5, description: 'Escalated encounter stack profile 0164 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+20%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0165', title: 'Mega Challenge 0165', stars: 1, description: 'Escalated encounter stack profile 0165 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+21%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0166', title: 'Mega Challenge 0166', stars: 2, description: 'Escalated encounter stack profile 0166 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+22%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0167', title: 'Mega Challenge 0167', stars: 3, description: 'Escalated encounter stack profile 0167 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+23%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0168', title: 'Mega Challenge 0168', stars: 4, description: 'Escalated encounter stack profile 0168 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+24%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0169', title: 'Mega Challenge 0169', stars: 5, description: 'Escalated encounter stack profile 0169 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+25%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0170', title: 'Mega Challenge 0170', stars: 1, description: 'Escalated encounter stack profile 0170 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+26%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0171', title: 'Mega Challenge 0171', stars: 2, description: 'Escalated encounter stack profile 0171 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+27%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0172', title: 'Mega Challenge 0172', stars: 3, description: 'Escalated encounter stack profile 0172 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+28%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0173', title: 'Mega Challenge 0173', stars: 4, description: 'Escalated encounter stack profile 0173 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+29%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0174', title: 'Mega Challenge 0174', stars: 5, description: 'Escalated encounter stack profile 0174 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+30%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0175', title: 'Mega Challenge 0175', stars: 1, description: 'Escalated encounter stack profile 0175 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+31%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0176', title: 'Mega Challenge 0176', stars: 2, description: 'Escalated encounter stack profile 0176 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+32%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0177', title: 'Mega Challenge 0177', stars: 3, description: 'Escalated encounter stack profile 0177 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+33%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0178', title: 'Mega Challenge 0178', stars: 4, description: 'Escalated encounter stack profile 0178 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+34%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0179', title: 'Mega Challenge 0179', stars: 5, description: 'Escalated encounter stack profile 0179 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+35%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0180', title: 'Mega Challenge 0180', stars: 1, description: 'Escalated encounter stack profile 0180 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+6%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0181', title: 'Mega Challenge 0181', stars: 2, description: 'Escalated encounter stack profile 0181 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+7%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0182', title: 'Mega Challenge 0182', stars: 3, description: 'Escalated encounter stack profile 0182 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+8%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0183', title: 'Mega Challenge 0183', stars: 4, description: 'Escalated encounter stack profile 0183 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+9%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0184', title: 'Mega Challenge 0184', stars: 5, description: 'Escalated encounter stack profile 0184 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+10%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0185', title: 'Mega Challenge 0185', stars: 1, description: 'Escalated encounter stack profile 0185 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+11%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0186', title: 'Mega Challenge 0186', stars: 2, description: 'Escalated encounter stack profile 0186 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+12%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0187', title: 'Mega Challenge 0187', stars: 3, description: 'Escalated encounter stack profile 0187 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+13%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0188', title: 'Mega Challenge 0188', stars: 4, description: 'Escalated encounter stack profile 0188 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+14%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0189', title: 'Mega Challenge 0189', stars: 5, description: 'Escalated encounter stack profile 0189 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+15%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0190', title: 'Mega Challenge 0190', stars: 1, description: 'Escalated encounter stack profile 0190 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+16%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0191', title: 'Mega Challenge 0191', stars: 2, description: 'Escalated encounter stack profile 0191 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+17%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0192', title: 'Mega Challenge 0192', stars: 3, description: 'Escalated encounter stack profile 0192 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+18%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0193', title: 'Mega Challenge 0193', stars: 4, description: 'Escalated encounter stack profile 0193 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+19%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0194', title: 'Mega Challenge 0194', stars: 5, description: 'Escalated encounter stack profile 0194 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+20%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0195', title: 'Mega Challenge 0195', stars: 1, description: 'Escalated encounter stack profile 0195 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+21%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0196', title: 'Mega Challenge 0196', stars: 2, description: 'Escalated encounter stack profile 0196 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+22%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0197', title: 'Mega Challenge 0197', stars: 3, description: 'Escalated encounter stack profile 0197 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+23%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0198', title: 'Mega Challenge 0198', stars: 4, description: 'Escalated encounter stack profile 0198 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+24%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0199', title: 'Mega Challenge 0199', stars: 5, description: 'Escalated encounter stack profile 0199 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+25%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0200', title: 'Mega Challenge 0200', stars: 1, description: 'Escalated encounter stack profile 0200 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+26%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0201', title: 'Mega Challenge 0201', stars: 2, description: 'Escalated encounter stack profile 0201 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+27%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0202', title: 'Mega Challenge 0202', stars: 3, description: 'Escalated encounter stack profile 0202 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+28%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0203', title: 'Mega Challenge 0203', stars: 4, description: 'Escalated encounter stack profile 0203 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+29%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0204', title: 'Mega Challenge 0204', stars: 5, description: 'Escalated encounter stack profile 0204 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+30%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0205', title: 'Mega Challenge 0205', stars: 1, description: 'Escalated encounter stack profile 0205 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+31%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0206', title: 'Mega Challenge 0206', stars: 2, description: 'Escalated encounter stack profile 0206 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+32%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0207', title: 'Mega Challenge 0207', stars: 3, description: 'Escalated encounter stack profile 0207 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+33%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0208', title: 'Mega Challenge 0208', stars: 4, description: 'Escalated encounter stack profile 0208 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+34%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0209', title: 'Mega Challenge 0209', stars: 5, description: 'Escalated encounter stack profile 0209 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+35%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0210', title: 'Mega Challenge 0210', stars: 1, description: 'Escalated encounter stack profile 0210 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+6%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0211', title: 'Mega Challenge 0211', stars: 2, description: 'Escalated encounter stack profile 0211 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+7%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0212', title: 'Mega Challenge 0212', stars: 3, description: 'Escalated encounter stack profile 0212 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+8%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0213', title: 'Mega Challenge 0213', stars: 4, description: 'Escalated encounter stack profile 0213 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+9%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0214', title: 'Mega Challenge 0214', stars: 5, description: 'Escalated encounter stack profile 0214 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+10%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0215', title: 'Mega Challenge 0215', stars: 1, description: 'Escalated encounter stack profile 0215 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+11%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0216', title: 'Mega Challenge 0216', stars: 2, description: 'Escalated encounter stack profile 0216 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+12%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0217', title: 'Mega Challenge 0217', stars: 3, description: 'Escalated encounter stack profile 0217 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+13%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0218', title: 'Mega Challenge 0218', stars: 4, description: 'Escalated encounter stack profile 0218 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+14%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0219', title: 'Mega Challenge 0219', stars: 5, description: 'Escalated encounter stack profile 0219 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+15%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0220', title: 'Mega Challenge 0220', stars: 1, description: 'Escalated encounter stack profile 0220 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+16%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0221', title: 'Mega Challenge 0221', stars: 2, description: 'Escalated encounter stack profile 0221 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+17%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0222', title: 'Mega Challenge 0222', stars: 3, description: 'Escalated encounter stack profile 0222 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+18%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0223', title: 'Mega Challenge 0223', stars: 4, description: 'Escalated encounter stack profile 0223 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+19%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0224', title: 'Mega Challenge 0224', stars: 5, description: 'Escalated encounter stack profile 0224 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+20%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0225', title: 'Mega Challenge 0225', stars: 1, description: 'Escalated encounter stack profile 0225 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+21%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0226', title: 'Mega Challenge 0226', stars: 2, description: 'Escalated encounter stack profile 0226 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+22%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0227', title: 'Mega Challenge 0227', stars: 3, description: 'Escalated encounter stack profile 0227 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+23%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0228', title: 'Mega Challenge 0228', stars: 4, description: 'Escalated encounter stack profile 0228 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+24%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0229', title: 'Mega Challenge 0229', stars: 5, description: 'Escalated encounter stack profile 0229 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+25%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0230', title: 'Mega Challenge 0230', stars: 1, description: 'Escalated encounter stack profile 0230 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+26%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0231', title: 'Mega Challenge 0231', stars: 2, description: 'Escalated encounter stack profile 0231 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+27%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0232', title: 'Mega Challenge 0232', stars: 3, description: 'Escalated encounter stack profile 0232 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+28%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0233', title: 'Mega Challenge 0233', stars: 4, description: 'Escalated encounter stack profile 0233 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+29%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0234', title: 'Mega Challenge 0234', stars: 5, description: 'Escalated encounter stack profile 0234 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+30%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0235', title: 'Mega Challenge 0235', stars: 1, description: 'Escalated encounter stack profile 0235 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+31%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0236', title: 'Mega Challenge 0236', stars: 2, description: 'Escalated encounter stack profile 0236 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+32%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0237', title: 'Mega Challenge 0237', stars: 3, description: 'Escalated encounter stack profile 0237 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+33%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0238', title: 'Mega Challenge 0238', stars: 4, description: 'Escalated encounter stack profile 0238 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+34%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0239', title: 'Mega Challenge 0239', stars: 5, description: 'Escalated encounter stack profile 0239 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+35%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0240', title: 'Mega Challenge 0240', stars: 1, description: 'Escalated encounter stack profile 0240 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+6%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0241', title: 'Mega Challenge 0241', stars: 2, description: 'Escalated encounter stack profile 0241 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+7%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0242', title: 'Mega Challenge 0242', stars: 3, description: 'Escalated encounter stack profile 0242 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+8%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0243', title: 'Mega Challenge 0243', stars: 4, description: 'Escalated encounter stack profile 0243 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+9%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0244', title: 'Mega Challenge 0244', stars: 5, description: 'Escalated encounter stack profile 0244 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+10%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0245', title: 'Mega Challenge 0245', stars: 1, description: 'Escalated encounter stack profile 0245 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+11%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0246', title: 'Mega Challenge 0246', stars: 2, description: 'Escalated encounter stack profile 0246 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+12%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0247', title: 'Mega Challenge 0247', stars: 3, description: 'Escalated encounter stack profile 0247 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+13%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0248', title: 'Mega Challenge 0248', stars: 4, description: 'Escalated encounter stack profile 0248 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+14%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0249', title: 'Mega Challenge 0249', stars: 5, description: 'Escalated encounter stack profile 0249 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+15%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0250', title: 'Mega Challenge 0250', stars: 1, description: 'Escalated encounter stack profile 0250 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+16%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0251', title: 'Mega Challenge 0251', stars: 2, description: 'Escalated encounter stack profile 0251 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+17%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0252', title: 'Mega Challenge 0252', stars: 3, description: 'Escalated encounter stack profile 0252 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+18%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0253', title: 'Mega Challenge 0253', stars: 4, description: 'Escalated encounter stack profile 0253 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+19%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0254', title: 'Mega Challenge 0254', stars: 5, description: 'Escalated encounter stack profile 0254 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+20%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0255', title: 'Mega Challenge 0255', stars: 1, description: 'Escalated encounter stack profile 0255 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+21%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0256', title: 'Mega Challenge 0256', stars: 2, description: 'Escalated encounter stack profile 0256 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+22%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0257', title: 'Mega Challenge 0257', stars: 3, description: 'Escalated encounter stack profile 0257 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+23%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0258', title: 'Mega Challenge 0258', stars: 4, description: 'Escalated encounter stack profile 0258 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+24%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0259', title: 'Mega Challenge 0259', stars: 5, description: 'Escalated encounter stack profile 0259 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+25%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0260', title: 'Mega Challenge 0260', stars: 1, description: 'Escalated encounter stack profile 0260 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+26%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0261', title: 'Mega Challenge 0261', stars: 2, description: 'Escalated encounter stack profile 0261 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+27%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0262', title: 'Mega Challenge 0262', stars: 3, description: 'Escalated encounter stack profile 0262 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+28%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0263', title: 'Mega Challenge 0263', stars: 4, description: 'Escalated encounter stack profile 0263 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+29%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0264', title: 'Mega Challenge 0264', stars: 5, description: 'Escalated encounter stack profile 0264 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+30%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0265', title: 'Mega Challenge 0265', stars: 1, description: 'Escalated encounter stack profile 0265 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+31%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0266', title: 'Mega Challenge 0266', stars: 2, description: 'Escalated encounter stack profile 0266 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+32%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0267', title: 'Mega Challenge 0267', stars: 3, description: 'Escalated encounter stack profile 0267 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+33%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0268', title: 'Mega Challenge 0268', stars: 4, description: 'Escalated encounter stack profile 0268 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+34%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0269', title: 'Mega Challenge 0269', stars: 5, description: 'Escalated encounter stack profile 0269 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+35%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0270', title: 'Mega Challenge 0270', stars: 1, description: 'Escalated encounter stack profile 0270 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+6%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0271', title: 'Mega Challenge 0271', stars: 2, description: 'Escalated encounter stack profile 0271 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+7%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0272', title: 'Mega Challenge 0272', stars: 3, description: 'Escalated encounter stack profile 0272 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+8%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0273', title: 'Mega Challenge 0273', stars: 4, description: 'Escalated encounter stack profile 0273 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+9%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0274', title: 'Mega Challenge 0274', stars: 5, description: 'Escalated encounter stack profile 0274 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+10%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0275', title: 'Mega Challenge 0275', stars: 1, description: 'Escalated encounter stack profile 0275 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+11%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0276', title: 'Mega Challenge 0276', stars: 2, description: 'Escalated encounter stack profile 0276 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+12%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0277', title: 'Mega Challenge 0277', stars: 3, description: 'Escalated encounter stack profile 0277 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+13%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0278', title: 'Mega Challenge 0278', stars: 4, description: 'Escalated encounter stack profile 0278 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+14%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0279', title: 'Mega Challenge 0279', stars: 5, description: 'Escalated encounter stack profile 0279 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+15%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0280', title: 'Mega Challenge 0280', stars: 1, description: 'Escalated encounter stack profile 0280 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+16%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0281', title: 'Mega Challenge 0281', stars: 2, description: 'Escalated encounter stack profile 0281 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+17%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0282', title: 'Mega Challenge 0282', stars: 3, description: 'Escalated encounter stack profile 0282 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+18%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0283', title: 'Mega Challenge 0283', stars: 4, description: 'Escalated encounter stack profile 0283 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+19%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0284', title: 'Mega Challenge 0284', stars: 5, description: 'Escalated encounter stack profile 0284 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+20%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0285', title: 'Mega Challenge 0285', stars: 1, description: 'Escalated encounter stack profile 0285 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+21%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0286', title: 'Mega Challenge 0286', stars: 2, description: 'Escalated encounter stack profile 0286 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+22%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0287', title: 'Mega Challenge 0287', stars: 3, description: 'Escalated encounter stack profile 0287 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+23%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0288', title: 'Mega Challenge 0288', stars: 4, description: 'Escalated encounter stack profile 0288 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+24%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0289', title: 'Mega Challenge 0289', stars: 5, description: 'Escalated encounter stack profile 0289 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+25%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0290', title: 'Mega Challenge 0290', stars: 1, description: 'Escalated encounter stack profile 0290 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+26%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0291', title: 'Mega Challenge 0291', stars: 2, description: 'Escalated encounter stack profile 0291 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+27%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0292', title: 'Mega Challenge 0292', stars: 3, description: 'Escalated encounter stack profile 0292 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+28%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0293', title: 'Mega Challenge 0293', stars: 4, description: 'Escalated encounter stack profile 0293 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+29%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0294', title: 'Mega Challenge 0294', stars: 5, description: 'Escalated encounter stack profile 0294 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+30%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0295', title: 'Mega Challenge 0295', stars: 1, description: 'Escalated encounter stack profile 0295 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+31%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0296', title: 'Mega Challenge 0296', stars: 2, description: 'Escalated encounter stack profile 0296 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+32%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0297', title: 'Mega Challenge 0297', stars: 3, description: 'Escalated encounter stack profile 0297 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+33%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0298', title: 'Mega Challenge 0298', stars: 4, description: 'Escalated encounter stack profile 0298 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+34%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0299', title: 'Mega Challenge 0299', stars: 5, description: 'Escalated encounter stack profile 0299 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+35%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0300', title: 'Mega Challenge 0300', stars: 1, description: 'Escalated encounter stack profile 0300 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+6%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0301', title: 'Mega Challenge 0301', stars: 2, description: 'Escalated encounter stack profile 0301 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+7%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0302', title: 'Mega Challenge 0302', stars: 3, description: 'Escalated encounter stack profile 0302 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+8%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0303', title: 'Mega Challenge 0303', stars: 4, description: 'Escalated encounter stack profile 0303 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+9%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0304', title: 'Mega Challenge 0304', stars: 5, description: 'Escalated encounter stack profile 0304 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+10%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0305', title: 'Mega Challenge 0305', stars: 1, description: 'Escalated encounter stack profile 0305 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+11%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0306', title: 'Mega Challenge 0306', stars: 2, description: 'Escalated encounter stack profile 0306 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+12%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0307', title: 'Mega Challenge 0307', stars: 3, description: 'Escalated encounter stack profile 0307 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+13%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0308', title: 'Mega Challenge 0308', stars: 4, description: 'Escalated encounter stack profile 0308 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+14%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0309', title: 'Mega Challenge 0309', stars: 5, description: 'Escalated encounter stack profile 0309 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+15%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0310', title: 'Mega Challenge 0310', stars: 1, description: 'Escalated encounter stack profile 0310 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+16%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0311', title: 'Mega Challenge 0311', stars: 2, description: 'Escalated encounter stack profile 0311 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+17%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0312', title: 'Mega Challenge 0312', stars: 3, description: 'Escalated encounter stack profile 0312 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+18%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0313', title: 'Mega Challenge 0313', stars: 4, description: 'Escalated encounter stack profile 0313 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+19%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0314', title: 'Mega Challenge 0314', stars: 5, description: 'Escalated encounter stack profile 0314 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+20%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0315', title: 'Mega Challenge 0315', stars: 1, description: 'Escalated encounter stack profile 0315 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+21%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0316', title: 'Mega Challenge 0316', stars: 2, description: 'Escalated encounter stack profile 0316 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+22%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0317', title: 'Mega Challenge 0317', stars: 3, description: 'Escalated encounter stack profile 0317 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+23%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0318', title: 'Mega Challenge 0318', stars: 4, description: 'Escalated encounter stack profile 0318 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+24%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0319', title: 'Mega Challenge 0319', stars: 5, description: 'Escalated encounter stack profile 0319 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+25%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0320', title: 'Mega Challenge 0320', stars: 1, description: 'Escalated encounter stack profile 0320 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+26%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0321', title: 'Mega Challenge 0321', stars: 2, description: 'Escalated encounter stack profile 0321 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+27%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0322', title: 'Mega Challenge 0322', stars: 3, description: 'Escalated encounter stack profile 0322 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+28%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0323', title: 'Mega Challenge 0323', stars: 4, description: 'Escalated encounter stack profile 0323 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+29%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0324', title: 'Mega Challenge 0324', stars: 5, description: 'Escalated encounter stack profile 0324 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+30%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0325', title: 'Mega Challenge 0325', stars: 1, description: 'Escalated encounter stack profile 0325 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+31%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0326', title: 'Mega Challenge 0326', stars: 2, description: 'Escalated encounter stack profile 0326 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+32%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0327', title: 'Mega Challenge 0327', stars: 3, description: 'Escalated encounter stack profile 0327 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+33%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0328', title: 'Mega Challenge 0328', stars: 4, description: 'Escalated encounter stack profile 0328 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+34%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0329', title: 'Mega Challenge 0329', stars: 5, description: 'Escalated encounter stack profile 0329 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+35%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0330', title: 'Mega Challenge 0330', stars: 1, description: 'Escalated encounter stack profile 0330 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+6%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0331', title: 'Mega Challenge 0331', stars: 2, description: 'Escalated encounter stack profile 0331 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+7%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0332', title: 'Mega Challenge 0332', stars: 3, description: 'Escalated encounter stack profile 0332 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+8%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0333', title: 'Mega Challenge 0333', stars: 4, description: 'Escalated encounter stack profile 0333 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+9%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0334', title: 'Mega Challenge 0334', stars: 5, description: 'Escalated encounter stack profile 0334 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+10%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0335', title: 'Mega Challenge 0335', stars: 1, description: 'Escalated encounter stack profile 0335 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+11%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0336', title: 'Mega Challenge 0336', stars: 2, description: 'Escalated encounter stack profile 0336 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+12%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0337', title: 'Mega Challenge 0337', stars: 3, description: 'Escalated encounter stack profile 0337 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+13%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0338', title: 'Mega Challenge 0338', stars: 4, description: 'Escalated encounter stack profile 0338 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+14%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0339', title: 'Mega Challenge 0339', stars: 5, description: 'Escalated encounter stack profile 0339 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+15%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0340', title: 'Mega Challenge 0340', stars: 1, description: 'Escalated encounter stack profile 0340 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+16%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0341', title: 'Mega Challenge 0341', stars: 2, description: 'Escalated encounter stack profile 0341 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+17%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0342', title: 'Mega Challenge 0342', stars: 3, description: 'Escalated encounter stack profile 0342 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+18%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0343', title: 'Mega Challenge 0343', stars: 4, description: 'Escalated encounter stack profile 0343 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+19%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0344', title: 'Mega Challenge 0344', stars: 5, description: 'Escalated encounter stack profile 0344 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+20%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0345', title: 'Mega Challenge 0345', stars: 1, description: 'Escalated encounter stack profile 0345 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+21%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0346', title: 'Mega Challenge 0346', stars: 2, description: 'Escalated encounter stack profile 0346 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+22%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0347', title: 'Mega Challenge 0347', stars: 3, description: 'Escalated encounter stack profile 0347 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+23%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0348', title: 'Mega Challenge 0348', stars: 4, description: 'Escalated encounter stack profile 0348 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+24%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0349', title: 'Mega Challenge 0349', stars: 5, description: 'Escalated encounter stack profile 0349 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+25%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0350', title: 'Mega Challenge 0350', stars: 1, description: 'Escalated encounter stack profile 0350 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+26%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0351', title: 'Mega Challenge 0351', stars: 2, description: 'Escalated encounter stack profile 0351 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+27%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0352', title: 'Mega Challenge 0352', stars: 3, description: 'Escalated encounter stack profile 0352 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+28%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0353', title: 'Mega Challenge 0353', stars: 4, description: 'Escalated encounter stack profile 0353 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+29%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0354', title: 'Mega Challenge 0354', stars: 5, description: 'Escalated encounter stack profile 0354 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+30%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0355', title: 'Mega Challenge 0355', stars: 1, description: 'Escalated encounter stack profile 0355 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+31%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0356', title: 'Mega Challenge 0356', stars: 2, description: 'Escalated encounter stack profile 0356 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+32%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0357', title: 'Mega Challenge 0357', stars: 3, description: 'Escalated encounter stack profile 0357 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+33%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0358', title: 'Mega Challenge 0358', stars: 4, description: 'Escalated encounter stack profile 0358 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+34%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0359', title: 'Mega Challenge 0359', stars: 5, description: 'Escalated encounter stack profile 0359 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+35%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0360', title: 'Mega Challenge 0360', stars: 1, description: 'Escalated encounter stack profile 0360 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+6%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0361', title: 'Mega Challenge 0361', stars: 2, description: 'Escalated encounter stack profile 0361 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+7%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0362', title: 'Mega Challenge 0362', stars: 3, description: 'Escalated encounter stack profile 0362 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+8%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0363', title: 'Mega Challenge 0363', stars: 4, description: 'Escalated encounter stack profile 0363 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+9%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0364', title: 'Mega Challenge 0364', stars: 5, description: 'Escalated encounter stack profile 0364 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+10%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0365', title: 'Mega Challenge 0365', stars: 1, description: 'Escalated encounter stack profile 0365 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+11%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0366', title: 'Mega Challenge 0366', stars: 2, description: 'Escalated encounter stack profile 0366 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+12%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0367', title: 'Mega Challenge 0367', stars: 3, description: 'Escalated encounter stack profile 0367 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+13%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0368', title: 'Mega Challenge 0368', stars: 4, description: 'Escalated encounter stack profile 0368 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+14%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0369', title: 'Mega Challenge 0369', stars: 5, description: 'Escalated encounter stack profile 0369 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+15%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0370', title: 'Mega Challenge 0370', stars: 1, description: 'Escalated encounter stack profile 0370 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+16%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0371', title: 'Mega Challenge 0371', stars: 2, description: 'Escalated encounter stack profile 0371 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+17%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0372', title: 'Mega Challenge 0372', stars: 3, description: 'Escalated encounter stack profile 0372 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+18%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0373', title: 'Mega Challenge 0373', stars: 4, description: 'Escalated encounter stack profile 0373 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+19%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0374', title: 'Mega Challenge 0374', stars: 5, description: 'Escalated encounter stack profile 0374 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+20%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0375', title: 'Mega Challenge 0375', stars: 1, description: 'Escalated encounter stack profile 0375 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+21%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0376', title: 'Mega Challenge 0376', stars: 2, description: 'Escalated encounter stack profile 0376 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+22%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0377', title: 'Mega Challenge 0377', stars: 3, description: 'Escalated encounter stack profile 0377 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+23%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0378', title: 'Mega Challenge 0378', stars: 4, description: 'Escalated encounter stack profile 0378 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+24%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0379', title: 'Mega Challenge 0379', stars: 5, description: 'Escalated encounter stack profile 0379 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+25%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0380', title: 'Mega Challenge 0380', stars: 1, description: 'Escalated encounter stack profile 0380 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+26%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0381', title: 'Mega Challenge 0381', stars: 2, description: 'Escalated encounter stack profile 0381 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+27%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0382', title: 'Mega Challenge 0382', stars: 3, description: 'Escalated encounter stack profile 0382 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+28%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0383', title: 'Mega Challenge 0383', stars: 4, description: 'Escalated encounter stack profile 0383 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+29%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0384', title: 'Mega Challenge 0384', stars: 5, description: 'Escalated encounter stack profile 0384 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+30%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0385', title: 'Mega Challenge 0385', stars: 1, description: 'Escalated encounter stack profile 0385 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+31%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0386', title: 'Mega Challenge 0386', stars: 2, description: 'Escalated encounter stack profile 0386 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+32%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0387', title: 'Mega Challenge 0387', stars: 3, description: 'Escalated encounter stack profile 0387 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+33%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0388', title: 'Mega Challenge 0388', stars: 4, description: 'Escalated encounter stack profile 0388 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+34%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0389', title: 'Mega Challenge 0389', stars: 5, description: 'Escalated encounter stack profile 0389 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+35%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0390', title: 'Mega Challenge 0390', stars: 1, description: 'Escalated encounter stack profile 0390 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+6%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0391', title: 'Mega Challenge 0391', stars: 2, description: 'Escalated encounter stack profile 0391 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+7%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0392', title: 'Mega Challenge 0392', stars: 3, description: 'Escalated encounter stack profile 0392 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+8%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0393', title: 'Mega Challenge 0393', stars: 4, description: 'Escalated encounter stack profile 0393 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+9%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0394', title: 'Mega Challenge 0394', stars: 5, description: 'Escalated encounter stack profile 0394 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+10%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0395', title: 'Mega Challenge 0395', stars: 1, description: 'Escalated encounter stack profile 0395 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+11%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0396', title: 'Mega Challenge 0396', stars: 2, description: 'Escalated encounter stack profile 0396 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+12%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0397', title: 'Mega Challenge 0397', stars: 3, description: 'Escalated encounter stack profile 0397 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+13%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0398', title: 'Mega Challenge 0398', stars: 4, description: 'Escalated encounter stack profile 0398 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+14%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0399', title: 'Mega Challenge 0399', stars: 5, description: 'Escalated encounter stack profile 0399 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+15%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0400', title: 'Mega Challenge 0400', stars: 1, description: 'Escalated encounter stack profile 0400 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+16%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0401', title: 'Mega Challenge 0401', stars: 2, description: 'Escalated encounter stack profile 0401 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+17%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0402', title: 'Mega Challenge 0402', stars: 3, description: 'Escalated encounter stack profile 0402 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+18%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0403', title: 'Mega Challenge 0403', stars: 4, description: 'Escalated encounter stack profile 0403 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+19%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0404', title: 'Mega Challenge 0404', stars: 5, description: 'Escalated encounter stack profile 0404 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+20%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0405', title: 'Mega Challenge 0405', stars: 1, description: 'Escalated encounter stack profile 0405 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+21%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0406', title: 'Mega Challenge 0406', stars: 2, description: 'Escalated encounter stack profile 0406 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+22%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0407', title: 'Mega Challenge 0407', stars: 3, description: 'Escalated encounter stack profile 0407 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+23%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0408', title: 'Mega Challenge 0408', stars: 4, description: 'Escalated encounter stack profile 0408 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+24%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0409', title: 'Mega Challenge 0409', stars: 5, description: 'Escalated encounter stack profile 0409 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+25%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0410', title: 'Mega Challenge 0410', stars: 1, description: 'Escalated encounter stack profile 0410 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+26%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0411', title: 'Mega Challenge 0411', stars: 2, description: 'Escalated encounter stack profile 0411 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+27%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0412', title: 'Mega Challenge 0412', stars: 3, description: 'Escalated encounter stack profile 0412 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+28%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0413', title: 'Mega Challenge 0413', stars: 4, description: 'Escalated encounter stack profile 0413 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+29%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0414', title: 'Mega Challenge 0414', stars: 5, description: 'Escalated encounter stack profile 0414 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+30%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0415', title: 'Mega Challenge 0415', stars: 1, description: 'Escalated encounter stack profile 0415 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+31%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0416', title: 'Mega Challenge 0416', stars: 2, description: 'Escalated encounter stack profile 0416 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+32%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0417', title: 'Mega Challenge 0417', stars: 3, description: 'Escalated encounter stack profile 0417 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+33%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0418', title: 'Mega Challenge 0418', stars: 4, description: 'Escalated encounter stack profile 0418 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+34%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0419', title: 'Mega Challenge 0419', stars: 5, description: 'Escalated encounter stack profile 0419 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+35%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0420', title: 'Mega Challenge 0420', stars: 1, description: 'Escalated encounter stack profile 0420 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+6%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0421', title: 'Mega Challenge 0421', stars: 2, description: 'Escalated encounter stack profile 0421 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+7%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0422', title: 'Mega Challenge 0422', stars: 3, description: 'Escalated encounter stack profile 0422 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+8%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0423', title: 'Mega Challenge 0423', stars: 4, description: 'Escalated encounter stack profile 0423 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+9%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0424', title: 'Mega Challenge 0424', stars: 5, description: 'Escalated encounter stack profile 0424 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+10%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0425', title: 'Mega Challenge 0425', stars: 1, description: 'Escalated encounter stack profile 0425 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+11%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0426', title: 'Mega Challenge 0426', stars: 2, description: 'Escalated encounter stack profile 0426 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+12%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0427', title: 'Mega Challenge 0427', stars: 3, description: 'Escalated encounter stack profile 0427 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+13%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0428', title: 'Mega Challenge 0428', stars: 4, description: 'Escalated encounter stack profile 0428 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+14%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0429', title: 'Mega Challenge 0429', stars: 5, description: 'Escalated encounter stack profile 0429 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+15%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0430', title: 'Mega Challenge 0430', stars: 1, description: 'Escalated encounter stack profile 0430 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+16%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0431', title: 'Mega Challenge 0431', stars: 2, description: 'Escalated encounter stack profile 0431 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+17%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0432', title: 'Mega Challenge 0432', stars: 3, description: 'Escalated encounter stack profile 0432 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+18%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0433', title: 'Mega Challenge 0433', stars: 4, description: 'Escalated encounter stack profile 0433 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+19%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0434', title: 'Mega Challenge 0434', stars: 5, description: 'Escalated encounter stack profile 0434 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+20%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0435', title: 'Mega Challenge 0435', stars: 1, description: 'Escalated encounter stack profile 0435 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+21%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0436', title: 'Mega Challenge 0436', stars: 2, description: 'Escalated encounter stack profile 0436 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+22%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0437', title: 'Mega Challenge 0437', stars: 3, description: 'Escalated encounter stack profile 0437 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+23%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0438', title: 'Mega Challenge 0438', stars: 4, description: 'Escalated encounter stack profile 0438 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+24%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0439', title: 'Mega Challenge 0439', stars: 5, description: 'Escalated encounter stack profile 0439 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+25%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0440', title: 'Mega Challenge 0440', stars: 1, description: 'Escalated encounter stack profile 0440 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+26%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0441', title: 'Mega Challenge 0441', stars: 2, description: 'Escalated encounter stack profile 0441 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+27%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0442', title: 'Mega Challenge 0442', stars: 3, description: 'Escalated encounter stack profile 0442 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+28%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0443', title: 'Mega Challenge 0443', stars: 4, description: 'Escalated encounter stack profile 0443 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+29%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0444', title: 'Mega Challenge 0444', stars: 5, description: 'Escalated encounter stack profile 0444 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+30%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0445', title: 'Mega Challenge 0445', stars: 1, description: 'Escalated encounter stack profile 0445 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+31%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0446', title: 'Mega Challenge 0446', stars: 2, description: 'Escalated encounter stack profile 0446 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+32%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0447', title: 'Mega Challenge 0447', stars: 3, description: 'Escalated encounter stack profile 0447 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+33%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0448', title: 'Mega Challenge 0448', stars: 4, description: 'Escalated encounter stack profile 0448 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+34%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0449', title: 'Mega Challenge 0449', stars: 5, description: 'Escalated encounter stack profile 0449 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+35%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0450', title: 'Mega Challenge 0450', stars: 1, description: 'Escalated encounter stack profile 0450 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+6%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0451', title: 'Mega Challenge 0451', stars: 2, description: 'Escalated encounter stack profile 0451 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+7%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0452', title: 'Mega Challenge 0452', stars: 3, description: 'Escalated encounter stack profile 0452 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+8%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0453', title: 'Mega Challenge 0453', stars: 4, description: 'Escalated encounter stack profile 0453 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+9%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0454', title: 'Mega Challenge 0454', stars: 5, description: 'Escalated encounter stack profile 0454 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+10%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0455', title: 'Mega Challenge 0455', stars: 1, description: 'Escalated encounter stack profile 0455 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+11%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0456', title: 'Mega Challenge 0456', stars: 2, description: 'Escalated encounter stack profile 0456 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+12%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0457', title: 'Mega Challenge 0457', stars: 3, description: 'Escalated encounter stack profile 0457 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+13%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0458', title: 'Mega Challenge 0458', stars: 4, description: 'Escalated encounter stack profile 0458 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+14%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0459', title: 'Mega Challenge 0459', stars: 5, description: 'Escalated encounter stack profile 0459 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+15%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0460', title: 'Mega Challenge 0460', stars: 1, description: 'Escalated encounter stack profile 0460 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+16%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0461', title: 'Mega Challenge 0461', stars: 2, description: 'Escalated encounter stack profile 0461 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+17%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0462', title: 'Mega Challenge 0462', stars: 3, description: 'Escalated encounter stack profile 0462 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+18%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0463', title: 'Mega Challenge 0463', stars: 4, description: 'Escalated encounter stack profile 0463 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+19%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0464', title: 'Mega Challenge 0464', stars: 5, description: 'Escalated encounter stack profile 0464 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+20%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0465', title: 'Mega Challenge 0465', stars: 1, description: 'Escalated encounter stack profile 0465 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+21%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0466', title: 'Mega Challenge 0466', stars: 2, description: 'Escalated encounter stack profile 0466 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+22%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0467', title: 'Mega Challenge 0467', stars: 3, description: 'Escalated encounter stack profile 0467 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+23%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0468', title: 'Mega Challenge 0468', stars: 4, description: 'Escalated encounter stack profile 0468 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+24%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0469', title: 'Mega Challenge 0469', stars: 5, description: 'Escalated encounter stack profile 0469 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+25%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0470', title: 'Mega Challenge 0470', stars: 1, description: 'Escalated encounter stack profile 0470 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+26%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0471', title: 'Mega Challenge 0471', stars: 2, description: 'Escalated encounter stack profile 0471 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+27%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0472', title: 'Mega Challenge 0472', stars: 3, description: 'Escalated encounter stack profile 0472 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+28%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0473', title: 'Mega Challenge 0473', stars: 4, description: 'Escalated encounter stack profile 0473 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+29%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0474', title: 'Mega Challenge 0474', stars: 5, description: 'Escalated encounter stack profile 0474 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+30%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0475', title: 'Mega Challenge 0475', stars: 1, description: 'Escalated encounter stack profile 0475 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+31%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0476', title: 'Mega Challenge 0476', stars: 2, description: 'Escalated encounter stack profile 0476 with controlled mutator layering.', mutators: ['enemyCount+36%', 'enemySpeed+32%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0477', title: 'Mega Challenge 0477', stars: 3, description: 'Escalated encounter stack profile 0477 with controlled mutator layering.', mutators: ['enemyCount+37%', 'enemySpeed+33%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0478', title: 'Mega Challenge 0478', stars: 4, description: 'Escalated encounter stack profile 0478 with controlled mutator layering.', mutators: ['enemyCount+38%', 'enemySpeed+34%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0479', title: 'Mega Challenge 0479', stars: 5, description: 'Escalated encounter stack profile 0479 with controlled mutator layering.', mutators: ['enemyCount+39%', 'enemySpeed+35%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0480', title: 'Mega Challenge 0480', stars: 1, description: 'Escalated encounter stack profile 0480 with controlled mutator layering.', mutators: ['enemyCount+40%', 'enemySpeed+6%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0481', title: 'Mega Challenge 0481', stars: 2, description: 'Escalated encounter stack profile 0481 with controlled mutator layering.', mutators: ['enemyCount+41%', 'enemySpeed+7%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0482', title: 'Mega Challenge 0482', stars: 3, description: 'Escalated encounter stack profile 0482 with controlled mutator layering.', mutators: ['enemyCount+42%', 'enemySpeed+8%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0483', title: 'Mega Challenge 0483', stars: 4, description: 'Escalated encounter stack profile 0483 with controlled mutator layering.', mutators: ['enemyCount+43%', 'enemySpeed+9%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0484', title: 'Mega Challenge 0484', stars: 5, description: 'Escalated encounter stack profile 0484 with controlled mutator layering.', mutators: ['enemyCount+44%', 'enemySpeed+10%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0485', title: 'Mega Challenge 0485', stars: 1, description: 'Escalated encounter stack profile 0485 with controlled mutator layering.', mutators: ['enemyCount+45%', 'enemySpeed+11%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0486', title: 'Mega Challenge 0486', stars: 2, description: 'Escalated encounter stack profile 0486 with controlled mutator layering.', mutators: ['enemyCount+46%', 'enemySpeed+12%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0487', title: 'Mega Challenge 0487', stars: 3, description: 'Escalated encounter stack profile 0487 with controlled mutator layering.', mutators: ['enemyCount+47%', 'enemySpeed+13%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0488', title: 'Mega Challenge 0488', stars: 4, description: 'Escalated encounter stack profile 0488 with controlled mutator layering.', mutators: ['enemyCount+48%', 'enemySpeed+14%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0489', title: 'Mega Challenge 0489', stars: 5, description: 'Escalated encounter stack profile 0489 with controlled mutator layering.', mutators: ['enemyCount+49%', 'enemySpeed+15%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0490', title: 'Mega Challenge 0490', stars: 1, description: 'Escalated encounter stack profile 0490 with controlled mutator layering.', mutators: ['enemyCount+50%', 'enemySpeed+16%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0491', title: 'Mega Challenge 0491', stars: 2, description: 'Escalated encounter stack profile 0491 with controlled mutator layering.', mutators: ['enemyCount+51%', 'enemySpeed+17%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0492', title: 'Mega Challenge 0492', stars: 3, description: 'Escalated encounter stack profile 0492 with controlled mutator layering.', mutators: ['enemyCount+52%', 'enemySpeed+18%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0493', title: 'Mega Challenge 0493', stars: 4, description: 'Escalated encounter stack profile 0493 with controlled mutator layering.', mutators: ['enemyCount+53%', 'enemySpeed+19%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0494', title: 'Mega Challenge 0494', stars: 5, description: 'Escalated encounter stack profile 0494 with controlled mutator layering.', mutators: ['enemyCount+54%', 'enemySpeed+20%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0495', title: 'Mega Challenge 0495', stars: 1, description: 'Escalated encounter stack profile 0495 with controlled mutator layering.', mutators: ['enemyCount+10%', 'enemySpeed+21%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0496', title: 'Mega Challenge 0496', stars: 2, description: 'Escalated encounter stack profile 0496 with controlled mutator layering.', mutators: ['enemyCount+11%', 'enemySpeed+22%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0497', title: 'Mega Challenge 0497', stars: 3, description: 'Escalated encounter stack profile 0497 with controlled mutator layering.', mutators: ['enemyCount+12%', 'enemySpeed+23%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0498', title: 'Mega Challenge 0498', stars: 4, description: 'Escalated encounter stack profile 0498 with controlled mutator layering.', mutators: ['enemyCount+13%', 'enemySpeed+24%', 'dropRate-17%'] },
-  { id: 'mega-challenge-0499', title: 'Mega Challenge 0499', stars: 5, description: 'Escalated encounter stack profile 0499 with controlled mutator layering.', mutators: ['enemyCount+14%', 'enemySpeed+25%', 'dropRate-18%'] },
-  { id: 'mega-challenge-0500', title: 'Mega Challenge 0500', stars: 1, description: 'Escalated encounter stack profile 0500 with controlled mutator layering.', mutators: ['enemyCount+15%', 'enemySpeed+26%', 'dropRate-19%'] },
-  { id: 'mega-challenge-0501', title: 'Mega Challenge 0501', stars: 2, description: 'Escalated encounter stack profile 0501 with controlled mutator layering.', mutators: ['enemyCount+16%', 'enemySpeed+27%', 'dropRate-20%'] },
-  { id: 'mega-challenge-0502', title: 'Mega Challenge 0502', stars: 3, description: 'Escalated encounter stack profile 0502 with controlled mutator layering.', mutators: ['enemyCount+17%', 'enemySpeed+28%', 'dropRate-21%'] },
-  { id: 'mega-challenge-0503', title: 'Mega Challenge 0503', stars: 4, description: 'Escalated encounter stack profile 0503 with controlled mutator layering.', mutators: ['enemyCount+18%', 'enemySpeed+29%', 'dropRate-22%'] },
-  { id: 'mega-challenge-0504', title: 'Mega Challenge 0504', stars: 5, description: 'Escalated encounter stack profile 0504 with controlled mutator layering.', mutators: ['enemyCount+19%', 'enemySpeed+30%', 'dropRate-23%'] },
-  { id: 'mega-challenge-0505', title: 'Mega Challenge 0505', stars: 1, description: 'Escalated encounter stack profile 0505 with controlled mutator layering.', mutators: ['enemyCount+20%', 'enemySpeed+31%', 'dropRate-24%'] },
-  { id: 'mega-challenge-0506', title: 'Mega Challenge 0506', stars: 2, description: 'Escalated encounter stack profile 0506 with controlled mutator layering.', mutators: ['enemyCount+21%', 'enemySpeed+32%', 'dropRate-3%'] },
-  { id: 'mega-challenge-0507', title: 'Mega Challenge 0507', stars: 3, description: 'Escalated encounter stack profile 0507 with controlled mutator layering.', mutators: ['enemyCount+22%', 'enemySpeed+33%', 'dropRate-4%'] },
-  { id: 'mega-challenge-0508', title: 'Mega Challenge 0508', stars: 4, description: 'Escalated encounter stack profile 0508 with controlled mutator layering.', mutators: ['enemyCount+23%', 'enemySpeed+34%', 'dropRate-5%'] },
-  { id: 'mega-challenge-0509', title: 'Mega Challenge 0509', stars: 5, description: 'Escalated encounter stack profile 0509 with controlled mutator layering.', mutators: ['enemyCount+24%', 'enemySpeed+35%', 'dropRate-6%'] },
-  { id: 'mega-challenge-0510', title: 'Mega Challenge 0510', stars: 1, description: 'Escalated encounter stack profile 0510 with controlled mutator layering.', mutators: ['enemyCount+25%', 'enemySpeed+6%', 'dropRate-7%'] },
-  { id: 'mega-challenge-0511', title: 'Mega Challenge 0511', stars: 2, description: 'Escalated encounter stack profile 0511 with controlled mutator layering.', mutators: ['enemyCount+26%', 'enemySpeed+7%', 'dropRate-8%'] },
-  { id: 'mega-challenge-0512', title: 'Mega Challenge 0512', stars: 3, description: 'Escalated encounter stack profile 0512 with controlled mutator layering.', mutators: ['enemyCount+27%', 'enemySpeed+8%', 'dropRate-9%'] },
-  { id: 'mega-challenge-0513', title: 'Mega Challenge 0513', stars: 4, description: 'Escalated encounter stack profile 0513 with controlled mutator layering.', mutators: ['enemyCount+28%', 'enemySpeed+9%', 'dropRate-10%'] },
-  { id: 'mega-challenge-0514', title: 'Mega Challenge 0514', stars: 5, description: 'Escalated encounter stack profile 0514 with controlled mutator layering.', mutators: ['enemyCount+29%', 'enemySpeed+10%', 'dropRate-11%'] },
-  { id: 'mega-challenge-0515', title: 'Mega Challenge 0515', stars: 1, description: 'Escalated encounter stack profile 0515 with controlled mutator layering.', mutators: ['enemyCount+30%', 'enemySpeed+11%', 'dropRate-12%'] },
-  { id: 'mega-challenge-0516', title: 'Mega Challenge 0516', stars: 2, description: 'Escalated encounter stack profile 0516 with controlled mutator layering.', mutators: ['enemyCount+31%', 'enemySpeed+12%', 'dropRate-13%'] },
-  { id: 'mega-challenge-0517', title: 'Mega Challenge 0517', stars: 3, description: 'Escalated encounter stack profile 0517 with controlled mutator layering.', mutators: ['enemyCount+32%', 'enemySpeed+13%', 'dropRate-14%'] },
-  { id: 'mega-challenge-0518', title: 'Mega Challenge 0518', stars: 4, description: 'Escalated encounter stack profile 0518 with controlled mutator layering.', mutators: ['enemyCount+33%', 'enemySpeed+14%', 'dropRate-15%'] },
-  { id: 'mega-challenge-0519', title: 'Mega Challenge 0519', stars: 5, description: 'Escalated encounter stack profile 0519 with controlled mutator layering.', mutators: ['enemyCount+34%', 'enemySpeed+15%', 'dropRate-16%'] },
-  { id: 'mega-challenge-0520', title: 'Mega Challenge 0520', stars: 1, description: 'Escalated encounter stack profile 0520 with controlled mutator layering.', mutators: ['enemyCount+35%', 'enemySpeed+16%', 'dropRate-17%'] },
-];
-
-const MEGA_FX_PROFILES_V2 = [
-  { id: 'mega-fx-0001', label: 'Mega FX 0001', category: 'anomaly', visual: 'Layered profile 0001 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0001' },
-  { id: 'mega-fx-0002', label: 'Mega FX 0002', category: 'anomaly', visual: 'Layered profile 0002 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0002' },
-  { id: 'mega-fx-0003', label: 'Mega FX 0003', category: 'anomaly', visual: 'Layered profile 0003 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0003' },
-  { id: 'mega-fx-0004', label: 'Mega FX 0004', category: 'anomaly', visual: 'Layered profile 0004 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0004' },
-  { id: 'mega-fx-0005', label: 'Mega FX 0005', category: 'anomaly', visual: 'Layered profile 0005 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0005' },
-  { id: 'mega-fx-0006', label: 'Mega FX 0006', category: 'anomaly', visual: 'Layered profile 0006 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0006' },
-  { id: 'mega-fx-0007', label: 'Mega FX 0007', category: 'anomaly', visual: 'Layered profile 0007 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0007' },
-  { id: 'mega-fx-0008', label: 'Mega FX 0008', category: 'anomaly', visual: 'Layered profile 0008 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0008' },
-  { id: 'mega-fx-0009', label: 'Mega FX 0009', category: 'anomaly', visual: 'Layered profile 0009 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0009' },
-  { id: 'mega-fx-0010', label: 'Mega FX 0010', category: 'anomaly', visual: 'Layered profile 0010 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0010' },
-  { id: 'mega-fx-0011', label: 'Mega FX 0011', category: 'anomaly', visual: 'Layered profile 0011 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0011' },
-  { id: 'mega-fx-0012', label: 'Mega FX 0012', category: 'anomaly', visual: 'Layered profile 0012 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0012' },
-  { id: 'mega-fx-0013', label: 'Mega FX 0013', category: 'anomaly', visual: 'Layered profile 0013 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0013' },
-  { id: 'mega-fx-0014', label: 'Mega FX 0014', category: 'anomaly', visual: 'Layered profile 0014 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0014' },
-  { id: 'mega-fx-0015', label: 'Mega FX 0015', category: 'anomaly', visual: 'Layered profile 0015 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0015' },
-  { id: 'mega-fx-0016', label: 'Mega FX 0016', category: 'anomaly', visual: 'Layered profile 0016 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0016' },
-  { id: 'mega-fx-0017', label: 'Mega FX 0017', category: 'anomaly', visual: 'Layered profile 0017 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0017' },
-  { id: 'mega-fx-0018', label: 'Mega FX 0018', category: 'anomaly', visual: 'Layered profile 0018 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0018' },
-  { id: 'mega-fx-0019', label: 'Mega FX 0019', category: 'anomaly', visual: 'Layered profile 0019 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0019' },
-  { id: 'mega-fx-0020', label: 'Mega FX 0020', category: 'anomaly', visual: 'Layered profile 0020 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0020' },
-  { id: 'mega-fx-0021', label: 'Mega FX 0021', category: 'anomaly', visual: 'Layered profile 0021 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0021' },
-  { id: 'mega-fx-0022', label: 'Mega FX 0022', category: 'anomaly', visual: 'Layered profile 0022 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0022' },
-  { id: 'mega-fx-0023', label: 'Mega FX 0023', category: 'anomaly', visual: 'Layered profile 0023 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0023' },
-  { id: 'mega-fx-0024', label: 'Mega FX 0024', category: 'anomaly', visual: 'Layered profile 0024 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0024' },
-  { id: 'mega-fx-0025', label: 'Mega FX 0025', category: 'anomaly', visual: 'Layered profile 0025 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0025' },
-  { id: 'mega-fx-0026', label: 'Mega FX 0026', category: 'anomaly', visual: 'Layered profile 0026 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0026' },
-  { id: 'mega-fx-0027', label: 'Mega FX 0027', category: 'anomaly', visual: 'Layered profile 0027 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0027' },
-  { id: 'mega-fx-0028', label: 'Mega FX 0028', category: 'anomaly', visual: 'Layered profile 0028 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0028' },
-  { id: 'mega-fx-0029', label: 'Mega FX 0029', category: 'anomaly', visual: 'Layered profile 0029 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0029' },
-  { id: 'mega-fx-0030', label: 'Mega FX 0030', category: 'anomaly', visual: 'Layered profile 0030 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0030' },
-  { id: 'mega-fx-0031', label: 'Mega FX 0031', category: 'anomaly', visual: 'Layered profile 0031 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0031' },
-  { id: 'mega-fx-0032', label: 'Mega FX 0032', category: 'anomaly', visual: 'Layered profile 0032 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0032' },
-  { id: 'mega-fx-0033', label: 'Mega FX 0033', category: 'anomaly', visual: 'Layered profile 0033 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0033' },
-  { id: 'mega-fx-0034', label: 'Mega FX 0034', category: 'anomaly', visual: 'Layered profile 0034 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0034' },
-  { id: 'mega-fx-0035', label: 'Mega FX 0035', category: 'anomaly', visual: 'Layered profile 0035 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0035' },
-  { id: 'mega-fx-0036', label: 'Mega FX 0036', category: 'anomaly', visual: 'Layered profile 0036 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0036' },
-  { id: 'mega-fx-0037', label: 'Mega FX 0037', category: 'anomaly', visual: 'Layered profile 0037 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0037' },
-  { id: 'mega-fx-0038', label: 'Mega FX 0038', category: 'anomaly', visual: 'Layered profile 0038 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0038' },
-  { id: 'mega-fx-0039', label: 'Mega FX 0039', category: 'anomaly', visual: 'Layered profile 0039 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0039' },
-  { id: 'mega-fx-0040', label: 'Mega FX 0040', category: 'anomaly', visual: 'Layered profile 0040 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0040' },
-  { id: 'mega-fx-0041', label: 'Mega FX 0041', category: 'anomaly', visual: 'Layered profile 0041 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0041' },
-  { id: 'mega-fx-0042', label: 'Mega FX 0042', category: 'anomaly', visual: 'Layered profile 0042 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0042' },
-  { id: 'mega-fx-0043', label: 'Mega FX 0043', category: 'anomaly', visual: 'Layered profile 0043 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0043' },
-  { id: 'mega-fx-0044', label: 'Mega FX 0044', category: 'anomaly', visual: 'Layered profile 0044 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0044' },
-  { id: 'mega-fx-0045', label: 'Mega FX 0045', category: 'anomaly', visual: 'Layered profile 0045 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0045' },
-  { id: 'mega-fx-0046', label: 'Mega FX 0046', category: 'anomaly', visual: 'Layered profile 0046 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0046' },
-  { id: 'mega-fx-0047', label: 'Mega FX 0047', category: 'anomaly', visual: 'Layered profile 0047 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0047' },
-  { id: 'mega-fx-0048', label: 'Mega FX 0048', category: 'anomaly', visual: 'Layered profile 0048 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0048' },
-  { id: 'mega-fx-0049', label: 'Mega FX 0049', category: 'anomaly', visual: 'Layered profile 0049 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0049' },
-  { id: 'mega-fx-0050', label: 'Mega FX 0050', category: 'anomaly', visual: 'Layered profile 0050 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0050' },
-  { id: 'mega-fx-0051', label: 'Mega FX 0051', category: 'anomaly', visual: 'Layered profile 0051 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0051' },
-  { id: 'mega-fx-0052', label: 'Mega FX 0052', category: 'anomaly', visual: 'Layered profile 0052 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0052' },
-  { id: 'mega-fx-0053', label: 'Mega FX 0053', category: 'anomaly', visual: 'Layered profile 0053 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0053' },
-  { id: 'mega-fx-0054', label: 'Mega FX 0054', category: 'anomaly', visual: 'Layered profile 0054 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0054' },
-  { id: 'mega-fx-0055', label: 'Mega FX 0055', category: 'anomaly', visual: 'Layered profile 0055 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0055' },
-  { id: 'mega-fx-0056', label: 'Mega FX 0056', category: 'anomaly', visual: 'Layered profile 0056 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0056' },
-  { id: 'mega-fx-0057', label: 'Mega FX 0057', category: 'anomaly', visual: 'Layered profile 0057 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0057' },
-  { id: 'mega-fx-0058', label: 'Mega FX 0058', category: 'anomaly', visual: 'Layered profile 0058 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0058' },
-  { id: 'mega-fx-0059', label: 'Mega FX 0059', category: 'anomaly', visual: 'Layered profile 0059 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0059' },
-  { id: 'mega-fx-0060', label: 'Mega FX 0060', category: 'anomaly', visual: 'Layered profile 0060 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0060' },
-  { id: 'mega-fx-0061', label: 'Mega FX 0061', category: 'anomaly', visual: 'Layered profile 0061 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0061' },
-  { id: 'mega-fx-0062', label: 'Mega FX 0062', category: 'anomaly', visual: 'Layered profile 0062 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0062' },
-  { id: 'mega-fx-0063', label: 'Mega FX 0063', category: 'anomaly', visual: 'Layered profile 0063 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0063' },
-  { id: 'mega-fx-0064', label: 'Mega FX 0064', category: 'anomaly', visual: 'Layered profile 0064 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0064' },
-  { id: 'mega-fx-0065', label: 'Mega FX 0065', category: 'anomaly', visual: 'Layered profile 0065 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0065' },
-  { id: 'mega-fx-0066', label: 'Mega FX 0066', category: 'anomaly', visual: 'Layered profile 0066 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0066' },
-  { id: 'mega-fx-0067', label: 'Mega FX 0067', category: 'anomaly', visual: 'Layered profile 0067 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0067' },
-  { id: 'mega-fx-0068', label: 'Mega FX 0068', category: 'anomaly', visual: 'Layered profile 0068 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0068' },
-  { id: 'mega-fx-0069', label: 'Mega FX 0069', category: 'anomaly', visual: 'Layered profile 0069 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0069' },
-  { id: 'mega-fx-0070', label: 'Mega FX 0070', category: 'anomaly', visual: 'Layered profile 0070 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0070' },
-  { id: 'mega-fx-0071', label: 'Mega FX 0071', category: 'anomaly', visual: 'Layered profile 0071 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0071' },
-  { id: 'mega-fx-0072', label: 'Mega FX 0072', category: 'anomaly', visual: 'Layered profile 0072 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0072' },
-  { id: 'mega-fx-0073', label: 'Mega FX 0073', category: 'anomaly', visual: 'Layered profile 0073 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0073' },
-  { id: 'mega-fx-0074', label: 'Mega FX 0074', category: 'anomaly', visual: 'Layered profile 0074 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0074' },
-  { id: 'mega-fx-0075', label: 'Mega FX 0075', category: 'anomaly', visual: 'Layered profile 0075 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0075' },
-  { id: 'mega-fx-0076', label: 'Mega FX 0076', category: 'anomaly', visual: 'Layered profile 0076 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0076' },
-  { id: 'mega-fx-0077', label: 'Mega FX 0077', category: 'anomaly', visual: 'Layered profile 0077 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0077' },
-  { id: 'mega-fx-0078', label: 'Mega FX 0078', category: 'anomaly', visual: 'Layered profile 0078 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0078' },
-  { id: 'mega-fx-0079', label: 'Mega FX 0079', category: 'anomaly', visual: 'Layered profile 0079 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0079' },
-  { id: 'mega-fx-0080', label: 'Mega FX 0080', category: 'anomaly', visual: 'Layered profile 0080 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0080' },
-  { id: 'mega-fx-0081', label: 'Mega FX 0081', category: 'anomaly', visual: 'Layered profile 0081 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0081' },
-  { id: 'mega-fx-0082', label: 'Mega FX 0082', category: 'anomaly', visual: 'Layered profile 0082 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0082' },
-  { id: 'mega-fx-0083', label: 'Mega FX 0083', category: 'anomaly', visual: 'Layered profile 0083 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0083' },
-  { id: 'mega-fx-0084', label: 'Mega FX 0084', category: 'anomaly', visual: 'Layered profile 0084 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0084' },
-  { id: 'mega-fx-0085', label: 'Mega FX 0085', category: 'anomaly', visual: 'Layered profile 0085 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0085' },
-  { id: 'mega-fx-0086', label: 'Mega FX 0086', category: 'anomaly', visual: 'Layered profile 0086 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0086' },
-  { id: 'mega-fx-0087', label: 'Mega FX 0087', category: 'anomaly', visual: 'Layered profile 0087 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0087' },
-  { id: 'mega-fx-0088', label: 'Mega FX 0088', category: 'anomaly', visual: 'Layered profile 0088 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0088' },
-  { id: 'mega-fx-0089', label: 'Mega FX 0089', category: 'anomaly', visual: 'Layered profile 0089 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0089' },
-  { id: 'mega-fx-0090', label: 'Mega FX 0090', category: 'anomaly', visual: 'Layered profile 0090 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0090' },
-  { id: 'mega-fx-0091', label: 'Mega FX 0091', category: 'anomaly', visual: 'Layered profile 0091 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0091' },
-  { id: 'mega-fx-0092', label: 'Mega FX 0092', category: 'anomaly', visual: 'Layered profile 0092 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0092' },
-  { id: 'mega-fx-0093', label: 'Mega FX 0093', category: 'anomaly', visual: 'Layered profile 0093 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0093' },
-  { id: 'mega-fx-0094', label: 'Mega FX 0094', category: 'anomaly', visual: 'Layered profile 0094 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0094' },
-  { id: 'mega-fx-0095', label: 'Mega FX 0095', category: 'anomaly', visual: 'Layered profile 0095 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0095' },
-  { id: 'mega-fx-0096', label: 'Mega FX 0096', category: 'anomaly', visual: 'Layered profile 0096 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0096' },
-  { id: 'mega-fx-0097', label: 'Mega FX 0097', category: 'anomaly', visual: 'Layered profile 0097 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0097' },
-  { id: 'mega-fx-0098', label: 'Mega FX 0098', category: 'anomaly', visual: 'Layered profile 0098 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0098' },
-  { id: 'mega-fx-0099', label: 'Mega FX 0099', category: 'anomaly', visual: 'Layered profile 0099 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0099' },
-  { id: 'mega-fx-0100', label: 'Mega FX 0100', category: 'anomaly', visual: 'Layered profile 0100 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0100' },
-  { id: 'mega-fx-0101', label: 'Mega FX 0101', category: 'anomaly', visual: 'Layered profile 0101 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0101' },
-  { id: 'mega-fx-0102', label: 'Mega FX 0102', category: 'anomaly', visual: 'Layered profile 0102 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0102' },
-  { id: 'mega-fx-0103', label: 'Mega FX 0103', category: 'anomaly', visual: 'Layered profile 0103 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0103' },
-  { id: 'mega-fx-0104', label: 'Mega FX 0104', category: 'anomaly', visual: 'Layered profile 0104 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0104' },
-  { id: 'mega-fx-0105', label: 'Mega FX 0105', category: 'anomaly', visual: 'Layered profile 0105 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0105' },
-  { id: 'mega-fx-0106', label: 'Mega FX 0106', category: 'anomaly', visual: 'Layered profile 0106 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0106' },
-  { id: 'mega-fx-0107', label: 'Mega FX 0107', category: 'anomaly', visual: 'Layered profile 0107 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0107' },
-  { id: 'mega-fx-0108', label: 'Mega FX 0108', category: 'anomaly', visual: 'Layered profile 0108 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0108' },
-  { id: 'mega-fx-0109', label: 'Mega FX 0109', category: 'anomaly', visual: 'Layered profile 0109 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0109' },
-  { id: 'mega-fx-0110', label: 'Mega FX 0110', category: 'anomaly', visual: 'Layered profile 0110 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0110' },
-  { id: 'mega-fx-0111', label: 'Mega FX 0111', category: 'anomaly', visual: 'Layered profile 0111 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0111' },
-  { id: 'mega-fx-0112', label: 'Mega FX 0112', category: 'anomaly', visual: 'Layered profile 0112 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0112' },
-  { id: 'mega-fx-0113', label: 'Mega FX 0113', category: 'anomaly', visual: 'Layered profile 0113 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0113' },
-  { id: 'mega-fx-0114', label: 'Mega FX 0114', category: 'anomaly', visual: 'Layered profile 0114 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0114' },
-  { id: 'mega-fx-0115', label: 'Mega FX 0115', category: 'anomaly', visual: 'Layered profile 0115 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0115' },
-  { id: 'mega-fx-0116', label: 'Mega FX 0116', category: 'anomaly', visual: 'Layered profile 0116 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0116' },
-  { id: 'mega-fx-0117', label: 'Mega FX 0117', category: 'anomaly', visual: 'Layered profile 0117 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0117' },
-  { id: 'mega-fx-0118', label: 'Mega FX 0118', category: 'anomaly', visual: 'Layered profile 0118 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0118' },
-  { id: 'mega-fx-0119', label: 'Mega FX 0119', category: 'anomaly', visual: 'Layered profile 0119 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0119' },
-  { id: 'mega-fx-0120', label: 'Mega FX 0120', category: 'anomaly', visual: 'Layered profile 0120 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0120' },
-  { id: 'mega-fx-0121', label: 'Mega FX 0121', category: 'anomaly', visual: 'Layered profile 0121 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0121' },
-  { id: 'mega-fx-0122', label: 'Mega FX 0122', category: 'anomaly', visual: 'Layered profile 0122 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0122' },
-  { id: 'mega-fx-0123', label: 'Mega FX 0123', category: 'anomaly', visual: 'Layered profile 0123 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0123' },
-  { id: 'mega-fx-0124', label: 'Mega FX 0124', category: 'anomaly', visual: 'Layered profile 0124 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0124' },
-  { id: 'mega-fx-0125', label: 'Mega FX 0125', category: 'anomaly', visual: 'Layered profile 0125 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0125' },
-  { id: 'mega-fx-0126', label: 'Mega FX 0126', category: 'anomaly', visual: 'Layered profile 0126 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0126' },
-  { id: 'mega-fx-0127', label: 'Mega FX 0127', category: 'anomaly', visual: 'Layered profile 0127 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0127' },
-  { id: 'mega-fx-0128', label: 'Mega FX 0128', category: 'anomaly', visual: 'Layered profile 0128 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0128' },
-  { id: 'mega-fx-0129', label: 'Mega FX 0129', category: 'anomaly', visual: 'Layered profile 0129 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0129' },
-  { id: 'mega-fx-0130', label: 'Mega FX 0130', category: 'anomaly', visual: 'Layered profile 0130 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0130' },
-  { id: 'mega-fx-0131', label: 'Mega FX 0131', category: 'anomaly', visual: 'Layered profile 0131 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0131' },
-  { id: 'mega-fx-0132', label: 'Mega FX 0132', category: 'anomaly', visual: 'Layered profile 0132 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0132' },
-  { id: 'mega-fx-0133', label: 'Mega FX 0133', category: 'anomaly', visual: 'Layered profile 0133 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0133' },
-  { id: 'mega-fx-0134', label: 'Mega FX 0134', category: 'anomaly', visual: 'Layered profile 0134 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0134' },
-  { id: 'mega-fx-0135', label: 'Mega FX 0135', category: 'anomaly', visual: 'Layered profile 0135 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0135' },
-  { id: 'mega-fx-0136', label: 'Mega FX 0136', category: 'anomaly', visual: 'Layered profile 0136 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0136' },
-  { id: 'mega-fx-0137', label: 'Mega FX 0137', category: 'anomaly', visual: 'Layered profile 0137 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0137' },
-  { id: 'mega-fx-0138', label: 'Mega FX 0138', category: 'anomaly', visual: 'Layered profile 0138 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0138' },
-  { id: 'mega-fx-0139', label: 'Mega FX 0139', category: 'anomaly', visual: 'Layered profile 0139 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0139' },
-  { id: 'mega-fx-0140', label: 'Mega FX 0140', category: 'anomaly', visual: 'Layered profile 0140 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0140' },
-  { id: 'mega-fx-0141', label: 'Mega FX 0141', category: 'anomaly', visual: 'Layered profile 0141 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0141' },
-  { id: 'mega-fx-0142', label: 'Mega FX 0142', category: 'anomaly', visual: 'Layered profile 0142 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0142' },
-  { id: 'mega-fx-0143', label: 'Mega FX 0143', category: 'anomaly', visual: 'Layered profile 0143 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0143' },
-  { id: 'mega-fx-0144', label: 'Mega FX 0144', category: 'anomaly', visual: 'Layered profile 0144 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0144' },
-  { id: 'mega-fx-0145', label: 'Mega FX 0145', category: 'anomaly', visual: 'Layered profile 0145 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0145' },
-  { id: 'mega-fx-0146', label: 'Mega FX 0146', category: 'anomaly', visual: 'Layered profile 0146 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0146' },
-  { id: 'mega-fx-0147', label: 'Mega FX 0147', category: 'anomaly', visual: 'Layered profile 0147 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0147' },
-  { id: 'mega-fx-0148', label: 'Mega FX 0148', category: 'anomaly', visual: 'Layered profile 0148 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0148' },
-  { id: 'mega-fx-0149', label: 'Mega FX 0149', category: 'anomaly', visual: 'Layered profile 0149 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0149' },
-  { id: 'mega-fx-0150', label: 'Mega FX 0150', category: 'anomaly', visual: 'Layered profile 0150 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0150' },
-  { id: 'mega-fx-0151', label: 'Mega FX 0151', category: 'anomaly', visual: 'Layered profile 0151 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0151' },
-  { id: 'mega-fx-0152', label: 'Mega FX 0152', category: 'anomaly', visual: 'Layered profile 0152 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0152' },
-  { id: 'mega-fx-0153', label: 'Mega FX 0153', category: 'anomaly', visual: 'Layered profile 0153 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0153' },
-  { id: 'mega-fx-0154', label: 'Mega FX 0154', category: 'anomaly', visual: 'Layered profile 0154 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0154' },
-  { id: 'mega-fx-0155', label: 'Mega FX 0155', category: 'anomaly', visual: 'Layered profile 0155 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0155' },
-  { id: 'mega-fx-0156', label: 'Mega FX 0156', category: 'anomaly', visual: 'Layered profile 0156 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0156' },
-  { id: 'mega-fx-0157', label: 'Mega FX 0157', category: 'anomaly', visual: 'Layered profile 0157 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0157' },
-  { id: 'mega-fx-0158', label: 'Mega FX 0158', category: 'anomaly', visual: 'Layered profile 0158 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0158' },
-  { id: 'mega-fx-0159', label: 'Mega FX 0159', category: 'anomaly', visual: 'Layered profile 0159 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0159' },
-  { id: 'mega-fx-0160', label: 'Mega FX 0160', category: 'anomaly', visual: 'Layered profile 0160 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0160' },
-  { id: 'mega-fx-0161', label: 'Mega FX 0161', category: 'anomaly', visual: 'Layered profile 0161 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0161' },
-  { id: 'mega-fx-0162', label: 'Mega FX 0162', category: 'anomaly', visual: 'Layered profile 0162 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0162' },
-  { id: 'mega-fx-0163', label: 'Mega FX 0163', category: 'anomaly', visual: 'Layered profile 0163 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0163' },
-  { id: 'mega-fx-0164', label: 'Mega FX 0164', category: 'anomaly', visual: 'Layered profile 0164 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0164' },
-  { id: 'mega-fx-0165', label: 'Mega FX 0165', category: 'anomaly', visual: 'Layered profile 0165 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0165' },
-  { id: 'mega-fx-0166', label: 'Mega FX 0166', category: 'anomaly', visual: 'Layered profile 0166 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0166' },
-  { id: 'mega-fx-0167', label: 'Mega FX 0167', category: 'anomaly', visual: 'Layered profile 0167 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0167' },
-  { id: 'mega-fx-0168', label: 'Mega FX 0168', category: 'anomaly', visual: 'Layered profile 0168 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0168' },
-  { id: 'mega-fx-0169', label: 'Mega FX 0169', category: 'anomaly', visual: 'Layered profile 0169 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0169' },
-  { id: 'mega-fx-0170', label: 'Mega FX 0170', category: 'anomaly', visual: 'Layered profile 0170 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0170' },
-  { id: 'mega-fx-0171', label: 'Mega FX 0171', category: 'anomaly', visual: 'Layered profile 0171 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0171' },
-  { id: 'mega-fx-0172', label: 'Mega FX 0172', category: 'anomaly', visual: 'Layered profile 0172 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0172' },
-  { id: 'mega-fx-0173', label: 'Mega FX 0173', category: 'anomaly', visual: 'Layered profile 0173 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0173' },
-  { id: 'mega-fx-0174', label: 'Mega FX 0174', category: 'anomaly', visual: 'Layered profile 0174 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0174' },
-  { id: 'mega-fx-0175', label: 'Mega FX 0175', category: 'anomaly', visual: 'Layered profile 0175 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0175' },
-  { id: 'mega-fx-0176', label: 'Mega FX 0176', category: 'anomaly', visual: 'Layered profile 0176 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0176' },
-  { id: 'mega-fx-0177', label: 'Mega FX 0177', category: 'anomaly', visual: 'Layered profile 0177 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0177' },
-  { id: 'mega-fx-0178', label: 'Mega FX 0178', category: 'anomaly', visual: 'Layered profile 0178 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0178' },
-  { id: 'mega-fx-0179', label: 'Mega FX 0179', category: 'anomaly', visual: 'Layered profile 0179 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0179' },
-  { id: 'mega-fx-0180', label: 'Mega FX 0180', category: 'anomaly', visual: 'Layered profile 0180 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0180' },
-  { id: 'mega-fx-0181', label: 'Mega FX 0181', category: 'anomaly', visual: 'Layered profile 0181 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0181' },
-  { id: 'mega-fx-0182', label: 'Mega FX 0182', category: 'anomaly', visual: 'Layered profile 0182 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0182' },
-  { id: 'mega-fx-0183', label: 'Mega FX 0183', category: 'anomaly', visual: 'Layered profile 0183 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0183' },
-  { id: 'mega-fx-0184', label: 'Mega FX 0184', category: 'anomaly', visual: 'Layered profile 0184 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0184' },
-  { id: 'mega-fx-0185', label: 'Mega FX 0185', category: 'anomaly', visual: 'Layered profile 0185 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0185' },
-  { id: 'mega-fx-0186', label: 'Mega FX 0186', category: 'anomaly', visual: 'Layered profile 0186 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0186' },
-  { id: 'mega-fx-0187', label: 'Mega FX 0187', category: 'anomaly', visual: 'Layered profile 0187 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0187' },
-  { id: 'mega-fx-0188', label: 'Mega FX 0188', category: 'anomaly', visual: 'Layered profile 0188 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0188' },
-  { id: 'mega-fx-0189', label: 'Mega FX 0189', category: 'anomaly', visual: 'Layered profile 0189 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0189' },
-  { id: 'mega-fx-0190', label: 'Mega FX 0190', category: 'anomaly', visual: 'Layered profile 0190 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0190' },
-  { id: 'mega-fx-0191', label: 'Mega FX 0191', category: 'anomaly', visual: 'Layered profile 0191 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0191' },
-  { id: 'mega-fx-0192', label: 'Mega FX 0192', category: 'anomaly', visual: 'Layered profile 0192 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0192' },
-  { id: 'mega-fx-0193', label: 'Mega FX 0193', category: 'anomaly', visual: 'Layered profile 0193 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0193' },
-  { id: 'mega-fx-0194', label: 'Mega FX 0194', category: 'anomaly', visual: 'Layered profile 0194 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0194' },
-  { id: 'mega-fx-0195', label: 'Mega FX 0195', category: 'anomaly', visual: 'Layered profile 0195 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0195' },
-  { id: 'mega-fx-0196', label: 'Mega FX 0196', category: 'anomaly', visual: 'Layered profile 0196 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0196' },
-  { id: 'mega-fx-0197', label: 'Mega FX 0197', category: 'anomaly', visual: 'Layered profile 0197 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0197' },
-  { id: 'mega-fx-0198', label: 'Mega FX 0198', category: 'anomaly', visual: 'Layered profile 0198 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0198' },
-  { id: 'mega-fx-0199', label: 'Mega FX 0199', category: 'anomaly', visual: 'Layered profile 0199 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0199' },
-  { id: 'mega-fx-0200', label: 'Mega FX 0200', category: 'anomaly', visual: 'Layered profile 0200 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0200' },
-  { id: 'mega-fx-0201', label: 'Mega FX 0201', category: 'anomaly', visual: 'Layered profile 0201 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0201' },
-  { id: 'mega-fx-0202', label: 'Mega FX 0202', category: 'anomaly', visual: 'Layered profile 0202 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0202' },
-  { id: 'mega-fx-0203', label: 'Mega FX 0203', category: 'anomaly', visual: 'Layered profile 0203 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0203' },
-  { id: 'mega-fx-0204', label: 'Mega FX 0204', category: 'anomaly', visual: 'Layered profile 0204 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0204' },
-  { id: 'mega-fx-0205', label: 'Mega FX 0205', category: 'anomaly', visual: 'Layered profile 0205 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0205' },
-  { id: 'mega-fx-0206', label: 'Mega FX 0206', category: 'anomaly', visual: 'Layered profile 0206 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0206' },
-  { id: 'mega-fx-0207', label: 'Mega FX 0207', category: 'anomaly', visual: 'Layered profile 0207 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0207' },
-  { id: 'mega-fx-0208', label: 'Mega FX 0208', category: 'anomaly', visual: 'Layered profile 0208 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0208' },
-  { id: 'mega-fx-0209', label: 'Mega FX 0209', category: 'anomaly', visual: 'Layered profile 0209 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0209' },
-  { id: 'mega-fx-0210', label: 'Mega FX 0210', category: 'anomaly', visual: 'Layered profile 0210 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0210' },
-  { id: 'mega-fx-0211', label: 'Mega FX 0211', category: 'anomaly', visual: 'Layered profile 0211 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0211' },
-  { id: 'mega-fx-0212', label: 'Mega FX 0212', category: 'anomaly', visual: 'Layered profile 0212 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0212' },
-  { id: 'mega-fx-0213', label: 'Mega FX 0213', category: 'anomaly', visual: 'Layered profile 0213 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0213' },
-  { id: 'mega-fx-0214', label: 'Mega FX 0214', category: 'anomaly', visual: 'Layered profile 0214 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0214' },
-  { id: 'mega-fx-0215', label: 'Mega FX 0215', category: 'anomaly', visual: 'Layered profile 0215 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0215' },
-  { id: 'mega-fx-0216', label: 'Mega FX 0216', category: 'anomaly', visual: 'Layered profile 0216 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0216' },
-  { id: 'mega-fx-0217', label: 'Mega FX 0217', category: 'anomaly', visual: 'Layered profile 0217 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0217' },
-  { id: 'mega-fx-0218', label: 'Mega FX 0218', category: 'anomaly', visual: 'Layered profile 0218 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0218' },
-  { id: 'mega-fx-0219', label: 'Mega FX 0219', category: 'anomaly', visual: 'Layered profile 0219 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0219' },
-  { id: 'mega-fx-0220', label: 'Mega FX 0220', category: 'anomaly', visual: 'Layered profile 0220 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0220' },
-  { id: 'mega-fx-0221', label: 'Mega FX 0221', category: 'anomaly', visual: 'Layered profile 0221 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0221' },
-  { id: 'mega-fx-0222', label: 'Mega FX 0222', category: 'anomaly', visual: 'Layered profile 0222 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0222' },
-  { id: 'mega-fx-0223', label: 'Mega FX 0223', category: 'anomaly', visual: 'Layered profile 0223 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0223' },
-  { id: 'mega-fx-0224', label: 'Mega FX 0224', category: 'anomaly', visual: 'Layered profile 0224 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0224' },
-  { id: 'mega-fx-0225', label: 'Mega FX 0225', category: 'anomaly', visual: 'Layered profile 0225 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0225' },
-  { id: 'mega-fx-0226', label: 'Mega FX 0226', category: 'anomaly', visual: 'Layered profile 0226 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0226' },
-  { id: 'mega-fx-0227', label: 'Mega FX 0227', category: 'anomaly', visual: 'Layered profile 0227 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0227' },
-  { id: 'mega-fx-0228', label: 'Mega FX 0228', category: 'anomaly', visual: 'Layered profile 0228 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0228' },
-  { id: 'mega-fx-0229', label: 'Mega FX 0229', category: 'anomaly', visual: 'Layered profile 0229 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0229' },
-  { id: 'mega-fx-0230', label: 'Mega FX 0230', category: 'anomaly', visual: 'Layered profile 0230 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0230' },
-  { id: 'mega-fx-0231', label: 'Mega FX 0231', category: 'anomaly', visual: 'Layered profile 0231 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0231' },
-  { id: 'mega-fx-0232', label: 'Mega FX 0232', category: 'anomaly', visual: 'Layered profile 0232 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0232' },
-  { id: 'mega-fx-0233', label: 'Mega FX 0233', category: 'anomaly', visual: 'Layered profile 0233 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0233' },
-  { id: 'mega-fx-0234', label: 'Mega FX 0234', category: 'anomaly', visual: 'Layered profile 0234 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0234' },
-  { id: 'mega-fx-0235', label: 'Mega FX 0235', category: 'anomaly', visual: 'Layered profile 0235 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0235' },
-  { id: 'mega-fx-0236', label: 'Mega FX 0236', category: 'anomaly', visual: 'Layered profile 0236 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0236' },
-  { id: 'mega-fx-0237', label: 'Mega FX 0237', category: 'anomaly', visual: 'Layered profile 0237 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0237' },
-  { id: 'mega-fx-0238', label: 'Mega FX 0238', category: 'anomaly', visual: 'Layered profile 0238 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0238' },
-  { id: 'mega-fx-0239', label: 'Mega FX 0239', category: 'anomaly', visual: 'Layered profile 0239 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0239' },
-  { id: 'mega-fx-0240', label: 'Mega FX 0240', category: 'anomaly', visual: 'Layered profile 0240 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0240' },
-  { id: 'mega-fx-0241', label: 'Mega FX 0241', category: 'anomaly', visual: 'Layered profile 0241 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0241' },
-  { id: 'mega-fx-0242', label: 'Mega FX 0242', category: 'anomaly', visual: 'Layered profile 0242 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0242' },
-  { id: 'mega-fx-0243', label: 'Mega FX 0243', category: 'anomaly', visual: 'Layered profile 0243 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0243' },
-  { id: 'mega-fx-0244', label: 'Mega FX 0244', category: 'anomaly', visual: 'Layered profile 0244 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0244' },
-  { id: 'mega-fx-0245', label: 'Mega FX 0245', category: 'anomaly', visual: 'Layered profile 0245 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0245' },
-  { id: 'mega-fx-0246', label: 'Mega FX 0246', category: 'anomaly', visual: 'Layered profile 0246 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0246' },
-  { id: 'mega-fx-0247', label: 'Mega FX 0247', category: 'anomaly', visual: 'Layered profile 0247 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0247' },
-  { id: 'mega-fx-0248', label: 'Mega FX 0248', category: 'anomaly', visual: 'Layered profile 0248 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0248' },
-  { id: 'mega-fx-0249', label: 'Mega FX 0249', category: 'anomaly', visual: 'Layered profile 0249 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0249' },
-  { id: 'mega-fx-0250', label: 'Mega FX 0250', category: 'anomaly', visual: 'Layered profile 0250 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0250' },
-  { id: 'mega-fx-0251', label: 'Mega FX 0251', category: 'anomaly', visual: 'Layered profile 0251 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0251' },
-  { id: 'mega-fx-0252', label: 'Mega FX 0252', category: 'anomaly', visual: 'Layered profile 0252 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0252' },
-  { id: 'mega-fx-0253', label: 'Mega FX 0253', category: 'anomaly', visual: 'Layered profile 0253 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0253' },
-  { id: 'mega-fx-0254', label: 'Mega FX 0254', category: 'anomaly', visual: 'Layered profile 0254 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0254' },
-  { id: 'mega-fx-0255', label: 'Mega FX 0255', category: 'anomaly', visual: 'Layered profile 0255 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0255' },
-  { id: 'mega-fx-0256', label: 'Mega FX 0256', category: 'anomaly', visual: 'Layered profile 0256 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0256' },
-  { id: 'mega-fx-0257', label: 'Mega FX 0257', category: 'anomaly', visual: 'Layered profile 0257 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0257' },
-  { id: 'mega-fx-0258', label: 'Mega FX 0258', category: 'anomaly', visual: 'Layered profile 0258 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0258' },
-  { id: 'mega-fx-0259', label: 'Mega FX 0259', category: 'anomaly', visual: 'Layered profile 0259 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0259' },
-  { id: 'mega-fx-0260', label: 'Mega FX 0260', category: 'anomaly', visual: 'Layered profile 0260 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0260' },
-  { id: 'mega-fx-0261', label: 'Mega FX 0261', category: 'anomaly', visual: 'Layered profile 0261 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0261' },
-  { id: 'mega-fx-0262', label: 'Mega FX 0262', category: 'anomaly', visual: 'Layered profile 0262 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0262' },
-  { id: 'mega-fx-0263', label: 'Mega FX 0263', category: 'anomaly', visual: 'Layered profile 0263 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0263' },
-  { id: 'mega-fx-0264', label: 'Mega FX 0264', category: 'anomaly', visual: 'Layered profile 0264 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0264' },
-  { id: 'mega-fx-0265', label: 'Mega FX 0265', category: 'anomaly', visual: 'Layered profile 0265 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0265' },
-  { id: 'mega-fx-0266', label: 'Mega FX 0266', category: 'anomaly', visual: 'Layered profile 0266 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0266' },
-  { id: 'mega-fx-0267', label: 'Mega FX 0267', category: 'anomaly', visual: 'Layered profile 0267 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0267' },
-  { id: 'mega-fx-0268', label: 'Mega FX 0268', category: 'anomaly', visual: 'Layered profile 0268 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0268' },
-  { id: 'mega-fx-0269', label: 'Mega FX 0269', category: 'anomaly', visual: 'Layered profile 0269 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0269' },
-  { id: 'mega-fx-0270', label: 'Mega FX 0270', category: 'anomaly', visual: 'Layered profile 0270 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0270' },
-  { id: 'mega-fx-0271', label: 'Mega FX 0271', category: 'anomaly', visual: 'Layered profile 0271 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0271' },
-  { id: 'mega-fx-0272', label: 'Mega FX 0272', category: 'anomaly', visual: 'Layered profile 0272 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0272' },
-  { id: 'mega-fx-0273', label: 'Mega FX 0273', category: 'anomaly', visual: 'Layered profile 0273 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0273' },
-  { id: 'mega-fx-0274', label: 'Mega FX 0274', category: 'anomaly', visual: 'Layered profile 0274 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0274' },
-  { id: 'mega-fx-0275', label: 'Mega FX 0275', category: 'anomaly', visual: 'Layered profile 0275 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0275' },
-  { id: 'mega-fx-0276', label: 'Mega FX 0276', category: 'anomaly', visual: 'Layered profile 0276 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0276' },
-  { id: 'mega-fx-0277', label: 'Mega FX 0277', category: 'anomaly', visual: 'Layered profile 0277 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0277' },
-  { id: 'mega-fx-0278', label: 'Mega FX 0278', category: 'anomaly', visual: 'Layered profile 0278 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0278' },
-  { id: 'mega-fx-0279', label: 'Mega FX 0279', category: 'anomaly', visual: 'Layered profile 0279 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0279' },
-  { id: 'mega-fx-0280', label: 'Mega FX 0280', category: 'anomaly', visual: 'Layered profile 0280 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0280' },
-  { id: 'mega-fx-0281', label: 'Mega FX 0281', category: 'anomaly', visual: 'Layered profile 0281 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0281' },
-  { id: 'mega-fx-0282', label: 'Mega FX 0282', category: 'anomaly', visual: 'Layered profile 0282 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0282' },
-  { id: 'mega-fx-0283', label: 'Mega FX 0283', category: 'anomaly', visual: 'Layered profile 0283 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0283' },
-  { id: 'mega-fx-0284', label: 'Mega FX 0284', category: 'anomaly', visual: 'Layered profile 0284 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0284' },
-  { id: 'mega-fx-0285', label: 'Mega FX 0285', category: 'anomaly', visual: 'Layered profile 0285 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0285' },
-  { id: 'mega-fx-0286', label: 'Mega FX 0286', category: 'anomaly', visual: 'Layered profile 0286 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0286' },
-  { id: 'mega-fx-0287', label: 'Mega FX 0287', category: 'anomaly', visual: 'Layered profile 0287 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0287' },
-  { id: 'mega-fx-0288', label: 'Mega FX 0288', category: 'anomaly', visual: 'Layered profile 0288 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0288' },
-  { id: 'mega-fx-0289', label: 'Mega FX 0289', category: 'anomaly', visual: 'Layered profile 0289 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0289' },
-  { id: 'mega-fx-0290', label: 'Mega FX 0290', category: 'anomaly', visual: 'Layered profile 0290 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0290' },
-  { id: 'mega-fx-0291', label: 'Mega FX 0291', category: 'anomaly', visual: 'Layered profile 0291 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0291' },
-  { id: 'mega-fx-0292', label: 'Mega FX 0292', category: 'anomaly', visual: 'Layered profile 0292 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0292' },
-  { id: 'mega-fx-0293', label: 'Mega FX 0293', category: 'anomaly', visual: 'Layered profile 0293 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0293' },
-  { id: 'mega-fx-0294', label: 'Mega FX 0294', category: 'anomaly', visual: 'Layered profile 0294 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0294' },
-  { id: 'mega-fx-0295', label: 'Mega FX 0295', category: 'anomaly', visual: 'Layered profile 0295 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0295' },
-  { id: 'mega-fx-0296', label: 'Mega FX 0296', category: 'anomaly', visual: 'Layered profile 0296 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0296' },
-  { id: 'mega-fx-0297', label: 'Mega FX 0297', category: 'anomaly', visual: 'Layered profile 0297 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0297' },
-  { id: 'mega-fx-0298', label: 'Mega FX 0298', category: 'anomaly', visual: 'Layered profile 0298 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0298' },
-  { id: 'mega-fx-0299', label: 'Mega FX 0299', category: 'anomaly', visual: 'Layered profile 0299 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0299' },
-  { id: 'mega-fx-0300', label: 'Mega FX 0300', category: 'anomaly', visual: 'Layered profile 0300 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0300' },
-  { id: 'mega-fx-0301', label: 'Mega FX 0301', category: 'anomaly', visual: 'Layered profile 0301 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0301' },
-  { id: 'mega-fx-0302', label: 'Mega FX 0302', category: 'anomaly', visual: 'Layered profile 0302 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0302' },
-  { id: 'mega-fx-0303', label: 'Mega FX 0303', category: 'anomaly', visual: 'Layered profile 0303 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0303' },
-  { id: 'mega-fx-0304', label: 'Mega FX 0304', category: 'anomaly', visual: 'Layered profile 0304 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0304' },
-  { id: 'mega-fx-0305', label: 'Mega FX 0305', category: 'anomaly', visual: 'Layered profile 0305 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0305' },
-  { id: 'mega-fx-0306', label: 'Mega FX 0306', category: 'anomaly', visual: 'Layered profile 0306 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0306' },
-  { id: 'mega-fx-0307', label: 'Mega FX 0307', category: 'anomaly', visual: 'Layered profile 0307 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0307' },
-  { id: 'mega-fx-0308', label: 'Mega FX 0308', category: 'anomaly', visual: 'Layered profile 0308 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0308' },
-  { id: 'mega-fx-0309', label: 'Mega FX 0309', category: 'anomaly', visual: 'Layered profile 0309 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0309' },
-  { id: 'mega-fx-0310', label: 'Mega FX 0310', category: 'anomaly', visual: 'Layered profile 0310 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0310' },
-  { id: 'mega-fx-0311', label: 'Mega FX 0311', category: 'anomaly', visual: 'Layered profile 0311 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0311' },
-  { id: 'mega-fx-0312', label: 'Mega FX 0312', category: 'anomaly', visual: 'Layered profile 0312 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0312' },
-  { id: 'mega-fx-0313', label: 'Mega FX 0313', category: 'anomaly', visual: 'Layered profile 0313 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0313' },
-  { id: 'mega-fx-0314', label: 'Mega FX 0314', category: 'anomaly', visual: 'Layered profile 0314 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0314' },
-  { id: 'mega-fx-0315', label: 'Mega FX 0315', category: 'anomaly', visual: 'Layered profile 0315 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0315' },
-  { id: 'mega-fx-0316', label: 'Mega FX 0316', category: 'anomaly', visual: 'Layered profile 0316 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0316' },
-  { id: 'mega-fx-0317', label: 'Mega FX 0317', category: 'anomaly', visual: 'Layered profile 0317 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0317' },
-  { id: 'mega-fx-0318', label: 'Mega FX 0318', category: 'anomaly', visual: 'Layered profile 0318 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0318' },
-  { id: 'mega-fx-0319', label: 'Mega FX 0319', category: 'anomaly', visual: 'Layered profile 0319 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0319' },
-  { id: 'mega-fx-0320', label: 'Mega FX 0320', category: 'anomaly', visual: 'Layered profile 0320 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0320' },
-  { id: 'mega-fx-0321', label: 'Mega FX 0321', category: 'anomaly', visual: 'Layered profile 0321 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0321' },
-  { id: 'mega-fx-0322', label: 'Mega FX 0322', category: 'anomaly', visual: 'Layered profile 0322 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0322' },
-  { id: 'mega-fx-0323', label: 'Mega FX 0323', category: 'anomaly', visual: 'Layered profile 0323 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0323' },
-  { id: 'mega-fx-0324', label: 'Mega FX 0324', category: 'anomaly', visual: 'Layered profile 0324 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0324' },
-  { id: 'mega-fx-0325', label: 'Mega FX 0325', category: 'anomaly', visual: 'Layered profile 0325 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0325' },
-  { id: 'mega-fx-0326', label: 'Mega FX 0326', category: 'anomaly', visual: 'Layered profile 0326 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0326' },
-  { id: 'mega-fx-0327', label: 'Mega FX 0327', category: 'anomaly', visual: 'Layered profile 0327 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0327' },
-  { id: 'mega-fx-0328', label: 'Mega FX 0328', category: 'anomaly', visual: 'Layered profile 0328 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0328' },
-  { id: 'mega-fx-0329', label: 'Mega FX 0329', category: 'anomaly', visual: 'Layered profile 0329 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0329' },
-  { id: 'mega-fx-0330', label: 'Mega FX 0330', category: 'anomaly', visual: 'Layered profile 0330 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0330' },
-  { id: 'mega-fx-0331', label: 'Mega FX 0331', category: 'anomaly', visual: 'Layered profile 0331 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0331' },
-  { id: 'mega-fx-0332', label: 'Mega FX 0332', category: 'anomaly', visual: 'Layered profile 0332 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0332' },
-  { id: 'mega-fx-0333', label: 'Mega FX 0333', category: 'anomaly', visual: 'Layered profile 0333 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0333' },
-  { id: 'mega-fx-0334', label: 'Mega FX 0334', category: 'anomaly', visual: 'Layered profile 0334 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0334' },
-  { id: 'mega-fx-0335', label: 'Mega FX 0335', category: 'anomaly', visual: 'Layered profile 0335 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0335' },
-  { id: 'mega-fx-0336', label: 'Mega FX 0336', category: 'anomaly', visual: 'Layered profile 0336 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0336' },
-  { id: 'mega-fx-0337', label: 'Mega FX 0337', category: 'anomaly', visual: 'Layered profile 0337 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0337' },
-  { id: 'mega-fx-0338', label: 'Mega FX 0338', category: 'anomaly', visual: 'Layered profile 0338 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0338' },
-  { id: 'mega-fx-0339', label: 'Mega FX 0339', category: 'anomaly', visual: 'Layered profile 0339 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0339' },
-  { id: 'mega-fx-0340', label: 'Mega FX 0340', category: 'anomaly', visual: 'Layered profile 0340 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0340' },
-  { id: 'mega-fx-0341', label: 'Mega FX 0341', category: 'anomaly', visual: 'Layered profile 0341 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0341' },
-  { id: 'mega-fx-0342', label: 'Mega FX 0342', category: 'anomaly', visual: 'Layered profile 0342 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0342' },
-  { id: 'mega-fx-0343', label: 'Mega FX 0343', category: 'anomaly', visual: 'Layered profile 0343 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0343' },
-  { id: 'mega-fx-0344', label: 'Mega FX 0344', category: 'anomaly', visual: 'Layered profile 0344 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0344' },
-  { id: 'mega-fx-0345', label: 'Mega FX 0345', category: 'anomaly', visual: 'Layered profile 0345 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0345' },
-  { id: 'mega-fx-0346', label: 'Mega FX 0346', category: 'anomaly', visual: 'Layered profile 0346 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0346' },
-  { id: 'mega-fx-0347', label: 'Mega FX 0347', category: 'anomaly', visual: 'Layered profile 0347 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0347' },
-  { id: 'mega-fx-0348', label: 'Mega FX 0348', category: 'anomaly', visual: 'Layered profile 0348 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0348' },
-  { id: 'mega-fx-0349', label: 'Mega FX 0349', category: 'anomaly', visual: 'Layered profile 0349 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0349' },
-  { id: 'mega-fx-0350', label: 'Mega FX 0350', category: 'anomaly', visual: 'Layered profile 0350 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0350' },
-  { id: 'mega-fx-0351', label: 'Mega FX 0351', category: 'anomaly', visual: 'Layered profile 0351 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0351' },
-  { id: 'mega-fx-0352', label: 'Mega FX 0352', category: 'anomaly', visual: 'Layered profile 0352 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0352' },
-  { id: 'mega-fx-0353', label: 'Mega FX 0353', category: 'anomaly', visual: 'Layered profile 0353 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0353' },
-  { id: 'mega-fx-0354', label: 'Mega FX 0354', category: 'anomaly', visual: 'Layered profile 0354 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0354' },
-  { id: 'mega-fx-0355', label: 'Mega FX 0355', category: 'anomaly', visual: 'Layered profile 0355 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0355' },
-  { id: 'mega-fx-0356', label: 'Mega FX 0356', category: 'anomaly', visual: 'Layered profile 0356 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0356' },
-  { id: 'mega-fx-0357', label: 'Mega FX 0357', category: 'anomaly', visual: 'Layered profile 0357 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0357' },
-  { id: 'mega-fx-0358', label: 'Mega FX 0358', category: 'anomaly', visual: 'Layered profile 0358 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0358' },
-  { id: 'mega-fx-0359', label: 'Mega FX 0359', category: 'anomaly', visual: 'Layered profile 0359 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0359' },
-  { id: 'mega-fx-0360', label: 'Mega FX 0360', category: 'anomaly', visual: 'Layered profile 0360 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0360' },
-  { id: 'mega-fx-0361', label: 'Mega FX 0361', category: 'anomaly', visual: 'Layered profile 0361 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0361' },
-  { id: 'mega-fx-0362', label: 'Mega FX 0362', category: 'anomaly', visual: 'Layered profile 0362 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0362' },
-  { id: 'mega-fx-0363', label: 'Mega FX 0363', category: 'anomaly', visual: 'Layered profile 0363 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0363' },
-  { id: 'mega-fx-0364', label: 'Mega FX 0364', category: 'anomaly', visual: 'Layered profile 0364 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0364' },
-  { id: 'mega-fx-0365', label: 'Mega FX 0365', category: 'anomaly', visual: 'Layered profile 0365 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0365' },
-  { id: 'mega-fx-0366', label: 'Mega FX 0366', category: 'anomaly', visual: 'Layered profile 0366 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0366' },
-  { id: 'mega-fx-0367', label: 'Mega FX 0367', category: 'anomaly', visual: 'Layered profile 0367 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0367' },
-  { id: 'mega-fx-0368', label: 'Mega FX 0368', category: 'anomaly', visual: 'Layered profile 0368 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0368' },
-  { id: 'mega-fx-0369', label: 'Mega FX 0369', category: 'anomaly', visual: 'Layered profile 0369 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0369' },
-  { id: 'mega-fx-0370', label: 'Mega FX 0370', category: 'anomaly', visual: 'Layered profile 0370 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0370' },
-  { id: 'mega-fx-0371', label: 'Mega FX 0371', category: 'anomaly', visual: 'Layered profile 0371 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0371' },
-  { id: 'mega-fx-0372', label: 'Mega FX 0372', category: 'anomaly', visual: 'Layered profile 0372 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0372' },
-  { id: 'mega-fx-0373', label: 'Mega FX 0373', category: 'anomaly', visual: 'Layered profile 0373 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0373' },
-  { id: 'mega-fx-0374', label: 'Mega FX 0374', category: 'anomaly', visual: 'Layered profile 0374 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0374' },
-  { id: 'mega-fx-0375', label: 'Mega FX 0375', category: 'anomaly', visual: 'Layered profile 0375 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0375' },
-  { id: 'mega-fx-0376', label: 'Mega FX 0376', category: 'anomaly', visual: 'Layered profile 0376 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0376' },
-  { id: 'mega-fx-0377', label: 'Mega FX 0377', category: 'anomaly', visual: 'Layered profile 0377 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0377' },
-  { id: 'mega-fx-0378', label: 'Mega FX 0378', category: 'anomaly', visual: 'Layered profile 0378 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0378' },
-  { id: 'mega-fx-0379', label: 'Mega FX 0379', category: 'anomaly', visual: 'Layered profile 0379 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0379' },
-  { id: 'mega-fx-0380', label: 'Mega FX 0380', category: 'anomaly', visual: 'Layered profile 0380 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0380' },
-  { id: 'mega-fx-0381', label: 'Mega FX 0381', category: 'anomaly', visual: 'Layered profile 0381 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0381' },
-  { id: 'mega-fx-0382', label: 'Mega FX 0382', category: 'anomaly', visual: 'Layered profile 0382 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0382' },
-  { id: 'mega-fx-0383', label: 'Mega FX 0383', category: 'anomaly', visual: 'Layered profile 0383 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0383' },
-  { id: 'mega-fx-0384', label: 'Mega FX 0384', category: 'anomaly', visual: 'Layered profile 0384 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0384' },
-  { id: 'mega-fx-0385', label: 'Mega FX 0385', category: 'anomaly', visual: 'Layered profile 0385 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0385' },
-  { id: 'mega-fx-0386', label: 'Mega FX 0386', category: 'anomaly', visual: 'Layered profile 0386 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0386' },
-  { id: 'mega-fx-0387', label: 'Mega FX 0387', category: 'anomaly', visual: 'Layered profile 0387 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0387' },
-  { id: 'mega-fx-0388', label: 'Mega FX 0388', category: 'anomaly', visual: 'Layered profile 0388 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0388' },
-  { id: 'mega-fx-0389', label: 'Mega FX 0389', category: 'anomaly', visual: 'Layered profile 0389 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0389' },
-  { id: 'mega-fx-0390', label: 'Mega FX 0390', category: 'anomaly', visual: 'Layered profile 0390 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0390' },
-  { id: 'mega-fx-0391', label: 'Mega FX 0391', category: 'anomaly', visual: 'Layered profile 0391 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0391' },
-  { id: 'mega-fx-0392', label: 'Mega FX 0392', category: 'anomaly', visual: 'Layered profile 0392 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0392' },
-  { id: 'mega-fx-0393', label: 'Mega FX 0393', category: 'anomaly', visual: 'Layered profile 0393 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0393' },
-  { id: 'mega-fx-0394', label: 'Mega FX 0394', category: 'anomaly', visual: 'Layered profile 0394 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0394' },
-  { id: 'mega-fx-0395', label: 'Mega FX 0395', category: 'anomaly', visual: 'Layered profile 0395 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0395' },
-  { id: 'mega-fx-0396', label: 'Mega FX 0396', category: 'anomaly', visual: 'Layered profile 0396 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0396' },
-  { id: 'mega-fx-0397', label: 'Mega FX 0397', category: 'anomaly', visual: 'Layered profile 0397 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0397' },
-  { id: 'mega-fx-0398', label: 'Mega FX 0398', category: 'anomaly', visual: 'Layered profile 0398 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0398' },
-  { id: 'mega-fx-0399', label: 'Mega FX 0399', category: 'anomaly', visual: 'Layered profile 0399 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0399' },
-  { id: 'mega-fx-0400', label: 'Mega FX 0400', category: 'anomaly', visual: 'Layered profile 0400 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0400' },
-  { id: 'mega-fx-0401', label: 'Mega FX 0401', category: 'anomaly', visual: 'Layered profile 0401 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0401' },
-  { id: 'mega-fx-0402', label: 'Mega FX 0402', category: 'anomaly', visual: 'Layered profile 0402 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0402' },
-  { id: 'mega-fx-0403', label: 'Mega FX 0403', category: 'anomaly', visual: 'Layered profile 0403 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0403' },
-  { id: 'mega-fx-0404', label: 'Mega FX 0404', category: 'anomaly', visual: 'Layered profile 0404 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0404' },
-  { id: 'mega-fx-0405', label: 'Mega FX 0405', category: 'anomaly', visual: 'Layered profile 0405 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0405' },
-  { id: 'mega-fx-0406', label: 'Mega FX 0406', category: 'anomaly', visual: 'Layered profile 0406 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0406' },
-  { id: 'mega-fx-0407', label: 'Mega FX 0407', category: 'anomaly', visual: 'Layered profile 0407 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0407' },
-  { id: 'mega-fx-0408', label: 'Mega FX 0408', category: 'anomaly', visual: 'Layered profile 0408 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0408' },
-  { id: 'mega-fx-0409', label: 'Mega FX 0409', category: 'anomaly', visual: 'Layered profile 0409 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0409' },
-  { id: 'mega-fx-0410', label: 'Mega FX 0410', category: 'anomaly', visual: 'Layered profile 0410 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0410' },
-  { id: 'mega-fx-0411', label: 'Mega FX 0411', category: 'anomaly', visual: 'Layered profile 0411 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0411' },
-  { id: 'mega-fx-0412', label: 'Mega FX 0412', category: 'anomaly', visual: 'Layered profile 0412 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0412' },
-  { id: 'mega-fx-0413', label: 'Mega FX 0413', category: 'anomaly', visual: 'Layered profile 0413 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0413' },
-  { id: 'mega-fx-0414', label: 'Mega FX 0414', category: 'anomaly', visual: 'Layered profile 0414 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0414' },
-  { id: 'mega-fx-0415', label: 'Mega FX 0415', category: 'anomaly', visual: 'Layered profile 0415 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0415' },
-  { id: 'mega-fx-0416', label: 'Mega FX 0416', category: 'anomaly', visual: 'Layered profile 0416 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0416' },
-  { id: 'mega-fx-0417', label: 'Mega FX 0417', category: 'anomaly', visual: 'Layered profile 0417 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0417' },
-  { id: 'mega-fx-0418', label: 'Mega FX 0418', category: 'anomaly', visual: 'Layered profile 0418 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0418' },
-  { id: 'mega-fx-0419', label: 'Mega FX 0419', category: 'anomaly', visual: 'Layered profile 0419 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0419' },
-  { id: 'mega-fx-0420', label: 'Mega FX 0420', category: 'anomaly', visual: 'Layered profile 0420 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0420' },
-  { id: 'mega-fx-0421', label: 'Mega FX 0421', category: 'anomaly', visual: 'Layered profile 0421 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0421' },
-  { id: 'mega-fx-0422', label: 'Mega FX 0422', category: 'anomaly', visual: 'Layered profile 0422 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0422' },
-  { id: 'mega-fx-0423', label: 'Mega FX 0423', category: 'anomaly', visual: 'Layered profile 0423 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0423' },
-  { id: 'mega-fx-0424', label: 'Mega FX 0424', category: 'anomaly', visual: 'Layered profile 0424 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0424' },
-  { id: 'mega-fx-0425', label: 'Mega FX 0425', category: 'anomaly', visual: 'Layered profile 0425 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0425' },
-  { id: 'mega-fx-0426', label: 'Mega FX 0426', category: 'anomaly', visual: 'Layered profile 0426 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0426' },
-  { id: 'mega-fx-0427', label: 'Mega FX 0427', category: 'anomaly', visual: 'Layered profile 0427 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0427' },
-  { id: 'mega-fx-0428', label: 'Mega FX 0428', category: 'anomaly', visual: 'Layered profile 0428 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0428' },
-  { id: 'mega-fx-0429', label: 'Mega FX 0429', category: 'anomaly', visual: 'Layered profile 0429 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0429' },
-  { id: 'mega-fx-0430', label: 'Mega FX 0430', category: 'anomaly', visual: 'Layered profile 0430 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0430' },
-  { id: 'mega-fx-0431', label: 'Mega FX 0431', category: 'anomaly', visual: 'Layered profile 0431 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0431' },
-  { id: 'mega-fx-0432', label: 'Mega FX 0432', category: 'anomaly', visual: 'Layered profile 0432 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0432' },
-  { id: 'mega-fx-0433', label: 'Mega FX 0433', category: 'anomaly', visual: 'Layered profile 0433 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0433' },
-  { id: 'mega-fx-0434', label: 'Mega FX 0434', category: 'anomaly', visual: 'Layered profile 0434 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0434' },
-  { id: 'mega-fx-0435', label: 'Mega FX 0435', category: 'anomaly', visual: 'Layered profile 0435 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0435' },
-  { id: 'mega-fx-0436', label: 'Mega FX 0436', category: 'anomaly', visual: 'Layered profile 0436 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0436' },
-  { id: 'mega-fx-0437', label: 'Mega FX 0437', category: 'anomaly', visual: 'Layered profile 0437 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0437' },
-  { id: 'mega-fx-0438', label: 'Mega FX 0438', category: 'anomaly', visual: 'Layered profile 0438 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0438' },
-  { id: 'mega-fx-0439', label: 'Mega FX 0439', category: 'anomaly', visual: 'Layered profile 0439 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0439' },
-  { id: 'mega-fx-0440', label: 'Mega FX 0440', category: 'anomaly', visual: 'Layered profile 0440 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0440' },
-  { id: 'mega-fx-0441', label: 'Mega FX 0441', category: 'anomaly', visual: 'Layered profile 0441 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0441' },
-  { id: 'mega-fx-0442', label: 'Mega FX 0442', category: 'anomaly', visual: 'Layered profile 0442 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0442' },
-  { id: 'mega-fx-0443', label: 'Mega FX 0443', category: 'anomaly', visual: 'Layered profile 0443 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0443' },
-  { id: 'mega-fx-0444', label: 'Mega FX 0444', category: 'anomaly', visual: 'Layered profile 0444 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0444' },
-  { id: 'mega-fx-0445', label: 'Mega FX 0445', category: 'anomaly', visual: 'Layered profile 0445 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0445' },
-  { id: 'mega-fx-0446', label: 'Mega FX 0446', category: 'anomaly', visual: 'Layered profile 0446 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0446' },
-  { id: 'mega-fx-0447', label: 'Mega FX 0447', category: 'anomaly', visual: 'Layered profile 0447 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0447' },
-  { id: 'mega-fx-0448', label: 'Mega FX 0448', category: 'anomaly', visual: 'Layered profile 0448 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0448' },
-  { id: 'mega-fx-0449', label: 'Mega FX 0449', category: 'anomaly', visual: 'Layered profile 0449 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0449' },
-  { id: 'mega-fx-0450', label: 'Mega FX 0450', category: 'anomaly', visual: 'Layered profile 0450 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0450' },
-  { id: 'mega-fx-0451', label: 'Mega FX 0451', category: 'anomaly', visual: 'Layered profile 0451 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0451' },
-  { id: 'mega-fx-0452', label: 'Mega FX 0452', category: 'anomaly', visual: 'Layered profile 0452 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0452' },
-  { id: 'mega-fx-0453', label: 'Mega FX 0453', category: 'anomaly', visual: 'Layered profile 0453 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0453' },
-  { id: 'mega-fx-0454', label: 'Mega FX 0454', category: 'anomaly', visual: 'Layered profile 0454 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0454' },
-  { id: 'mega-fx-0455', label: 'Mega FX 0455', category: 'anomaly', visual: 'Layered profile 0455 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0455' },
-  { id: 'mega-fx-0456', label: 'Mega FX 0456', category: 'anomaly', visual: 'Layered profile 0456 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0456' },
-  { id: 'mega-fx-0457', label: 'Mega FX 0457', category: 'anomaly', visual: 'Layered profile 0457 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0457' },
-  { id: 'mega-fx-0458', label: 'Mega FX 0458', category: 'anomaly', visual: 'Layered profile 0458 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0458' },
-  { id: 'mega-fx-0459', label: 'Mega FX 0459', category: 'anomaly', visual: 'Layered profile 0459 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0459' },
-  { id: 'mega-fx-0460', label: 'Mega FX 0460', category: 'anomaly', visual: 'Layered profile 0460 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0460' },
-  { id: 'mega-fx-0461', label: 'Mega FX 0461', category: 'anomaly', visual: 'Layered profile 0461 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0461' },
-  { id: 'mega-fx-0462', label: 'Mega FX 0462', category: 'anomaly', visual: 'Layered profile 0462 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0462' },
-  { id: 'mega-fx-0463', label: 'Mega FX 0463', category: 'anomaly', visual: 'Layered profile 0463 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0463' },
-  { id: 'mega-fx-0464', label: 'Mega FX 0464', category: 'anomaly', visual: 'Layered profile 0464 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0464' },
-  { id: 'mega-fx-0465', label: 'Mega FX 0465', category: 'anomaly', visual: 'Layered profile 0465 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0465' },
-  { id: 'mega-fx-0466', label: 'Mega FX 0466', category: 'anomaly', visual: 'Layered profile 0466 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0466' },
-  { id: 'mega-fx-0467', label: 'Mega FX 0467', category: 'anomaly', visual: 'Layered profile 0467 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0467' },
-  { id: 'mega-fx-0468', label: 'Mega FX 0468', category: 'anomaly', visual: 'Layered profile 0468 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0468' },
-  { id: 'mega-fx-0469', label: 'Mega FX 0469', category: 'anomaly', visual: 'Layered profile 0469 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0469' },
-  { id: 'mega-fx-0470', label: 'Mega FX 0470', category: 'anomaly', visual: 'Layered profile 0470 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0470' },
-  { id: 'mega-fx-0471', label: 'Mega FX 0471', category: 'anomaly', visual: 'Layered profile 0471 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0471' },
-  { id: 'mega-fx-0472', label: 'Mega FX 0472', category: 'anomaly', visual: 'Layered profile 0472 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0472' },
-  { id: 'mega-fx-0473', label: 'Mega FX 0473', category: 'anomaly', visual: 'Layered profile 0473 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0473' },
-  { id: 'mega-fx-0474', label: 'Mega FX 0474', category: 'anomaly', visual: 'Layered profile 0474 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0474' },
-  { id: 'mega-fx-0475', label: 'Mega FX 0475', category: 'anomaly', visual: 'Layered profile 0475 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0475' },
-  { id: 'mega-fx-0476', label: 'Mega FX 0476', category: 'anomaly', visual: 'Layered profile 0476 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0476' },
-  { id: 'mega-fx-0477', label: 'Mega FX 0477', category: 'anomaly', visual: 'Layered profile 0477 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0477' },
-  { id: 'mega-fx-0478', label: 'Mega FX 0478', category: 'anomaly', visual: 'Layered profile 0478 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0478' },
-  { id: 'mega-fx-0479', label: 'Mega FX 0479', category: 'anomaly', visual: 'Layered profile 0479 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0479' },
-  { id: 'mega-fx-0480', label: 'Mega FX 0480', category: 'anomaly', visual: 'Layered profile 0480 combining core glow, directional flow, and distinct edge noise.', signature: 'sig-0480' },
-];
+const MEGA_SHIP_CATALOG_V2 = window.MEGA_SHIP_CATALOG_V2 || [];
+const MEGA_CODEX_APPENDIX_V2 = window.MEGA_CODEX_APPENDIX_V2 || [];
+const MEGA_CHALLENGE_PRESETS_V2 = window.MEGA_CHALLENGE_PRESETS_V2 || [];
+const MEGA_FX_PROFILES_V2 = window.MEGA_FX_PROFILES_V2 || [];
 
 for (let i = MEGA_SHIP_CATALOG_V2.length - 1; i >= 0; i--) {
   if (isAtlasShipId(MEGA_SHIP_CATALOG_V2[i].id)) {
@@ -16564,3 +8563,15 @@ if (typeof ADVANCED_FX_PROFILES !== 'undefined') {
 }
 updateShipSelection();
 refreshProgressAchievements();
+
+const shouldAutoStartTutorial =
+  !localStorage.getItem(TUTORIAL_COMPLETED_KEY) &&
+  !(state.achievements && state.achievements["tutorial-complete"]);
+if (shouldAutoStartTutorial) {
+  if (mainHub) mainHub.classList.add("hidden");
+  queueMicrotask(() => {
+    if (!state.running && !state.tutorialMode) startTutorial();
+  });
+} else if (mainHub) {
+  showHub();
+}
